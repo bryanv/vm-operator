@@ -1,7 +1,7 @@
 // Copyright (c) 2019 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-package virtualmachinesetresourcepolicy
+package v1alpha1
 
 import (
 	"github.com/pkg/errors"
@@ -9,8 +9,8 @@ import (
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
-	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachinesetresourcepolicy/mutation"
-	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachinesetresourcepolicy/validation"
+	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachinesetresourcepolicy/v1alpha1/mutation"
+	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachinesetresourcepolicy/v1alpha1/validation"
 )
 
 func AddToManager(ctx *context.ControllerManagerContext, mgr ctrlmgr.Manager) error {

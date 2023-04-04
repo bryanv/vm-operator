@@ -21,7 +21,7 @@ import (
 
 	"github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	"github.com/vmware-tanzu/vm-operator/api/v1alpha2"
-	"github.com/vmware-tanzu/vm-operator/controllers"
+	_ "github.com/vmware-tanzu/vm-operator/controllers"
 	"github.com/vmware-tanzu/vm-operator/pkg"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/manager"
@@ -266,9 +266,11 @@ func main() {
 
 	// Create a function that adds all of the controllers and webhooks to the manager.
 	addToManager := func(ctx *context.ControllerManagerContext, mgr ctrlmgr.Manager) error {
-		if err := controllers.AddToManager(ctx, mgr); err != nil {
-			return err
-		}
+		/*
+			if err := controllers.AddToManager(ctx, mgr); err != nil {
+				return err
+			}
+		*/
 
 		if err := addConversionWebhooksToManager(ctx, mgr); err != nil {
 			return err

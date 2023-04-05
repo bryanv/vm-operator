@@ -20,7 +20,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/pkg/builder"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
@@ -31,7 +31,7 @@ const (
 	webHookName = "default"
 )
 
-// +kubebuilder:webhook:verbs=create;update,path=/default-validate-vmoperator-vmware-com-v1alpha1-virtualmachinesetresourcepolicy,mutating=false,failurePolicy=fail,groups=vmoperator.vmware.com,resources=virtualmachinesetresourcepolicies,versions=v1alpha1,name=default.validating.virtualmachinesetresourcepolicy.v1alpha1.vmoperator.vmware.com,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/default-validate-vmoperator-vmware-com-v1alpha2-virtualmachinesetresourcepolicy,mutating=false,failurePolicy=fail,groups=vmoperator.vmware.com,resources=virtualmachinesetresourcepolicies,versions=v1alpha2,name=default.validating.virtualmachinesetresourcepolicy.v1alpha2.vmoperator.vmware.com,sideEffects=None,admissionReviewVersions=v1;v1beta1
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachinesetresourcepolicies,verbs=get;list
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachinesetresourcepolicies/status,verbs=get
 
@@ -110,7 +110,7 @@ func (v validator) validateSpec(ctx *context.WebhookRequestContext, vmRP *vmopv1
 
 	fieldErrs = append(fieldErrs, v.validateResourcePool(ctx, specPath.Child("resourcepool"), vmRP.Spec.ResourcePool)...)
 	fieldErrs = append(fieldErrs, v.validateFolder(ctx, specPath.Child("folder"), vmRP.Spec.Folder)...)
-	fieldErrs = append(fieldErrs, v.validateClusterModules(ctx, specPath.Child("clustermodules"), vmRP.Spec.ClusterModules)...)
+	fieldErrs = append(fieldErrs, v.validateClusterModules(ctx, specPath.Child("clustermodules"), vmRP.Spec.ClusterModuleGroups)...)
 
 	return fieldErrs
 }
@@ -127,21 +127,21 @@ func (v validator) validateResourcePool(ctx *context.WebhookRequestContext, fldP
 	return fieldErrs
 }
 
-func (v validator) validateFolder(ctx *context.WebhookRequestContext, specPath *field.Path, folder vmopv1.FolderSpec) field.ErrorList {
+func (v validator) validateFolder(ctx *context.WebhookRequestContext, specPath *field.Path, folder string) field.ErrorList {
 	var fieldErrs field.ErrorList
 	return fieldErrs
 }
 
-func (v validator) validateClusterModules(ctx *context.WebhookRequestContext, fldPath *field.Path, clusterModules []vmopv1.ClusterModuleSpec) field.ErrorList {
+func (v validator) validateClusterModules(ctx *context.WebhookRequestContext, fldPath *field.Path, clusterModuleGroups []string) field.ErrorList {
 	var fieldErrs field.ErrorList
 
 	groupNames := map[string]struct{}{}
-	for i, module := range clusterModules {
-		if _, ok := groupNames[module.GroupName]; ok {
-			fieldErrs = append(fieldErrs, field.Duplicate(fldPath.Index(i).Child("groupname"), module.GroupName))
+	for i, name := range clusterModuleGroups {
+		if _, ok := groupNames[name]; ok {
+			fieldErrs = append(fieldErrs, field.Duplicate(fldPath.Index(i).Child("clusterModuleGroups"), name))
 			continue
 		}
-		groupNames[module.GroupName] = struct{}{}
+		groupNames[name] = struct{}{}
 	}
 
 	return fieldErrs
@@ -155,7 +155,7 @@ func (v validator) validateAllowedChanges(ctx *context.WebhookRequestContext, vm
 	// Validate all fields under spec which are not allowed to change.
 	allErrs = append(allErrs, validation.ValidateImmutableField(vmRP.Spec.ResourcePool, oldVMRP.Spec.ResourcePool, specPath.Child("resourcepool"))...)
 	allErrs = append(allErrs, validation.ValidateImmutableField(vmRP.Spec.Folder, oldVMRP.Spec.Folder, specPath.Child("folder"))...)
-	allErrs = append(allErrs, validation.ValidateImmutableField(vmRP.Spec.ClusterModules, oldVMRP.Spec.ClusterModules, specPath.Child("clustermodules"))...)
+	allErrs = append(allErrs, validation.ValidateImmutableField(vmRP.Spec.ClusterModuleGroups, oldVMRP.Spec.ClusterModuleGroups, specPath.Child("clustermodules"))...)
 
 	return allErrs
 }

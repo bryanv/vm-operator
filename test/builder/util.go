@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 )
 
 const (
@@ -320,6 +321,29 @@ func DummyVirtualMachineSetResourcePolicy() *vmopv1.VirtualMachineSetResourcePol
 					GroupName: "dummy-cluster-modules",
 				},
 			},
+		},
+	}
+}
+
+func DummyVirtualMachineSetResourcePolicyA2() *v1alpha2.VirtualMachineSetResourcePolicy {
+	return &v1alpha2.VirtualMachineSetResourcePolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "test-",
+		},
+		Spec: v1alpha2.VirtualMachineSetResourcePolicySpec{
+			ResourcePool: v1alpha2.ResourcePoolSpec{
+				Name: "dummy-resource-pool",
+				Reservations: v1alpha2.VirtualMachineResourceSpec{
+					Cpu:    resource.MustParse("1Gi"),
+					Memory: resource.MustParse("2Gi"),
+				},
+				Limits: v1alpha2.VirtualMachineResourceSpec{
+					Cpu:    resource.MustParse("2Gi"),
+					Memory: resource.MustParse("4Gi"),
+				},
+			},
+			Folder:              "dummy-folder",
+			ClusterModuleGroups: []string{"dummy-cluster-modules"},
 		},
 	}
 }

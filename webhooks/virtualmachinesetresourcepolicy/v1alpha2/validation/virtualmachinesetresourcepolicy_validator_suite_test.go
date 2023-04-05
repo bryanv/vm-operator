@@ -9,14 +9,14 @@ import (
 	. "github.com/onsi/ginkgo"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
-	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachinesetresourcepolicy/v1alpha1/validation"
+	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachinesetresourcepolicy/v1alpha2/validation"
 )
 
 // suite is used for unit and integration testing this webhook.
 var suite = builder.NewTestSuiteForValidatingWebhook(
 	validation.AddToManager,
 	validation.NewValidator,
-	"default.validating.virtualmachinesetresourcepolicy.v1alpha1.vmoperator.vmware.com")
+	"default.validating.virtualmachinesetresourcepolicy.v1alpha2.vmoperator.vmware.com")
 
 func TestWebhook(t *testing.T) {
 	suite.Register(t, "Validation webhook suite", intgTests, unitTests)

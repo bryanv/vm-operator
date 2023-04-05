@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -30,7 +30,7 @@ func newIntgValidatingWebhookContext() *intgValidatingWebhookContext {
 		IntegrationTestContext: *suite.NewIntegrationTestContext(),
 	}
 
-	ctx.vmPub = builder.DummyVirtualMachinePublishRequest("dummy-vmpub", ctx.Namespace, "dummy-vm",
+	ctx.vmPub = builder.DummyVirtualMachinePublishRequestA2("dummy-vmpub", ctx.Namespace, "dummy-vm",
 		"dummy-item", "dummy-cl")
 	vm := builder.DummyVirtualMachine()
 	vm.Name = "dummy-vm"

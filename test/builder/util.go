@@ -269,6 +269,47 @@ func DummyVirtualMachine() *vmopv1.VirtualMachine {
 	}
 }
 
+func DummyVirtualMachineA2() *v1alpha2.VirtualMachine {
+	return &v1alpha2.VirtualMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "test-",
+			Labels:       map[string]string{},
+			Annotations:  map[string]string{},
+		},
+		Spec: v1alpha2.VirtualMachineSpec{
+			ImageName:  DummyImageName,
+			ClassName:  DummyClassName,
+			PowerState: v1alpha2.VirtualMachinePowerStateOn,
+			/* TODO: Convert this as needed
+			NetworkInterfaces: []vmopv1.VirtualMachineNetworkInterface{
+				{
+					NetworkName: DummyNetworkName,
+					NetworkType: "",
+				},
+				{
+					NetworkName: DummyNetworkName + "-2",
+					NetworkType: "",
+				},
+			},
+			Volumes: []vmopv1.VirtualMachineVolume{
+				{
+					Name: DummyVolumeName,
+					PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+						PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: DummyPVCName,
+						},
+					},
+				},
+			},
+			VmMetadata: &vmopv1.VirtualMachineMetadata{
+				ConfigMapName: DummyMetadataCMName,
+				Transport:     "ExtraConfig",
+			},
+			*/
+		},
+	}
+}
+
 func AddDummyInstanceStorageVolume(vm *vmopv1.VirtualMachine) {
 	vm.Spec.Volumes = append(vm.Spec.Volumes, DummyInstanceStorageVirtualMachineVolumes()...)
 }
@@ -537,6 +578,33 @@ func DummyVirtualMachinePublishRequest(name, namespace, sourceName, itemName, cl
 					Name: itemName,
 				},
 				Location: vmopv1.VirtualMachinePublishRequestTargetLocation{
+					Name:       clName,
+					APIVersion: "imageregistry.vmware.com/v1alpha1",
+					Kind:       "ContentLibrary",
+				},
+			},
+		},
+	}
+}
+
+func DummyVirtualMachinePublishRequestA2(name, namespace, sourceName, itemName, clName string) *v1alpha2.VirtualMachinePublishRequest {
+	return &v1alpha2.VirtualMachinePublishRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       name,
+			Namespace:  namespace,
+			Finalizers: []string{"virtualmachinepublishrequest.vmoperator.vmware.com"},
+		},
+		Spec: v1alpha2.VirtualMachinePublishRequestSpec{
+			Source: v1alpha2.VirtualMachinePublishRequestSource{
+				Name:       sourceName,
+				APIVersion: "vmoperator.vmware.com/v1alpha1",
+				Kind:       "VirtualMachine",
+			},
+			Target: v1alpha2.VirtualMachinePublishRequestTarget{
+				Item: v1alpha2.VirtualMachinePublishRequestTargetItem{
+					Name: itemName,
+				},
+				Location: v1alpha2.VirtualMachinePublishRequestTargetLocation{
 					Name:       clName,
 					APIVersion: "imageregistry.vmware.com/v1alpha1",
 					Kind:       "ContentLibrary",

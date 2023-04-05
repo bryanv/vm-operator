@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
 
@@ -36,12 +36,12 @@ type unitValidatingWebhookContext struct {
 }
 
 func newUnitTestContextForValidatingWebhook(isUpdate bool) *unitValidatingWebhookContext {
-	vm := builder.DummyVirtualMachine()
+	vm := builder.DummyVirtualMachineA2()
 	vm.Name = "dummy-vm"
 	vm.Namespace = "dummy-ns"
 	cl := builder.DummyContentLibrary("dummy-cl", "dummy-ns", "dummy-uuid")
 
-	vmPub := builder.DummyVirtualMachinePublishRequest("dummy-vmpub", "dummy-ns", vm.Name,
+	vmPub := builder.DummyVirtualMachinePublishRequestA2("dummy-vmpub", "dummy-ns", vm.Name,
 		"dummy-item", cl.Name)
 	obj, err := builder.ToUnstructured(vmPub)
 	Expect(err).ToNot(HaveOccurred())
@@ -168,7 +168,7 @@ func unitTestsValidateCreate() {
 		Entry("should allow valid", createArgs{}, true, nil, nil),
 		Entry("should deny invalid source API version", createArgs{invalidSourceAPIVersion: true}, false,
 			field.NotSupported(sourcePath.Child("apiVersion"), invalidAPIVersion,
-				[]string{"vmoperator.vmware.com/v1alpha1", ""}).Error(), nil),
+				[]string{"vmoperator.vmware.com/v1alpha1", "vmoperator.vmware.com/v1alpha2", ""}).Error(), nil),
 		Entry("should deny invalid source kind", createArgs{invalidSourceKind: true}, false,
 			field.NotSupported(sourcePath.Child("kind"), "Machine",
 				[]string{"VirtualMachine", ""}).Error(), nil),

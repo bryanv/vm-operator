@@ -19,7 +19,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
 
@@ -32,7 +33,7 @@ const (
 	webHookName = "default"
 )
 
-// +kubebuilder:webhook:verbs=create;update,path=/default-validate-vmoperator-vmware-com-v1alpha1-virtualmachinepublishrequest,mutating=false,failurePolicy=fail,groups=vmoperator.vmware.com,resources=virtualmachinepublishrequests,versions=v1alpha1,name=default.validating.virtualmachinepublishrequest.vmoperator.vmware.com,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/default-validate-vmoperator-vmware-com-v1alpha2-virtualmachinepublishrequest,mutating=false,failurePolicy=fail,groups=vmoperator.vmware.com,resources=virtualmachinepublishrequests,versions=v1alpha2,name=default.validating.virtualmachinepublishrequest.vmoperator.vmware.com,sideEffects=None,admissionReviewVersions=v1;v1beta1
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachinepublishrequests,verbs=get;list
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachinepublishrequests/status,verbs=get
 // +kubebuilder:rbac:groups=imageregistry.vmware.com,resources=contentlibraries,verbs=get;list;
@@ -120,9 +121,15 @@ func (v validator) validateSource(ctx *context.WebhookRequestContext, vmpub *vmo
 	var allErrs field.ErrorList
 
 	sourcePath := field.NewPath("spec").Child("source")
-	if apiVersion := vmpub.Spec.Source.APIVersion; apiVersion != vmopv1.SchemeGroupVersion.String() && apiVersion != "" {
-		allErrs = append(allErrs, field.NotSupported(sourcePath.Child("apiVersion"),
-			vmpub.Spec.Source.APIVersion, []string{vmopv1.SchemeGroupVersion.String(), ""}))
+	if apiVersion := vmpub.Spec.Source.APIVersion; apiVersion != "" {
+		// TODO: BMV Need a better way. Or is this something we should really check here?
+		v1a1GV, v1a2GV := v1alpha1.SchemeGroupVersion.String(), vmopv1.SchemeGroupVersion.String()
+		switch apiVersion {
+		case v1a1GV, v1a2GV:
+		default:
+			allErrs = append(allErrs, field.NotSupported(sourcePath.Child("apiVersion"),
+				vmpub.Spec.Source.APIVersion, []string{v1a1GV, v1a2GV, ""}))
+		}
 	}
 
 	if kind := vmpub.Spec.Source.Kind; kind != reflect.TypeOf(vmopv1.VirtualMachine{}).Name() && kind != "" {

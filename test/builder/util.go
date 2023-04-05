@@ -296,6 +296,29 @@ func DummyVirtualMachineService() *vmopv1.VirtualMachineService {
 	}
 }
 
+func DummyVirtualMachineServiceA2() *v1alpha2.VirtualMachineService {
+	return &v1alpha2.VirtualMachineService{
+		ObjectMeta: metav1.ObjectMeta{
+			// Using image.GenerateName causes problems with unit tests
+			Name: fmt.Sprintf("test-%s", uuid.New()),
+		},
+		Spec: v1alpha2.VirtualMachineServiceSpec{
+			Type: v1alpha2.VirtualMachineServiceTypeLoadBalancer,
+			Ports: []v1alpha2.VirtualMachineServicePort{
+				{
+					Name:       "dummy-port",
+					Protocol:   "TCP",
+					Port:       42,
+					TargetPort: 4242,
+				},
+			},
+			Selector: map[string]string{
+				"foo": "bar",
+			},
+		},
+	}
+}
+
 func DummyVirtualMachineSetResourcePolicy() *vmopv1.VirtualMachineSetResourcePolicy {
 	return &vmopv1.VirtualMachineSetResourcePolicy{
 		ObjectMeta: metav1.ObjectMeta{

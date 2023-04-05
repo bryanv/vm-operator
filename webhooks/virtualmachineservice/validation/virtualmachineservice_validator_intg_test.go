@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -29,7 +29,7 @@ func newIntgValidatingWebhookContext() *intgValidatingWebhookContext {
 		IntegrationTestContext: *suite.NewIntegrationTestContext(),
 	}
 
-	ctx.vmService = builder.DummyVirtualMachineService()
+	ctx.vmService = builder.DummyVirtualMachineServiceA2()
 	ctx.vmService.Namespace = ctx.Namespace
 
 	return ctx

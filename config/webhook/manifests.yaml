@@ -124,14 +124,14 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /default-validate-vmoperator-vmware-com-v1alpha1-virtualmachineservice
+      path: /default-validate-vmoperator-vmware-com-v1alpha2-virtualmachineservice
   failurePolicy: Fail
   name: default.validating.virtualmachineservice.vmoperator.vmware.com
   rules:
   - apiGroups:
     - vmoperator.vmware.com
     apiVersions:
-    - v1alpha1
+    - v1alpha2
     operations:
     - CREATE
     - UPDATE

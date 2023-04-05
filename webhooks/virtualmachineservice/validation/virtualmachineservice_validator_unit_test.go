@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -30,7 +30,7 @@ type unitValidatingWebhookContext struct {
 }
 
 func newUnitTestContextForValidatingWebhook(isUpdate bool) *unitValidatingWebhookContext {
-	vmService := builder.DummyVirtualMachineService()
+	vmService := builder.DummyVirtualMachineServiceA2()
 	obj, err := builder.ToUnstructured(vmService)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -201,7 +201,7 @@ func unitTestsValidateCreate() {
 				},
 			},
 		),
-		Entry("should deny duplicate protocol/port", "spec.ports[1]: Duplicate value: v1alpha1.VirtualMachineServicePort",
+		Entry("should deny duplicate protocol/port", "spec.ports[1]: Duplicate value: v1alpha2.VirtualMachineServicePort",
 			[]vmopv1.VirtualMachineServicePort{
 				{
 					Name:       "port1",

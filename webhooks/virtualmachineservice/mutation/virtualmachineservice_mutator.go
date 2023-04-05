@@ -19,14 +19,14 @@ import (
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 )
 
 const (
 	webHookName = "default"
 )
 
-// -kubebuilder:webhook:path=/default-mutate-vmoperator-vmware-com-v1alpha1-virtualmachineservice,mutating=true,failurePolicy=fail,groups=vmoperator.vmware.com,resources=virtualmachineservices,verbs=create;update,versions=v1alpha1,name=default.mutating.virtualmachineservice.vmoperator.vmware.com,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// -kubebuilder:webhook:path=/default-mutate-vmoperator-vmware-com-v1alpha2-virtualmachineservice,mutating=true,failurePolicy=fail,groups=vmoperator.vmware.com,resources=virtualmachineservices,verbs=create;update,versions=v1alpha2,name=default.mutating.virtualmachineservice.vmoperator.vmware.com,sideEffects=None,admissionReviewVersions=v1;v1beta1
 // -kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineservice,verbs=get;list
 // -kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineservice/status,verbs=get
 
@@ -52,7 +52,6 @@ type mutator struct {
 	converter runtime.UnstructuredConverter
 }
 
-//nolint
 func (m mutator) Mutate(ctx *context.WebhookRequestContext) admission.Response {
 	vmService, err := m.vmServiceFromUnstructured(ctx.Obj)
 	if err != nil {

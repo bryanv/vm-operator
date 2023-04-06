@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -26,7 +26,7 @@ func newIntgMutatingWebhookContext() *intgMutatingWebhookContext {
 		IntegrationTestContext: *suite.NewIntegrationTestContext(),
 	}
 
-	ctx.vmClass = builder.DummyVirtualMachineClass()
+	ctx.vmClass = builder.DummyVirtualMachineClassA2()
 
 	return ctx
 }

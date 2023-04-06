@@ -14,7 +14,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -32,7 +32,7 @@ type unitValidatingWebhookContext struct {
 }
 
 func newUnitTestContextForValidatingWebhook(isUpdate bool) *unitValidatingWebhookContext {
-	vmClass := builder.DummyVirtualMachineClass()
+	vmClass := builder.DummyVirtualMachineClassA2()
 	obj, err := builder.ToUnstructured(vmClass)
 	Expect(err).ToNot(HaveOccurred())
 

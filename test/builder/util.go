@@ -116,6 +116,32 @@ func DummyVirtualMachineClass() *vmopv1.VirtualMachineClass {
 	}
 }
 
+func DummyVirtualMachineClassA2() *v1alpha2.VirtualMachineClass {
+	return &v1alpha2.VirtualMachineClass{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "test-",
+		},
+		Spec: v1alpha2.VirtualMachineClassSpec{
+			Hardware: v1alpha2.VirtualMachineClassHardware{
+				Cpus:   int64(2),
+				Memory: resource.MustParse("4Gi"),
+			},
+			Policies: v1alpha2.VirtualMachineClassPolicies{
+				Resources: v1alpha2.VirtualMachineClassResources{
+					Requests: v1alpha2.VirtualMachineResourceSpec{
+						Cpu:    resource.MustParse("1Gi"),
+						Memory: resource.MustParse("2Gi"),
+					},
+					Limits: v1alpha2.VirtualMachineResourceSpec{
+						Cpu:    resource.MustParse("2Gi"),
+						Memory: resource.MustParse("4Gi"),
+					},
+				},
+			},
+		},
+	}
+}
+
 func DummyVirtualMachineClassBinding(className, namespace string) *vmopv1.VirtualMachineClassBinding {
 	return &vmopv1.VirtualMachineClassBinding{
 		ObjectMeta: metav1.ObjectMeta{

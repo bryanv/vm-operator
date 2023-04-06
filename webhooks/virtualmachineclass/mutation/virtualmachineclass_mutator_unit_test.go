@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -23,7 +23,7 @@ type unitMutationWebhookContext struct {
 }
 
 func newUnitTestContextForMutatingWebhook() *unitMutationWebhookContext {
-	vmClass := builder.DummyVirtualMachineClass()
+	vmClass := builder.DummyVirtualMachineClassA2()
 	obj, err := builder.ToUnstructured(vmClass)
 	Expect(err).ToNot(HaveOccurred())
 

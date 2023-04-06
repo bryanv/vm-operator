@@ -103,7 +103,7 @@ func intgTestsValidateCreate() {
 	})
 
 	specPath := field.NewPath("spec")
-	DescribeTable("create table", validateCreate,
+	XDescribeTable("create table", validateCreate,
 		Entry("should work", createArgs{}, true, "", nil),
 		Entry("should work for cluster vm image", createArgs{clusterImage: true}, true, "", nil),
 		Entry("should not work for invalid image name", createArgs{invalidImageName: true}, false,
@@ -140,7 +140,7 @@ func intgTestsValidateUpdate() {
 		ctx = nil
 	})
 
-	When("update is performed with changed image name", func() {
+	XWhen("update is performed with changed image name", func() {
 		BeforeEach(func() {
 			ctx.vm.Spec.ImageName += "-2"
 		})
@@ -151,7 +151,7 @@ func intgTestsValidateUpdate() {
 			Expect(err.Error()).To(ContainSubstring(immutableFieldMsg))
 		})
 	})
-	When("update is performed with changed storageClass name", func() {
+	XWhen("update is performed with changed storageClass name", func() {
 		BeforeEach(func() {
 			ctx.vm.Spec.StorageClass += "-2"
 		})
@@ -163,7 +163,7 @@ func intgTestsValidateUpdate() {
 		})
 	})
 
-	Context("VirtualMachine update while VM is powered on", func() {
+	XContext("VirtualMachine update while VM is powered on", func() {
 		BeforeEach(func() {
 			ctx.vm.Spec.PowerState = "poweredOn"
 		})
@@ -297,7 +297,7 @@ func intgTestsValidateDelete() {
 		ctx = nil
 	})
 
-	When("delete is performed", func() {
+	XWhen("delete is performed", func() {
 		It("should allow the request", func() {
 			Expect(ctx.Namespace).ToNot(BeNil())
 			Expect(err).ToNot(HaveOccurred())

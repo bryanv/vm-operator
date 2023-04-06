@@ -1,7 +1,7 @@
 // Copyright (c) 2019 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-package validation_test
+package mutation_test
 
 import (
 	"testing"
@@ -9,17 +9,17 @@ import (
 	. "github.com/onsi/ginkgo"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
-	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachine/validation"
+	"github.com/vmware-tanzu/vm-operator/webhooks/virtualmachine/v1alpha2/mutation"
 )
 
 // suite is used for unit and integration testing this webhook.
-var suite = builder.NewTestSuiteForValidatingWebhook(
-	validation.AddToManager,
-	validation.NewValidator,
-	"default.validating.virtualmachine.vmoperator.vmware.com")
+var suite = builder.NewTestSuiteForMutatingWebhook(
+	mutation.AddToManager,
+	mutation.NewMutator,
+	"default.mutating.virtualmachine.v1alpha2.vmoperator.vmware.com")
 
 func TestWebhook(t *testing.T) {
-	suite.Register(t, "Validation webhook suite", intgTests, unitTests)
+	suite.Register(t, "Mutating webhook suite", intgTests, uniTests)
 }
 
 var _ = BeforeSuite(suite.BeforeSuite)

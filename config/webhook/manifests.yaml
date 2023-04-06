@@ -14,12 +14,33 @@ webhooks:
       namespace: system
       path: /default-mutate-vmoperator-vmware-com-v1alpha1-virtualmachine
   failurePolicy: Fail
-  name: default.mutating.virtualmachine.vmoperator.vmware.com
+  name: default.mutating.virtualmachine.v1alpha1.vmoperator.vmware.com
   rules:
   - apiGroups:
     - vmoperator.vmware.com
     apiVersions:
     - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - virtualmachines
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /default-mutate-vmoperator-vmware-com-v1alpha2-virtualmachine
+  failurePolicy: Fail
+  name: default.mutating.virtualmachine.v1alpha2.vmoperator.vmware.com
+  rules:
+  - apiGroups:
+    - vmoperator.vmware.com
+    apiVersions:
+    - v1alpha2
     operations:
     - CREATE
     - UPDATE
@@ -63,7 +84,7 @@ webhooks:
       namespace: system
       path: /default-validate-vmoperator-vmware-com-v1alpha1-virtualmachine
   failurePolicy: Fail
-  name: default.validating.virtualmachine.vmoperator.vmware.com
+  name: default.validating.virtualmachine.v1alpha1.vmoperator.vmware.com
   rules:
   - apiGroups:
     - vmoperator.vmware.com
@@ -200,4 +221,25 @@ webhooks:
     - UPDATE
     resources:
     - webconsolerequests
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /default-validate-vmoperator-vmware-com-v1alpha2-virtualmachine
+  failurePolicy: Fail
+  name: default.validating.virtualmachine.v1alpha2.vmoperator.vmware.com
+  rules:
+  - apiGroups:
+    - vmoperator.vmware.com
+    apiVersions:
+    - v1alpha2
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - virtualmachines
   sideEffects: None

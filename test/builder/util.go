@@ -240,6 +240,39 @@ func DummyInstanceStorageVirtualMachineVolumes() []vmopv1.VirtualMachineVolume {
 	}
 }
 
+func DummyInstanceStorageVirtualMachineVolumesA2() []v1alpha2.VirtualMachineVolume {
+	return []v1alpha2.VirtualMachineVolume{
+		{
+			Name: "instance-pvc-1",
+			VirtualMachineVolumeSource: v1alpha2.VirtualMachineVolumeSource{
+				PersistentVolumeClaim: &v1alpha2.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "instance-pvc-1",
+					},
+					InstanceVolumeClaim: &v1alpha2.InstanceVolumeClaimVolumeSource{
+						StorageClass: DummyStorageClassName,
+						Size:         resource.MustParse("256Gi"),
+					},
+				},
+			},
+		},
+		{
+			Name: "instance-pvc-2",
+			VirtualMachineVolumeSource: v1alpha2.VirtualMachineVolumeSource{
+				PersistentVolumeClaim: &v1alpha2.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "instance-pvc-2",
+					},
+					InstanceVolumeClaim: &v1alpha2.InstanceVolumeClaimVolumeSource{
+						StorageClass: DummyStorageClassName,
+						Size:         resource.MustParse("512Gi"),
+					},
+				},
+			},
+		},
+	}
+}
+
 func DummyBasicVirtualMachine(name, namespace string) *vmopv1.VirtualMachine {
 	return &vmopv1.VirtualMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -317,20 +350,24 @@ func DummyVirtualMachineA2() *v1alpha2.VirtualMachine {
 					NetworkType: "",
 				},
 			},
-			Volumes: []vmopv1.VirtualMachineVolume{
+			*/
+			Volumes: []v1alpha2.VirtualMachineVolume{
 				{
 					Name: DummyVolumeName,
-					PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
-						PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: DummyPVCName,
+					VirtualMachineVolumeSource: v1alpha2.VirtualMachineVolumeSource{
+						PersistentVolumeClaim: &v1alpha2.PersistentVolumeClaimVolumeSource{
+							PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: DummyPVCName,
+							},
 						},
 					},
 				},
 			},
-			VmMetadata: &vmopv1.VirtualMachineMetadata{
-				ConfigMapName: DummyMetadataCMName,
-				Transport:     "ExtraConfig",
-			},
+			/*
+				VmMetadata: &vmopv1.VirtualMachineMetadata{
+					ConfigMapName: DummyMetadataCMName,
+					Transport:     "ExtraConfig",
+				},
 			*/
 		},
 	}
@@ -474,6 +511,23 @@ func DummyVirtualMachineImage(imageName string) *vmopv1.VirtualMachineImage {
 	}
 }
 
+func DummyVirtualMachineImageA2(imageName string) *v1alpha2.VirtualMachineImage {
+	return &v1alpha2.VirtualMachineImage{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: imageName,
+		},
+		Status: v1alpha2.VirtualMachineImageStatus{
+			Name: imageName,
+			ProductInfo: v1alpha2.VirtualMachineImageProductInfo{
+				FullVersion: DummyDistroVersion,
+			},
+			OSInfo: v1alpha2.VirtualMachineImageOSInfo{
+				Type: DummyOSType,
+			},
+		},
+	}
+}
+
 func DummyClusterVirtualMachineImage(imageName string) *vmopv1.ClusterVirtualMachineImage {
 	return &vmopv1.ClusterVirtualMachineImage{
 		ObjectMeta: metav1.ObjectMeta{
@@ -489,6 +543,23 @@ func DummyClusterVirtualMachineImage(imageName string) *vmopv1.ClusterVirtualMac
 		},
 		Status: vmopv1.VirtualMachineImageStatus{
 			ImageName: imageName,
+		},
+	}
+}
+
+func DummyClusterVirtualMachineImageA2(imageName string) *v1alpha2.ClusterVirtualMachineImage {
+	return &v1alpha2.ClusterVirtualMachineImage{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: imageName,
+		},
+		Status: v1alpha2.VirtualMachineImageStatus{
+			Name: imageName,
+			ProductInfo: v1alpha2.VirtualMachineImageProductInfo{
+				FullVersion: DummyDistroVersion,
+			},
+			OSInfo: v1alpha2.VirtualMachineImageOSInfo{
+				Type: DummyOSType,
+			},
 		},
 	}
 }

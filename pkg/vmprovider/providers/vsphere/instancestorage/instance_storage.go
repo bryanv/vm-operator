@@ -9,6 +9,7 @@ import (
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 )
 
 // IsConfigured checks if VM spec has instance volumes to identify if VM is configured with instance storage
@@ -25,6 +26,18 @@ func IsConfigured(vm *vmopv1.VirtualMachine) bool {
 // FilterVolumes returns instance storage volumes present in VM spec.
 func FilterVolumes(vm *vmopv1.VirtualMachine) []vmopv1.VirtualMachineVolume {
 	var volumes []vmopv1.VirtualMachineVolume
+	for _, vol := range vm.Spec.Volumes {
+		if pvc := vol.PersistentVolumeClaim; pvc != nil && pvc.InstanceVolumeClaim != nil {
+			volumes = append(volumes, vol)
+		}
+	}
+
+	return volumes
+}
+
+// FilterVolumesA2 returns instance storage volumes present in VM spec.
+func FilterVolumesA2(vm *v1alpha2.VirtualMachine) []v1alpha2.VirtualMachineVolume {
+	var volumes []v1alpha2.VirtualMachineVolume
 	for _, vol := range vm.Spec.Volumes {
 		if pvc := vol.PersistentVolumeClaim; pvc != nil && pvc.InstanceVolumeClaim != nil {
 			volumes = append(volumes, vol)

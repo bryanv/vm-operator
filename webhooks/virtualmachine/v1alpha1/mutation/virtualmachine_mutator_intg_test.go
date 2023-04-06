@@ -53,7 +53,8 @@ func intgTestsMutating() {
 		Expect(os.Unsetenv(lib.NetworkProviderType)).Should(Succeed())
 	})
 
-	Describe("mutate", func() {
+	/* BMV: These won't work b/c our webhook framework doesn't set up the conversion wehbooks. */
+	XDescribe("mutate", func() {
 		Context("placeholder", func() {
 			BeforeEach(func() {
 			})
@@ -103,8 +104,6 @@ func intgTestsMutating() {
 					Expect(modified.Spec.NetworkInterfaces).Should(BeEmpty())
 				})
 			})
-
 		})
-
 	})
 }

@@ -19,6 +19,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/util/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -52,6 +53,7 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 
 	r := NewReconciler(
 		mgr.GetClient(),
+		mgr.GetAPIReader(),
 		ctrl.Log.WithName("controllers").WithName("volume"),
 		record.New(mgr.GetEventRecorderFor(controllerNameLong)),
 		ctx.VMProvider,
@@ -80,8 +82,15 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 		return err
 	}
 
+	pvcGVK, err := apiutil.GVKForObject(&corev1.PersistentVolumeClaim{}, mgr.GetScheme())
+	if err != nil {
+		return err
+	}
+	pvcMetaObj := &metav1.PartialObjectMetadata{}
+	pvcMetaObj.SetGroupVersionKind(pvcGVK)
+
 	// Watch for changes for PersistentVolumeClaim, and enqueue VirtualMachine which is the owner of PersistentVolumeClaim.
-	err = c.Watch(&source.Kind{Type: &corev1.PersistentVolumeClaim{}}, &handler.EnqueueRequestForOwner{
+	err = c.Watch(&source.Kind{Type: pvcMetaObj}, &handler.EnqueueRequestForOwner{
 		OwnerType:    &vmopv1.VirtualMachine{},
 		IsController: true,
 	})
@@ -94,11 +103,13 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 
 func NewReconciler(
 	client client.Client,
+	apiReader client.Reader,
 	logger logr.Logger,
 	recorder record.Recorder,
 	vmProvider vmprovider.VirtualMachineProviderInterface) *Reconciler {
 	return &Reconciler{
 		Client:     client,
+		apiReader:  apiReader,
 		logger:     logger,
 		recorder:   recorder,
 		VMProvider: vmProvider,
@@ -109,6 +120,7 @@ var _ reconcile.Reconciler = &Reconciler{}
 
 type Reconciler struct {
 	client.Client
+	apiReader  client.Reader
 	logger     logr.Logger
 	recorder   record.Recorder
 	VMProvider vmprovider.VirtualMachineProviderInterface
@@ -449,7 +461,7 @@ func (r *Reconciler) getInstanceStoragePVCs(
 			Name:      vol.PersistentVolumeClaim.ClaimName,
 		}
 		pvc := &corev1.PersistentVolumeClaim{}
-		if err := r.Get(ctx, objKey, pvc); client.IgnoreNotFound(err) != nil {
+		if err := r.apiReader.Get(ctx, objKey, pvc); client.IgnoreNotFound(err) != nil {
 			errs = append(errs, err)
 			continue
 		}

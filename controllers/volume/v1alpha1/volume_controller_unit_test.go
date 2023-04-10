@@ -120,6 +120,7 @@ func unitTestsReconcile() {
 		ctx = suite.NewUnitTestContextForController(initObjects...)
 		reconciler = v1alpha1.NewReconciler(
 			ctx.Client,
+			ctx.Client,
 			ctx.Logger,
 			ctx.Recorder,
 			ctx.VMProvider,

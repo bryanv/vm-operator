@@ -51,10 +51,13 @@ func New(opts Options) (Manager, error) {
 	_ = imgregv1a1.AddToScheme(opts.Scheme)
 	// +kubebuilder:scaffold:scheme
 
-	// controller-runtime Client creates an Informer for each resource that we watch.
-	// This can cause VM operator pod to be OOM killed. To avoid that, we by-pass
-	// the cache for ConfigMaps and Secrets so they are looked up from API sever directly.
-	cacheDisabledObjects := []client.Object{&corev1.ConfigMap{}, &corev1.Secret{}}
+	// The controller-runtime Client that we use is configured with a cache that Watches()
+	// (creates an Informer for) each type that we Get/List. This can cause our pod to be
+	// OOM killed. To avoid that, we disable the client cache for certain types, meaning
+	// the Get/List for those will go directly to the API server.
+	cacheDisabledObjects := []client.Object{
+		&corev1.ConfigMap{}, &corev1.Secret{}, // Very large for TKGs
+	}
 
 	// Build the controller manager.
 	mgr, err := ctrlmgr.New(opts.KubeConfig, ctrlmgr.Options{

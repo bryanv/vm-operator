@@ -395,7 +395,7 @@ func (v validator) validateVolumeWithPVC(ctx *context.WebhookRequestContext, vm 
 
 	// Check that the name used for the CnsNodeVmAttachment will be valid. Don't double up errors if name is missing.
 	if vol.Name != "" {
-		errs := validation.NameIsDNSSubdomain(volume.CNSAttachmentNameForVolume(vm, vol.Name), false)
+		errs := validation.NameIsDNSSubdomain(volume.CNSAttachmentNameForVolume(vm.Name, vol.Name), false)
 		for _, msg := range errs {
 			allErrs = append(allErrs, field.Invalid(volPath.Child("name"), vol.Name, msg))
 		}

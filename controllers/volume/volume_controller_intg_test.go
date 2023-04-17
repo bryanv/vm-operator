@@ -109,7 +109,7 @@ func intgTests() {
 	}
 
 	getCnsNodeVMAttachment := func(vm *vmopv1.VirtualMachine, vmVol vmopv1.VirtualMachineVolume) *cnsv1alpha1.CnsNodeVmAttachment {
-		objectKey := client.ObjectKey{Name: volume.CNSAttachmentNameForVolume(vm, vmVol.Name), Namespace: vm.Namespace}
+		objectKey := client.ObjectKey{Name: volume.CNSAttachmentNameForVolume(vm.Name, vmVol.Name), Namespace: vm.Namespace}
 		attachment := &cnsv1alpha1.CnsNodeVmAttachment{}
 		if err := ctx.Client.Get(ctx, objectKey, attachment); err == nil {
 			return attachment

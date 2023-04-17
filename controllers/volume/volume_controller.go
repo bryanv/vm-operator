@@ -532,7 +532,7 @@ func (r *Reconciler) processAttachments(
 			continue
 		}
 
-		attachmentName := CNSAttachmentNameForVolume(ctx.VM, volume.Name)
+		attachmentName := CNSAttachmentNameForVolume(ctx.VM.Name, volume.Name)
 		if attachment, ok := attachments[attachmentName]; ok {
 			// The attachment for this volume already exists. Note it might make sense to ensure
 			// that the existing attachment matches what we expect (so like do an Update if needed)
@@ -671,7 +671,7 @@ func (r *Reconciler) attachmentsToDelete(
 	for _, volume := range ctx.VM.Spec.Volumes {
 		// Only process CNS volumes here.
 		if volume.PersistentVolumeClaim != nil {
-			attachmentName := CNSAttachmentNameForVolume(ctx.VM, volume.Name)
+			attachmentName := CNSAttachmentNameForVolume(ctx.VM.Name, volume.Name)
 			expectedAttachments[attachmentName] = true
 		}
 	}
@@ -716,8 +716,8 @@ func (r *Reconciler) deleteOrphanedAttachments(ctx *context.VolumeContext, attac
 // Ideally, we would use GenerateName, but we lack the back-linkage to match
 // Volumes and CnsNodeVmAttachment up.
 // The VM webhook validate that this result will be a valid k8s name.
-func CNSAttachmentNameForVolume(vm *vmopv1.VirtualMachine, volumeName string) string {
-	return vm.Name + "-" + volumeName
+func CNSAttachmentNameForVolume(vmName string, volumeName string) string {
+	return vmName + "-" + volumeName
 }
 
 // The CSI controller sometimes puts the serialized SOAP error into the CnsNodeVmAttachment

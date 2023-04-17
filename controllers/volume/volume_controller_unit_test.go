@@ -141,7 +141,7 @@ func unitTestsReconcile() {
 	})
 
 	getCNSAttachmentForVolumeName := func(vm *vmopv1.VirtualMachine, volumeName string) *cnsv1alpha1.CnsNodeVmAttachment {
-		objectKey := client.ObjectKey{Name: volume.CNSAttachmentNameForVolume(vm, volumeName), Namespace: vm.Namespace}
+		objectKey := client.ObjectKey{Name: volume.CNSAttachmentNameForVolume(vm.Name, volumeName), Namespace: vm.Namespace}
 		attachment := &cnsv1alpha1.CnsNodeVmAttachment{}
 
 		err := ctx.Client.Get(ctx, objectKey, attachment)
@@ -754,7 +754,7 @@ func cnsAttachmentForVMVolume(
 	t := true
 	return &cnsv1alpha1.CnsNodeVmAttachment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      volume.CNSAttachmentNameForVolume(vm, vmVol.Name),
+			Name:      volume.CNSAttachmentNameForVolume(vm.Name, vmVol.Name),
 			Namespace: vm.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
 				{

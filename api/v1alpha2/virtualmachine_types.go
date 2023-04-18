@@ -349,8 +349,16 @@ type VirtualMachine struct {
 	Status VirtualMachineStatus `json:"status,omitempty"`
 }
 
-func (vm VirtualMachine) NamespacedName() string {
+func (vm *VirtualMachine) NamespacedName() string {
 	return vm.Namespace + "/" + vm.Name
+}
+
+func (vm *VirtualMachine) GetConditions() []metav1.Condition {
+	return vm.Status.Conditions
+}
+
+func (vm *VirtualMachine) SetConditions(conditions []metav1.Condition) {
+	vm.Status.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true

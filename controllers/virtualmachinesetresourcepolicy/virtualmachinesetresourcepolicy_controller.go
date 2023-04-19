@@ -15,10 +15,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
-	"github.com/vmware-tanzu/vm-operator/pkg/patch"
+	patch "github.com/vmware-tanzu/vm-operator/pkg/patch2"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider"
 )
 
@@ -36,7 +36,7 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 	r := NewReconciler(
 		mgr.GetClient(),
 		ctrl.Log.WithName("controllers").WithName(controlledTypeName),
-		ctx.VMProvider,
+		ctx.VMProviderA2,
 	)
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -47,7 +47,7 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 func NewReconciler(
 	client client.Client,
 	logger logr.Logger,
-	vmProvider vmprovider.VirtualMachineProviderInterface) *Reconciler {
+	vmProvider vmprovider.VirtualMachineProviderInterfaceA2) *Reconciler {
 	return &Reconciler{
 		Client:     client,
 		Logger:     logger,
@@ -59,7 +59,7 @@ func NewReconciler(
 type Reconciler struct {
 	client.Client
 	Logger     logr.Logger
-	VMProvider vmprovider.VirtualMachineProviderInterface
+	VMProvider vmprovider.VirtualMachineProviderInterfaceA2
 }
 
 // ReconcileNormal reconciles a VirtualMachineSetResourcePolicy.
@@ -96,7 +96,7 @@ func (r *Reconciler) deleteResourcePolicy(ctx *context.VirtualMachineSetResource
 	}
 
 	for _, vm := range vmsInNamespace.Items {
-		if vm.Spec.ResourcePolicyName == resourcePolicy.Name {
+		if vm.Spec.Reserved.ResourcePolicyName == resourcePolicy.Name {
 			return fmt.Errorf("failing VirtualMachineSetResourcePolicy deletion since VM: '%s' is referencing it, resourcePolicyName: '%s'",
 				vm.NamespacedName(), resourcePolicy.NamespacedName())
 		}

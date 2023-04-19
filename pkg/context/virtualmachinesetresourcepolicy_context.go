@@ -9,10 +9,10 @@ import (
 
 	"github.com/go-logr/logr"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 )
 
-// VirtualMachineSetResourcePolicyContext is the context used for VirtualMachineControllers.
+// VirtualMachineSetResourcePolicyContext is the context used for VirtualMachineSetResourcePolicyController.
 type VirtualMachineSetResourcePolicyContext struct {
 	context.Context
 	Logger         logr.Logger

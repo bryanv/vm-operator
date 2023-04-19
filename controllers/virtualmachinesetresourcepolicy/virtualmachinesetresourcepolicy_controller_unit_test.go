@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachinesetresourcepolicy"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
@@ -53,7 +53,9 @@ func unitTestsReconcile() {
 				Namespace: "dummy-ns",
 			},
 			Spec: vmopv1.VirtualMachineSpec{
-				ResourcePolicyName: "dummy-rp",
+				Reserved: vmopv1.VirtualMachineReservedSpec{
+					ResourcePolicyName: "dummy-rp",
+				},
 			},
 		}
 	})
@@ -63,7 +65,7 @@ func unitTestsReconcile() {
 		reconciler = &virtualmachinesetresourcepolicy.Reconciler{
 			Client:     ctx.Client,
 			Logger:     ctx.Logger,
-			VMProvider: ctx.VMProvider,
+			VMProvider: ctx.VMProviderA2,
 		}
 
 		resourcePolicyCtx = &context.VirtualMachineSetResourcePolicyContext{

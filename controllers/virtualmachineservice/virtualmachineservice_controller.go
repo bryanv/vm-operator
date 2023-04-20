@@ -25,13 +25,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineservice/providers"
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineservice/utils"
-	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
-	"github.com/vmware-tanzu/vm-operator/pkg/patch"
+	patch "github.com/vmware-tanzu/vm-operator/pkg/patch2"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
 )
 
@@ -570,15 +570,10 @@ func (r *ReconcileVirtualMachineService) createOrUpdateEndpoints(ctx *context.Vi
 	return nil
 }
 
-func findVMPortNum(vm *vmopv1.VirtualMachine, port intstr.IntOrString, portProto corev1.Protocol) (int, error) {
+func findVMPortNum(_ *vmopv1.VirtualMachine, port intstr.IntOrString, _ corev1.Protocol) (int, error) {
 	switch port.Type {
 	case intstr.String:
-		// NOTE: The VM Spec.Ports is deprecated.
-		for _, vmPort := range vm.Spec.Ports {
-			if vmPort.Name == port.StrVal && vmPort.Protocol == portProto {
-				return vmPort.Port, nil
-			}
-		}
+		// Not supported.
 	case intstr.Int:
 		return port.IntValue(), nil
 	}
@@ -608,11 +603,19 @@ func (r *ReconcileVirtualMachineService) generateSubsetsForService(
 			continue
 		}
 
-		if vm.Status.VmIp == "" {
+		var vmIP string
+		if vm.Status.Network != nil {
+			vmIP = vm.Status.Network.PrimaryIP4
+			if vmIP == "" {
+				vmIP = vm.Status.Network.PrimaryIP6
+			}
+		}
+
+		if vmIP == "" {
 			// The EndpointAddress must have a valid IP so we cannot include this VM in the
 			// NotReadyAddresses.
 			// TODO: When we more fully support multiple NICs, we'll need someway to select which IP.
-			logger.Info("Skipping VM that does not have an IP")
+			logger.Info("Skipping VM without primary IP assigned")
 			continue
 		}
 
@@ -623,8 +626,8 @@ func (r *ReconcileVirtualMachineService) generateSubsetsForService(
 		// Otherwise, a VM that does not have a ReadinessProbe is implicitly ready.
 		ready := true
 
-		if vm.Spec.ReadinessProbe != nil {
-			if condition := conditions.Get(&vm, vmopv1.ReadyCondition); condition == nil {
+		if probe := vm.Spec.ReadinessProbe; probe.TCPSocket != nil || probe.GuestHeartbeat != nil || len(probe.GuestInfo) != 0 {
+			if condition := conditions.Get(&vm, vmopv1.ReadyConditionType); condition == nil {
 				if vmInSubsetsMap == nil {
 					vmInSubsetsMap = r.getVMsReferencedByServiceEndpoints(ctx, service)
 				}
@@ -634,12 +637,12 @@ func (r *ReconcileVirtualMachineService) generateSubsetsForService(
 				// Ready condition).
 				_, ready = vmInSubsetsMap[vm.UID]
 			} else {
-				ready = condition.Status == corev1.ConditionTrue
+				ready = condition.Status == metav1.ConditionTrue
 			}
 		}
 
 		epa := corev1.EndpointAddress{
-			IP: vm.Status.VmIp,
+			IP: vmIP,
 			TargetRef: &corev1.ObjectReference{
 				APIVersion: vm.APIVersion,
 				Kind:       vm.Kind,

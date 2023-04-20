@@ -16,12 +16,12 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineservice"
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineservice/providers"
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineservice/utils"
-	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	vmopContext "github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -430,7 +430,9 @@ func unitTestsReconcile() {
 						Labels:    vmLabels,
 					},
 					Status: vmopv1.VirtualMachineStatus{
-						VmIp: "1.1.1.1",
+						Network: &vmopv1.VirtualMachineNetworkStatus{
+							PrimaryIP4: "1.1.1.1",
+						},
 					},
 				}
 
@@ -441,7 +443,9 @@ func unitTestsReconcile() {
 						Labels:    vmLabels,
 					},
 					Status: vmopv1.VirtualMachineStatus{
-						VmIp: "2.2.2.2",
+						Network: &vmopv1.VirtualMachineNetworkStatus{
+							PrimaryIP4: "2.2.2.2",
+						},
 					},
 				}
 
@@ -452,7 +456,9 @@ func unitTestsReconcile() {
 						Labels:    map[string]string{},
 					},
 					Status: vmopv1.VirtualMachineStatus{
-						VmIp: "3.3.3.3",
+						Network: &vmopv1.VirtualMachineNetworkStatus{
+							PrimaryIP4: "3.3.3.3",
+						},
 					},
 				}
 			})
@@ -501,7 +507,7 @@ func unitTestsReconcile() {
 
 				Context("When VM does not have IP", func() {
 					BeforeEach(func() {
-						vm1.Status.VmIp = ""
+						vm1.Status.Network.PrimaryIP4 = ""
 					})
 
 					It("Not included in Subsets", func() {
@@ -552,9 +558,9 @@ func unitTestsReconcile() {
 
 			Context("When VMs have Readiness Probe", func() {
 				BeforeEach(func() {
-					vm1.Spec.ReadinessProbe = &vmopv1.Probe{}
-					vm2.Spec.ReadinessProbe = &vmopv1.Probe{}
-					vm3.Spec.ReadinessProbe = &vmopv1.Probe{}
+					vm1.Spec.ReadinessProbe.TCPSocket = &vmopv1.TCPSocketAction{}
+					vm2.Spec.ReadinessProbe.TCPSocket = &vmopv1.TCPSocketAction{}
+					vm3.Spec.ReadinessProbe.TCPSocket = &vmopv1.TCPSocketAction{}
 
 					initObjects = append(initObjects, vm1, vm2, vm3)
 				})
@@ -574,7 +580,7 @@ func unitTestsReconcile() {
 
 				Context("Unready VM with false Ready condition", func() {
 					BeforeEach(func() {
-						conditions.MarkFalse(vm1, vmopv1.ReadyCondition, "reason", vmopv1.ConditionSeverityError, "")
+						conditions.MarkFalse(vm1, vmopv1.ReadyConditionType, "reason", "")
 					})
 
 					It("With expected Subsets", func() {
@@ -593,7 +599,7 @@ func unitTestsReconcile() {
 
 				Context("Ready VM with true Ready condition", func() {
 					BeforeEach(func() {
-						conditions.MarkTrue(vm1, vmopv1.ReadyCondition)
+						conditions.MarkTrue(vm1, vmopv1.ReadyConditionType)
 					})
 
 					It("With expected Subsets", func() {
@@ -614,11 +620,11 @@ func unitTestsReconcile() {
 			Context("Preserve VMs in Endpoints that have Probe but hasn't run yet", func() {
 				BeforeEach(func() {
 					vm1.UID = "abc"
-					vm1.Spec.ReadinessProbe = &vmopv1.Probe{}
+					vm1.Spec.ReadinessProbe.TCPSocket = &vmopv1.TCPSocketAction{}
 					vm2.UID = "xyz"
-					vm2.Spec.ReadinessProbe = &vmopv1.Probe{}
+					vm2.Spec.ReadinessProbe.TCPSocket = &vmopv1.TCPSocketAction{}
 					// Initial setup so that the first Reconcile will add the VM.
-					conditions.MarkTrue(vm1, vmopv1.ReadyCondition)
+					conditions.MarkTrue(vm1, vmopv1.ReadyConditionType)
 					initObjects = append(initObjects, vm1, vm2)
 				})
 
@@ -674,7 +680,9 @@ func unitTestsReconcile() {
 						Labels:    vmLabels,
 					},
 					Status: vmopv1.VirtualMachineStatus{
-						VmIp: "1.1.1.1",
+						Network: &vmopv1.VirtualMachineNetworkStatus{
+							PrimaryIP4: "1.1.1.1",
+						},
 					},
 				}
 
@@ -975,7 +983,8 @@ func assertEPAddrFromVM(
 	addr corev1.EndpointAddress,
 	vm *vmopv1.VirtualMachine) {
 
-	ExpectWithOffset(1, addr.IP).To(Equal(vm.Status.VmIp))
+	ExpectWithOffset(1, vm.Status.Network).ToNot(BeNil())
+	ExpectWithOffset(1, addr.IP).To(Equal(vm.Status.Network.PrimaryIP4))
 	ExpectWithOffset(1, addr.TargetRef).ToNot(BeNil())
 	ExpectWithOffset(1, addr.TargetRef.Name).To(Equal(vm.Name))
 	ExpectWithOffset(1, addr.TargetRef.Namespace).To(Equal(vm.Namespace))

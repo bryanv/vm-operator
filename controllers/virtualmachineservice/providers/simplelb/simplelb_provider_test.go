@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -74,12 +74,6 @@ var _ = Describe("", func() {
 
 	vmClass := &vmopv1.VirtualMachineClass{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "best-effort-small",
-		},
-	}
-
-	vmClassBinding := &vmopv1.VirtualMachineClassBinding{
-		ObjectMeta: metav1.ObjectMeta{
 			Name:      "best-effort-small",
 			Namespace: testNs,
 		},
@@ -91,12 +85,6 @@ var _ = Describe("", func() {
 		Expect(client.List(context.TODO(), classList)).To(Succeed())
 		if len(classList.Items) == 0 {
 			Expect(client.Create(context.TODO(), vmClass)).To(Succeed())
-		}
-
-		bindingList := &vmopv1.VirtualMachineClassBindingList{}
-		Expect(client.List(context.TODO(), bindingList)).To(Succeed())
-		if len(bindingList.Items) == 0 {
-			Expect(client.Create(context.TODO(), vmClassBinding)).To(Succeed())
 		}
 
 		// ensure vm image exists.
@@ -121,7 +109,7 @@ var _ = Describe("", func() {
 
 		When("the LB VM has an IP address", func() {
 			It("should update the VMService Loadbalancer IP", func() {
-				vm.Status.VmIp = lbVMIP
+				vm.Status.Network = &vmopv1.VirtualMachineNetworkStatus{PrimaryIP4: lbVMIP}
 				err := client.Status().Update(context.TODO(), vm)
 				Expect(err).ToNot(HaveOccurred())
 

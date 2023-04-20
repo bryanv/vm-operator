@@ -20,7 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 )
 
 type Provider struct {
@@ -58,8 +58,8 @@ func (s *Provider) EnsureLoadBalancer(ctx context.Context, vmService *vmopv1.Vir
 	}
 	lbParams := getLBConfigParams(vmService, xdsNodes)
 	vm := loadbalancerVM(vmService, vmClassName, vmImageName)
-	cm := loadbalancerCM(vmService, lbParams)
-	if err := s.ensureLBVM(ctx, vm, cm); err != nil {
+	secret := loadbalancerSecret(vmService, lbParams)
+	if err := s.ensureLBVM(ctx, vm, secret); err != nil {
 		return err
 	}
 	if err := s.ensureLBIP(ctx, vmService, vm); err != nil {
@@ -72,17 +72,17 @@ func (s *Provider) EnsureLoadBalancer(ctx context.Context, vmService *vmopv1.Vir
 // GetVirtualMachineClassName returns the class name for loadbalancer-vm.
 // We need to choose the VM class name which the namespace has access to instead of hardcode it.
 func (s *Provider) GetVirtualMachineClassName(ctx context.Context, namespace string) (string, error) {
-	bindingList := &vmopv1.VirtualMachineClassBindingList{}
-	if err := s.client.List(ctx, bindingList, client.InNamespace(namespace)); err != nil {
-		s.log.Error(err, "failed to list VirtualMachineClassBindings from control plane")
+	classes := &vmopv1.VirtualMachineClassList{}
+	if err := s.client.List(ctx, classes, client.InNamespace(namespace)); err != nil {
+		s.log.Error(err, "failed to list VirtualMachineClasses from control plane")
 		return "", err
 	}
 
-	if len(bindingList.Items) == 0 {
+	if len(classes.Items) == 0 {
 		return "", fmt.Errorf("no virtual machine class is available in namespace %s", namespace)
 	}
 
-	return bindingList.Items[0].Name, nil
+	return classes.Items[0].Name, nil
 }
 
 // GetVirtualMachineImageName returns the image name for loadbalancer-vm image in the cluster.
@@ -118,12 +118,12 @@ func (s *Provider) GetToBeRemovedServiceAnnotations(ctx context.Context, vmServi
 	return nil, nil
 }
 
-func (s *Provider) ensureLBVM(ctx context.Context, vm *vmopv1.VirtualMachine, cm *corev1.ConfigMap) error {
-	if err := s.client.Get(ctx, types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, cm); err != nil {
+func (s *Provider) ensureLBVM(ctx context.Context, vm *vmopv1.VirtualMachine, secret *corev1.Secret) error {
+	if err := s.client.Get(ctx, types.NamespacedName{Namespace: secret.Namespace, Name: secret.Name}, secret); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
-		if err := s.client.Create(ctx, cm); err != nil {
+		if err := s.client.Create(ctx, secret); err != nil {
 			return err
 		}
 	}
@@ -162,23 +162,27 @@ func loadbalancerVM(vmService *vmopv1.VirtualMachineService, vmClassName, vmImag
 		Spec: vmopv1.VirtualMachineSpec{
 			ImageName:  vmImageName,
 			ClassName:  vmClassName,
-			PowerState: "poweredOn",
-			VmMetadata: &vmopv1.VirtualMachineMetadata{
-				ConfigMapName: metadataCMName(vmService),
-				Transport:     vmopv1.VirtualMachineMetadataExtraConfigTransport,
+			PowerState: vmopv1.VirtualMachinePowerStateOn,
+			Bootstrap: vmopv1.VirtualMachineBootstrapSpec{
+				CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{
+					RawCloudConfig: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: metadataCMName(vmService)},
+						Key:                  "guestinfo.userdata",
+					},
+				},
 			},
 		},
 	}
 }
 
-func loadbalancerCM(vmService *vmopv1.VirtualMachineService, params lbConfigParams) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
+func loadbalancerSecret(vmService *vmopv1.VirtualMachineService, params lbConfigParams) *corev1.Secret {
+	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            metadataCMName(vmService),
 			Namespace:       vmService.Namespace,
 			OwnerReferences: []metav1.OwnerReference{makeVMServiceOwnerRef(vmService)},
 		},
-		Data: map[string]string{
+		StringData: map[string]string{
 			"guestinfo.userdata":          renderAndBase64EncodeLBCloudConfig(params),
 			"guestinfo.userdata.encoding": "base64",
 		},
@@ -191,7 +195,7 @@ func metadataCMName(vmService *vmopv1.VirtualMachineService) string {
 
 func (s *Provider) ensureLBIP(ctx context.Context, vmService *vmopv1.VirtualMachineService, vm *vmopv1.VirtualMachine) error {
 	if len(vmService.Status.LoadBalancer.Ingress) == 0 || vmService.Status.LoadBalancer.Ingress[0].IP == "" {
-		if vm.Status.VmIp == "" {
+		if vm.Status.Network == nil || vm.Status.Network.PrimaryIP4 == "" {
 			return errors.New("LB VM IP is not ready yet")
 		}
 
@@ -201,7 +205,7 @@ func (s *Provider) ensureLBIP(ctx context.Context, vmService *vmopv1.VirtualMach
 			Name:      vmService.Name,
 		}, service); err == nil {
 			service.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{
-				IP: vm.Status.VmIp,
+				IP: vm.Status.Network.PrimaryIP4,
 			}}
 			err := s.client.Status().Update(ctx, service)
 			if err != nil {

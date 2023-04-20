@@ -11,9 +11,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
-	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
 
@@ -87,15 +87,16 @@ func intgTests() {
 							Labels:    vmLabels,
 						},
 						Spec: vmopv1.VirtualMachineSpec{
-							PowerState:     vmopv1.VirtualMachinePoweredOn,
-							ReadinessProbe: &vmopv1.Probe{},
+							PowerState: vmopv1.VirtualMachinePowerStateOn,
+							ReadinessProbe: vmopv1.VirtualMachineReadinessProbeSpec{
+								TCPSocket: &vmopv1.TCPSocketAction{},
+							},
 						},
 					}
 					Expect(ctx.Client.Create(ctx, notReadyVM)).To(Succeed())
-					notReadyVM.Status.VmIp = vmIP1
-					conditions.MarkFalse(notReadyVM, vmopv1.ReadyCondition, "not ready",
-						vmopv1.ConditionSeverityError, "VM should be skipped")
-					Expect(ctx.Client.Status().Update(ctx, notReadyVM))
+					notReadyVM.Status.Network = &vmopv1.VirtualMachineNetworkStatus{PrimaryIP4: vmIP1}
+					conditions.MarkFalse(notReadyVM, vmopv1.ReadyConditionType, "not_ready", "VM should be skipped")
+					Expect(ctx.Client.Status().Update(ctx, notReadyVM)).To(Succeed())
 				})
 
 				vmService := &vmopv1.VirtualMachineService{
@@ -164,7 +165,8 @@ func intgTests() {
 
 						Expect(subset.NotReadyAddresses).To(HaveLen(1))
 						address := subset.NotReadyAddresses[0]
-						Expect(address.IP).To(Equal(notReadyVM.Status.VmIp))
+						Expect(notReadyVM.Status.Network).ToNot(BeNil())
+						Expect(address.IP).To(Equal(notReadyVM.Status.Network.PrimaryIP4))
 						Expect(address.TargetRef).ToNot(BeNil())
 						Expect(address.TargetRef.Name).To(Equal(notReadyVM.Name))
 						Expect(address.TargetRef.Namespace).To(Equal(notReadyVM.Namespace))
@@ -183,14 +185,16 @@ func intgTests() {
 							Labels:    vmLabels,
 						},
 						Spec: vmopv1.VirtualMachineSpec{
-							PowerState:     vmopv1.VirtualMachinePoweredOn,
-							ReadinessProbe: &vmopv1.Probe{},
+							PowerState: vmopv1.VirtualMachinePowerStateOn,
+							ReadinessProbe: vmopv1.VirtualMachineReadinessProbeSpec{
+								GuestHeartbeat: &vmopv1.GuestHeartbeatAction{},
+							},
 						},
 					}
 					Expect(ctx.Client.Create(ctx, readyVM)).To(Succeed())
 
-					readyVM.Status.VmIp = vmIP2
-					conditions.MarkTrue(readyVM, vmopv1.ReadyCondition)
+					readyVM.Status.Network = &vmopv1.VirtualMachineNetworkStatus{PrimaryIP4: vmIP2}
+					conditions.MarkTrue(readyVM, vmopv1.ReadyConditionType)
 					Expect(ctx.Client.Status().Update(ctx, readyVM)).To(Succeed())
 				})
 
@@ -212,7 +216,8 @@ func intgTests() {
 					Expect(subset.NotReadyAddresses).To(HaveLen(1))
 
 					address := subset.Addresses[0]
-					Expect(address.IP).To(Equal(readyVM.Status.VmIp))
+					Expect(readyVM.Status.Network).ToNot(BeNil())
+					Expect(address.IP).To(Equal(readyVM.Status.Network.PrimaryIP4))
 					Expect(address.TargetRef).ToNot(BeNil())
 					Expect(address.TargetRef.Name).To(Equal(readyVM.Name))
 					Expect(address.TargetRef.Namespace).To(Equal(readyVM.Namespace))
@@ -290,19 +295,21 @@ func intgTests() {
 				By("Create ready VM with selected labels", func() {
 					readyVM = &vmopv1.VirtualMachine{
 						ObjectMeta: metav1.ObjectMeta{
-							Name:      "not-ready-vm",
+							Name:      "ready-vm",
 							Namespace: ctx.Namespace,
 							Labels:    vmLabels,
 						},
 						Spec: vmopv1.VirtualMachineSpec{
-							PowerState:     vmopv1.VirtualMachinePoweredOn,
-							ReadinessProbe: &vmopv1.Probe{},
+							PowerState: vmopv1.VirtualMachinePowerStateOn,
+							ReadinessProbe: vmopv1.VirtualMachineReadinessProbeSpec{
+								TCPSocket: &vmopv1.TCPSocketAction{},
+							},
 						},
 					}
 					Expect(ctx.Client.Create(ctx, readyVM)).To(Succeed())
-					readyVM.Status.VmIp = vmIP1
-					conditions.MarkTrue(readyVM, vmopv1.ReadyCondition)
-					Expect(ctx.Client.Status().Update(ctx, readyVM))
+					readyVM.Status.Network = &vmopv1.VirtualMachineNetworkStatus{PrimaryIP4: vmIP1}
+					conditions.MarkTrue(readyVM, vmopv1.ReadyConditionType)
+					Expect(ctx.Client.Status().Update(ctx, readyVM)).To(Succeed())
 				})
 
 				vmService := &vmopv1.VirtualMachineService{
@@ -339,7 +346,7 @@ func intgTests() {
 					Expect(subset.Addresses).To(HaveLen(1))
 
 					address := subset.Addresses[0]
-					Expect(address.IP).To(Equal(readyVM.Status.VmIp))
+					Expect(address.IP).To(Equal(readyVM.Status.Network.PrimaryIP4))
 
 					Expect(subset.Ports).To(HaveLen(1))
 					port := subset.Ports[0]

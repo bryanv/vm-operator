@@ -9,7 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineservice/providers/simplelb"
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineservice/utils"

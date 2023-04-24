@@ -284,7 +284,6 @@ func (s *VMProviderA2) GetTasksByActID(ctx context.Context, actID string) (tasks
 		DescriptionId: "com.vmware.ovfs.LibraryItem.capture",
 		ActivationId:  actID,
 		State:         status,
-		Result:        "dummy-item",
 	}
 
 	return []vimTypes.TaskInfo{task1}, nil

@@ -8,26 +8,22 @@ import (
 	"fmt"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-
-	"github.com/google/uuid"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
+	"github.com/google/uuid"
+	"github.com/vmware/govmomi/vapi/library"
+	"github.com/vmware/govmomi/vim25/types"
+	corev1 "k8s.io/api/core/v1"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/vmware/govmomi/vapi/library"
-	"github.com/vmware/govmomi/vim25/types"
-
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
-
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
 
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachinepublishrequest"
-	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	vmopContext "github.com/vmware-tanzu/vm-operator/pkg/context"
 	providerfake "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/fake"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
@@ -45,7 +41,7 @@ func unitTestsReconcile() {
 		ctx         *builder.UnitTestContextForController
 
 		reconciler     *virtualmachinepublishrequest.Reconciler
-		fakeVMProvider *providerfake.VMProvider
+		fakeVMProvider *providerfake.VMProviderA2
 
 		vm       *vmopv1.VirtualMachine
 		vmpub    *vmopv1.VirtualMachinePublishRequest
@@ -61,11 +57,10 @@ func unitTestsReconcile() {
 			},
 			Status: vmopv1.VirtualMachineStatus{
 				UniqueID: "dummy-id",
-				Phase:    vmopv1.Created,
 			},
 		}
 
-		vmpub = builder.DummyVirtualMachinePublishRequest("dummy-vmpub", vm.Namespace, vm.Name, "dummy-item", "dummy-cl")
+		vmpub = builder.DummyVirtualMachinePublishRequestA2("dummy-vmpub", vm.Namespace, vm.Name, "dummy-item", "dummy-cl")
 		cl = builder.DummyContentLibrary("dummy-cl", vm.Namespace, "dummy-id")
 	})
 
@@ -76,9 +71,9 @@ func unitTestsReconcile() {
 			ctx.Client,
 			ctx.Logger,
 			ctx.Recorder,
-			ctx.VMProvider,
+			ctx.VMProviderA2,
 		)
-		fakeVMProvider = ctx.VMProvider.(*providerfake.VMProvider)
+		fakeVMProvider = ctx.VMProviderA2.(*providerfake.VMProviderA2)
 		fakeVMProvider.Reset()
 
 		vmpubCtx = &vmopContext.VirtualMachinePublishRequestContext{
@@ -390,25 +385,15 @@ func unitTestsReconcile() {
 						}
 					})
 
-					getCondition := func(obj *vmopv1.VirtualMachinePublishRequest,
-						condition vmopv1.ConditionType) *vmopv1.Condition {
-						for _, cond := range obj.Status.Conditions {
-							if cond.Type == condition {
-								return &cond
-							}
-						}
-						return nil
-					}
-
 					It("result object invalid, Upload condition is false, not send a second publish VM request and return success", func() {
 						_, err := reconciler.ReconcileNormal(vmpubCtx)
 						Expect(err).NotTo(HaveOccurred())
 
 						Expect(fakeVMProvider.IsPublishVMCalled()).To(BeFalse())
 
-						uploadCondition := getCondition(vmpub, vmopv1.VirtualMachinePublishRequestConditionUploaded)
+						uploadCondition := conditions.Get(vmpub, vmopv1.VirtualMachinePublishRequestConditionUploaded)
 						Expect(uploadCondition).ToNot(BeNil())
-						Expect(uploadCondition.Status).To(Equal(corev1.ConditionFalse))
+						Expect(uploadCondition.Status).To(Equal(metav1.ConditionFalse))
 						Expect(uploadCondition.Reason).To(Equal(vmopv1.UploadItemIDInvalidReason))
 					})
 
@@ -420,8 +405,8 @@ func unitTestsReconcile() {
 
 						Expect(fakeVMProvider.IsPublishVMCalled()).To(BeFalse())
 
-						uploadCondition := getCondition(vmpub, vmopv1.VirtualMachinePublishRequestConditionUploaded)
-						Expect(uploadCondition.Status).To(Equal(corev1.ConditionFalse))
+						uploadCondition := conditions.Get(vmpub, vmopv1.VirtualMachinePublishRequestConditionUploaded)
+						Expect(uploadCondition.Status).To(Equal(metav1.ConditionFalse))
 						Expect(uploadCondition.Reason).To(Equal(vmopv1.UploadItemIDInvalidReason))
 					})
 
@@ -432,9 +417,9 @@ func unitTestsReconcile() {
 
 						Expect(fakeVMProvider.IsPublishVMCalled()).To(BeFalse())
 
-						uploadCondition := getCondition(vmpub, vmopv1.VirtualMachinePublishRequestConditionUploaded)
+						uploadCondition := conditions.Get(vmpub, vmopv1.VirtualMachinePublishRequestConditionUploaded)
 						Expect(uploadCondition).ToNot(BeNil())
-						Expect(uploadCondition.Status).To(Equal(corev1.ConditionFalse))
+						Expect(uploadCondition.Status).To(Equal(metav1.ConditionFalse))
 						Expect(uploadCondition.Reason).To(Equal(vmopv1.UploadItemIDInvalidReason))
 					})
 				})
@@ -474,10 +459,11 @@ func unitTestsReconcile() {
 
 					When("VirtualMachineImage is available", func() {
 						JustBeforeEach(func() {
-							vmi := builder.DummyVirtualMachineImage("dummy-image")
+							vmi := builder.DummyVirtualMachineImageA2("dummy-image")
 							vmi.Namespace = vmpub.Namespace
-							vmi.Spec.ImageID = itemID
 							Expect(ctx.Client.Create(ctx, vmi)).To(Succeed())
+							vmi.Status.ProviderItemID = itemID
+							Expect(ctx.Client.Status().Update(ctx, vmi)).To(Succeed())
 						})
 
 						It("Complete condition is true, not send a second publish VM request and return success", func() {
@@ -660,8 +646,7 @@ func unitTestsReconcile() {
 						vmpub.UID)
 					fakeVMProvider.GetItemFromLibraryByNameFn = func(ctx goctx.Context,
 						contentLibrary, itemName string) (*library.Item, error) {
-						return &library.Item{ID: "dummy-id",
-							Description: &description}, nil
+						return &library.Item{ID: "dummy-id", Description: &description}, nil
 					}
 					fakeVMProvider.Unlock()
 				})

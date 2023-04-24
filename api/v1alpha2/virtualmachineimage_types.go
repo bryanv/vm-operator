@@ -131,7 +131,6 @@ type VirtualMachineImageSpec struct {
 
 // VirtualMachineImageStatus defines the observed state of VirtualMachineImage.
 type VirtualMachineImageStatus struct {
-
 	// Name describes the observed, "friendly" name for this image.
 	//
 	// +optional

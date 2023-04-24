@@ -694,7 +694,7 @@ func DummyVirtualMachinePublishRequestA2(name, namespace, sourceName, itemName, 
 		Spec: v1alpha2.VirtualMachinePublishRequestSpec{
 			Source: v1alpha2.VirtualMachinePublishRequestSource{
 				Name:       sourceName,
-				APIVersion: "vmoperator.vmware.com/v1alpha1",
+				APIVersion: "vmoperator.vmware.com/v1alpha2",
 				Kind:       "VirtualMachine",
 			},
 			Target: v1alpha2.VirtualMachinePublishRequestTarget{

@@ -347,6 +347,14 @@ type VirtualMachinePublishRequest struct {
 	Status VirtualMachinePublishRequestStatus `json:"status,omitempty"`
 }
 
+func (r *VirtualMachinePublishRequest) GetConditions() []metav1.Condition {
+	return r.Status.Conditions
+}
+
+func (r *VirtualMachinePublishRequest) SetConditions(conditions []metav1.Condition) {
+	r.Status.Conditions = conditions
+}
+
 // +kubebuilder:object:root=true
 
 // VirtualMachinePublishRequestList contains a list of

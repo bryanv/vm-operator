@@ -172,7 +172,6 @@ func overrideVirtualMachineImageFieldsFuncs(codecs runtimeserializer.CodecFactor
 			// Do not exist in v1a2.
 			imageSpec.Type = ""
 			imageSpec.ImageSourceType = ""
-			imageSpec.ImageID = ""
 			imageSpec.ProviderRef.Namespace = ""
 		},
 		func(imageStatus *v1alpha1.VirtualMachineImageStatus, c fuzz.Continue) {

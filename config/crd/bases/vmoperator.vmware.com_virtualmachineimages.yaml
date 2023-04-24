@@ -513,6 +513,12 @@ spec:
                   of this image is a Content Library, this will be the version of
                   the corresponding Content Library item.
                 type: string
+              providerItemID:
+                description: ProviderItemID describes the ID of the provider item
+                  that this image corresponds to. If the provider of this image is
+                  a Content Library, this ID will be that of the corresponding Content
+                  Library item.
+                type: string
             type: object
         type: object
     served: true

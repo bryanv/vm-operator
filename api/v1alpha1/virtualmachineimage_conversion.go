@@ -143,6 +143,8 @@ func convert_v1alpha1_VirtualMachineImageSpec_To_v1alpha2_VirtualMachineImageSta
 		out.HardwareVersion = &in.HardwareVersion
 	}
 
+	out.ProviderItemID = in.ImageID
+
 	if err := convert_v1alpha1_VirtualMachineImageOSInfo_To_v1alpha2_VirtualMachineImageOSInfo(&in.OSInfo, &out.OSInfo, s); err != nil {
 		return err
 	}
@@ -167,6 +169,8 @@ func convert_v1alpha2_VirtualMachineImageStatus_To_v1alpha1_VirtualMachineImageS
 	if in.HardwareVersion != nil {
 		out.HardwareVersion = *in.HardwareVersion
 	}
+
+	out.ImageID = in.ProviderItemID
 
 	if err := Convert_v1alpha2_VirtualMachineImageOSInfo_To_v1alpha1_VirtualMachineImageOSInfo(&in.OSInfo, &out.OSInfo, s); err != nil {
 		return err

@@ -10,15 +10,14 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
-	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
-
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
+	patch "github.com/vmware-tanzu/vm-operator/pkg/patch2"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
 )
 
@@ -65,20 +64,34 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineclasses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineclasses/status,verbs=get;update;patch
 
-func (r *Reconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	vmClass := &vmopv1.VirtualMachineClass{}
-	err := r.Get(ctx, req.NamespacedName, vmClass)
-	if err != nil {
-		if apiErrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
+	if err := r.Get(ctx, req.NamespacedName, vmClass); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	vmClassCtx := &context.VirtualMachineClassContext{
 		Context: ctx,
 		Logger:  ctrl.Log.WithName("VirtualMachineClass").WithValues("name", req.Name),
 		VMClass: vmClass,
+	}
+
+	patchHelper, err := patch.NewHelper(vmClass, r.Client)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to init patch helper for %s: %w", vmClassCtx.String(), err)
+	}
+	defer func() {
+		if err := patchHelper.Patch(ctx, vmClass); err != nil {
+			if reterr == nil {
+				reterr = err
+			}
+			vmClassCtx.Logger.Error(err, "patch failed")
+		}
+	}()
+
+	if !vmClass.DeletionTimestamp.IsZero() {
+		// Noop.
+		return ctrl.Result{}, nil
 	}
 
 	if err := r.ReconcileNormal(vmClassCtx); err != nil {
@@ -89,7 +102,8 @@ func (r *Reconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (ctrl.Result
 	return ctrl.Result{}, nil
 }
 
-func (r *Reconciler) ReconcileNormal(_ *context.VirtualMachineClassContext) error {
-	// NoOp.
+func (r *Reconciler) ReconcileNormal(vmClassCtx *context.VirtualMachineClassContext) error {
+	// Implicitly always ready until we actually check. Don't worry about the conditions for now.
+	vmClassCtx.VMClass.Status.Ready = true
 	return nil
 }

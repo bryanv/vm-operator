@@ -247,6 +247,14 @@ type VirtualMachineClass struct {
 	Status VirtualMachineClassStatus `json:"status,omitempty"`
 }
 
+func (vmClass *VirtualMachineClass) GetConditions() []metav1.Condition {
+	return vmClass.Status.Conditions
+}
+
+func (vmClass *VirtualMachineClass) SetConditions(conditions []metav1.Condition) {
+	vmClass.Status.Conditions = conditions
+}
+
 // +kubebuilder:object:root=true
 
 // VirtualMachineClassList contains a list of VirtualMachineClass.

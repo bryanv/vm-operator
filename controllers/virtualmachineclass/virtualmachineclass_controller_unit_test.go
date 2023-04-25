@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineclass"
 	vmopContext "github.com/vmware-tanzu/vm-operator/pkg/context"
@@ -59,11 +59,10 @@ func unitTestsReconcile() {
 			initObjects = append(initObjects, vmClass)
 		})
 
-		When("NoOp", func() {
-			It("returns success", func() {
-				err := reconciler.ReconcileNormal(vmClassCtx)
-				Expect(err).ToNot(HaveOccurred())
-			})
+		It("returns success", func() {
+			err := reconciler.ReconcileNormal(vmClassCtx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(vmClassCtx.VMClass.Status.Ready).To(BeTrue())
 		})
 	})
 }

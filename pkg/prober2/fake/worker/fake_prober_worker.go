@@ -47,12 +47,16 @@ func (w *FakeWorker) GetQueue() workqueue.DelayingInterface {
 }
 
 func (w *FakeWorker) CreateProbeContext(vm *vmopv1.VirtualMachine) (*context.ProbeContext, error) {
+	if vm.Spec.ReadinessProbe.TCPSocket == nil {
+		return nil, nil
+	}
+
 	return &context.ProbeContext{
-		Context:   goctx.Background(),
-		Logger:    ctrl.Log.WithName("fake-probe").WithValues("vmName", vm.NamespacedName()),
-		VM:        vm,
-		ProbeSpec: vm.Spec.ReadinessProbe,
-		ProbeType: "readiness",
+		Context:       goctx.Background(),
+		Logger:        ctrl.Log.WithName("fake-probe").WithValues("vmName", vm.NamespacedName()),
+		VM:            vm,
+		ProbeType:     "fake-probe",
+		PeriodSeconds: vm.Spec.ReadinessProbe.PeriodSeconds,
 	}, nil
 }
 

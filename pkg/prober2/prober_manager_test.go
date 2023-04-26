@@ -35,7 +35,6 @@ var _ = Describe("VirtualMachine probes", func() {
 		testManager   *manager
 		vm            *vmopv1.VirtualMachine
 		vmKey         client.ObjectKey
-		vmProbe       *vmopv1.VirtualMachineReadinessProbeSpec
 		periodSeconds int32
 
 		fakeClient   client.Client
@@ -45,6 +44,9 @@ var _ = Describe("VirtualMachine probes", func() {
 	)
 
 	BeforeEach(func() {
+		ctx = goctx.Background()
+		periodSeconds = 1
+
 		vm = &vmopv1.VirtualMachine{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "dummy-vm",
@@ -52,17 +54,16 @@ var _ = Describe("VirtualMachine probes", func() {
 			},
 			Spec: vmopv1.VirtualMachineSpec{
 				ClassName: "dummy-vmclass",
+				ReadinessProbe: vmopv1.VirtualMachineReadinessProbeSpec{
+					TCPSocket: &vmopv1.TCPSocketAction{
+						Port: intstr.FromInt(10001),
+					},
+					PeriodSeconds: periodSeconds,
+				},
 			},
 		}
 		vmKey = client.ObjectKey{Name: vm.Name, Namespace: vm.Namespace}
-		periodSeconds = 1
-		vmProbe = &vmopv1.VirtualMachineReadinessProbeSpec{
-			TCPSocket: &vmopv1.TCPSocketAction{
-				Port: intstr.FromInt(10001),
-			},
-			PeriodSeconds: periodSeconds,
-		}
-		ctx = goctx.Background()
+
 		initObjects = append(initObjects, vm)
 	})
 
@@ -104,6 +105,10 @@ var _ = Describe("VirtualMachine probes", func() {
 		})
 
 		When("VM doesn't specify a probe", func() {
+			BeforeEach(func() {
+				vm.Spec.ReadinessProbe = vmopv1.VirtualMachineReadinessProbeSpec{}
+			})
+
 			It("Should return immediately", func() {
 				quit := testManager.processItemFromQueue(fakeWorker)
 				Expect(quit).To(BeFalse())
@@ -112,9 +117,6 @@ var _ = Describe("VirtualMachine probes", func() {
 		})
 
 		When("VM specifies a probe", func() {
-			BeforeEach(func() {
-				vm.Spec.ReadinessProbe = *vmProbe
-			})
 
 			It("Should not run probes when VM is in deleting phase", func() {
 				Expect(fakeClient.Delete(ctx, vm)).To(Succeed())
@@ -189,18 +191,10 @@ var _ = Describe("VirtualMachine probes", func() {
 	})
 
 	Context("Probe manager manages VMs when they are created, updated or deleted", func() {
-		var err error
-		BeforeEach(func() {
-			vmProbe.PeriodSeconds = defaultPeriodSeconds
-			vm.Spec.ReadinessProbe = *vmProbe
-		})
 
 		JustBeforeEach(func() {
 			vm.Status.PowerState = vmopv1.VirtualMachinePowerStateOn
 			Expect(fakeClient.Status().Update(ctx, vm)).To(Succeed())
-
-			Expect(fakeClient.Get(ctx, vmKey, vm)).To(Succeed())
-			Expect(err).ShouldNot(HaveOccurred())
 		})
 
 		It("Should not add to prober manager if Probe spec is not specified", func() {

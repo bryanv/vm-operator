@@ -42,7 +42,7 @@ func (hbp guestHeartbeatProber) Probe(ctx *context.ProbeContext) (Result, error)
 		return Unknown, fmt.Errorf("no heartbeat value")
 	}
 
-	if heartbeatValue(heartbeat) < heartbeatValue(ctx.ProbeSpec.GuestHeartbeat.ThresholdStatus) {
+	if heartbeatValue(heartbeat) < heartbeatValue(ctx.VM.Spec.ReadinessProbe.GuestHeartbeat.ThresholdStatus) {
 		return Failure, fmt.Errorf("heartbeat status %q is below threshold", heartbeat)
 	}
 

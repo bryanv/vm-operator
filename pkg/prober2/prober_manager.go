@@ -176,12 +176,7 @@ func (m *manager) processItemFromQueue(w worker.Worker) bool {
 	}
 
 	ctx, err := w.CreateProbeContext(vm)
-	if err != nil {
-		return false
-	}
-
-	if ctx.ProbeSpec.TCPSocket == nil && ctx.ProbeSpec.GuestHeartbeat == nil {
-		ctx.Logger.V(4).Info("probe is not specified")
+	if err != nil || ctx == nil {
 		return false
 	}
 
@@ -199,8 +194,7 @@ func (m *manager) processItemFromQueue(w worker.Worker) bool {
 
 // processVMProbe processes the Probe specified in VM spec.
 func (m *manager) processVMProbe(w worker.Worker, ctx *context.ProbeContext) error {
-	vm := ctx.VM
-	if vm.Status.PowerState != vmopv1.VirtualMachinePowerStateOn {
+	if ctx.VM.Status.PowerState != vmopv1.VirtualMachinePowerStateOn {
 		// If a vm is not powered on, we don't run probes against it and translate probe result to failure.
 		// Populate the Condition and update the VM status.
 		ctx.Logger.V(4).Info("the VirtualMachine is not powered on")
@@ -215,7 +209,7 @@ func (m *manager) addItemToQueue(queue workqueue.DelayingInterface, ctx *context
 	if immediate {
 		queue.Add(item)
 	} else {
-		periodSeconds := ctx.ProbeSpec.PeriodSeconds
+		periodSeconds := ctx.PeriodSeconds
 		if periodSeconds <= 0 {
 			periodSeconds = defaultPeriodSeconds
 		}

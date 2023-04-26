@@ -55,9 +55,8 @@ var _ = Describe("Guest heartbeat probe", func() {
 
 	JustBeforeEach(func() {
 		probeCtx := &context.ProbeContext{
-			Logger:    ctrl.Log.WithName("Probe").WithValues("name", vm.NamespacedName()),
-			ProbeSpec: vm.Spec.ReadinessProbe,
-			VM:        vm,
+			Logger: ctrl.Log.WithName("Probe").WithValues("name", vm.NamespacedName()),
+			VM:     vm,
 		}
 
 		res, err = testVMwareToolsProbe.Probe(probeCtx)

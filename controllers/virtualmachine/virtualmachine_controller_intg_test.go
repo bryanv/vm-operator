@@ -16,7 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -39,14 +39,9 @@ func intgTests() {
 				Name:      "dummy-vm",
 			},
 			Spec: vmopv1.VirtualMachineSpec{
-				ImageName:    "dummy-image",
-				ClassName:    "dummy-class",
-				PowerState:   vmopv1.VirtualMachinePoweredOn,
-				StorageClass: "dummy-storageclass",
-				VmMetadata: &vmopv1.VirtualMachineMetadata{
-					Transport:     vmopv1.VirtualMachineMetadataOvfEnvTransport,
-					ConfigMapName: "dummy-configmap",
-				},
+				ImageName:  "dummy-image",
+				ClassName:  "dummy-class",
+				PowerState: vmopv1.VirtualMachinePowerStateOn,
 			},
 		}
 		vmKey = types.NamespacedName{Name: vm.Name, Namespace: vm.Namespace}
@@ -162,7 +157,7 @@ func intgTests() {
 			BeforeEach(func() {
 				intgFakeVMProvider.Lock()
 				intgFakeVMProvider.CreateOrUpdateVirtualMachineFn = func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
-					vm.Status.Phase = vmopv1.Creating
+					vm.Status.BiosUUID = "dummy-bios-uuid"
 					return errors.New(errMsg)
 				}
 				intgFakeVMProvider.Unlock()
@@ -172,15 +167,6 @@ func intgTests() {
 				Expect(ctx.Client.Create(ctx, vm)).To(Succeed())
 				// Wait for initial reconcile.
 				waitForVirtualMachineFinalizer(ctx, vmKey)
-
-				By("Phase should be Creating", func() {
-					Eventually(func() vmopv1.VMStatusPhase {
-						if vm := getVirtualMachine(ctx, vmKey); vm != nil {
-							return vm.Status.Phase
-						}
-						return ""
-					}).Should(Equal(vmopv1.Creating))
-				})
 			})
 		})
 
@@ -217,14 +203,6 @@ func intgTests() {
 				waitForVirtualMachineFinalizer(ctx, vmKey)
 
 				Expect(ctx.Client.Delete(ctx, vm)).To(Succeed())
-				By("Phase should be Deleting", func() {
-					Eventually(func() vmopv1.VMStatusPhase {
-						if vm := getVirtualMachine(ctx, vmKey); vm != nil {
-							return vm.Status.Phase
-						}
-						return ""
-					}).Should(Equal(vmopv1.Deleting))
-				})
 
 				By("Finalizer should still be present", func() {
 					vm := getVirtualMachine(ctx, vmKey)

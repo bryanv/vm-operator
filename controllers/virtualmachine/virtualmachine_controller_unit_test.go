@@ -14,11 +14,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachine"
 	vmopContext "github.com/vmware-tanzu/vm-operator/pkg/context"
-	proberfake "github.com/vmware-tanzu/vm-operator/pkg/prober/fake"
+	proberfake "github.com/vmware-tanzu/vm-operator/pkg/prober2/fake"
 	providerfake "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/fake"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -39,10 +39,10 @@ func unitTestsReconcile() {
 		ctx              *builder.UnitTestContextForController
 		reconciler       *virtualmachine.Reconciler
 		fakeProbeManager *proberfake.ProberManager
-		fakeVMProvider   *providerfake.VMProvider
+		fakeVMProvider   *providerfake.VMProviderA2
 
 		vm    *vmopv1.VirtualMachine
-		vmCtx *vmopContext.VirtualMachineContext
+		vmCtx *vmopContext.VirtualMachineContextA2
 	)
 
 	BeforeEach(func() {
@@ -68,14 +68,14 @@ func unitTestsReconcile() {
 			ctx.Client,
 			ctx.Logger,
 			ctx.Recorder,
-			ctx.VMProvider,
+			ctx.VMProviderA2,
 			fakeProbeManagerIf,
 			16,
 		)
-		fakeVMProvider = ctx.VMProvider.(*providerfake.VMProvider)
+		fakeVMProvider = ctx.VMProviderA2.(*providerfake.VMProviderA2)
 		fakeProbeManager = fakeProbeManagerIf.(*proberfake.ProberManager)
 
-		vmCtx = &vmopContext.VirtualMachineContext{
+		vmCtx = &vmopContext.VirtualMachineContextA2{
 			Context: ctx,
 			Logger:  ctx.Logger.WithName(vm.Name),
 			VM:      vm,
@@ -112,7 +112,6 @@ func unitTestsReconcile() {
 			err := reconciler.ReconcileNormal(vmCtx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(vmCtx.VM.GetFinalizers()).To(ContainElement(finalizer))
-			Expect(vmCtx.VM.Status.Phase).To(Equal(vmopv1.Created))
 		})
 
 		It("will return error when provider fails to CreateOrUpdate VM", func() {
@@ -172,7 +171,6 @@ func unitTestsReconcile() {
 			Expect(err).NotTo(HaveOccurred())
 
 			expectEvent(ctx, "DeleteSuccess")
-			Expect(vmCtx.VM.Status.Phase).To(Equal(vmopv1.Deleted))
 		})
 
 		It("will emit corresponding event during delete failure", func() {
@@ -184,7 +182,6 @@ func unitTestsReconcile() {
 			Expect(err).To(HaveOccurred())
 
 			expectEvent(ctx, "DeleteFailure")
-			Expect(vmCtx.VM.Status.Phase).To(Equal(vmopv1.Deleting))
 		})
 
 		It("Should not remove from Prober Manager if ReconcileDelete fails", func() {
@@ -211,7 +208,7 @@ func unitTestsReconcile() {
 
 func expectEvent(ctx *builder.UnitTestContextForController, eventStr string) {
 	var event string
-	// This does not work if we have more than one events and the first one does not match.
+	// This does not work if we have more than one event and the first one does not match.
 	EventuallyWithOffset(1, ctx.Events).Should(Receive(&event))
 	eventComponents := strings.Split(event, " ")
 	ExpectWithOffset(1, eventComponents[1]).To(Equal(eventStr))

@@ -283,14 +283,6 @@ rules:
 - apiGroups:
   - vmoperator.vmware.com
   resources:
-  - virtualmachineclassbindings
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - vmoperator.vmware.com
-  resources:
   - virtualmachineclasses
   verbs:
   - create

@@ -23,13 +23,13 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/metrics"
-	"github.com/vmware-tanzu/vm-operator/pkg/patch"
-	"github.com/vmware-tanzu/vm-operator/pkg/prober"
+	patch "github.com/vmware-tanzu/vm-operator/pkg/patch2"
+	prober "github.com/vmware-tanzu/vm-operator/pkg/prober2"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider"
 )
@@ -46,7 +46,7 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 		controllerNameLong  = fmt.Sprintf("%s/%s/%s", ctx.Namespace, ctx.Name, controllerNameShort)
 	)
 
-	proberManager, err := prober.AddToManager(mgr, ctx.VMProvider)
+	proberManager, err := prober.AddToManager(mgr, ctx.VMProviderA2)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 		mgr.GetClient(),
 		ctrl.Log.WithName("controllers").WithName(controlledTypeName),
 		record.New(mgr.GetEventRecorderFor(controllerNameLong)),
-		ctx.VMProvider,
+		ctx.VMProviderA2,
 		proberManager,
 		ctx.MaxConcurrentReconciles/(100/lib.MaxConcurrentCreateVMsOnProvider()),
 	)
@@ -64,111 +64,10 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 		For(controlledType).
 		WithOptions(controller.Options{MaxConcurrentReconciles: ctx.MaxConcurrentReconciles})
 
-	if !lib.IsWCPVMImageRegistryEnabled() {
-		builder = builder.Watches(&source.Kind{Type: &vmopv1.ContentSourceBinding{}},
-			handler.EnqueueRequestsFromMapFunc(csBindingToVMMapperFn(ctx, r.Client)))
-	}
-
-	if !lib.IsNamespacedClassAndWindowsFSSEnabled() {
-		builder = builder.Watches(&source.Kind{Type: &vmopv1.VirtualMachineClassBinding{}},
-			handler.EnqueueRequestsFromMapFunc(classBindingToVMMapperFn(ctx, r.Client)))
-	} else {
-		builder = builder.Watches(&source.Kind{Type: &vmopv1.VirtualMachineClass{}},
-			handler.EnqueueRequestsFromMapFunc(classToVMMapperFn(ctx, r.Client)))
-	}
+	builder = builder.Watches(&source.Kind{Type: &vmopv1.VirtualMachineClass{}},
+		handler.EnqueueRequestsFromMapFunc(classToVMMapperFn(ctx, r.Client)))
 
 	return builder.Complete(r)
-}
-
-// csBindingToVMMapperFn returns a mapper function that can be used to queue reconcile request
-// for the VirtualMachines in response to an event on the ContentSourceBinding resource.
-func csBindingToVMMapperFn(ctx *context.ControllerManagerContext, c client.Reader) func(o client.Object) []reconcile.Request {
-	return func(o client.Object) []reconcile.Request {
-		binding := o.(*vmopv1.ContentSourceBinding)
-		logger := ctx.Logger.WithValues("name", binding.Name, "namespace", binding.Namespace)
-
-		logger.V(4).Info("Reconciling all VMs using images from a ContentSource because of a ContentSourceBinding watch")
-
-		contentSource := &vmopv1.ContentSource{}
-		if err := c.Get(ctx, client.ObjectKey{Name: binding.ContentSourceRef.Name}, contentSource); err != nil {
-			logger.Error(err, "Failed to get ContentSource for VM reconciliation due to ContentSourceBinding watch")
-			return nil
-		}
-
-		providerRef := contentSource.Spec.ProviderRef
-		// Assume that only supported type is ContentLibraryProvider.
-		clProviderFromBinding := vmopv1.ContentLibraryProvider{}
-		if err := c.Get(ctx, client.ObjectKey{Name: providerRef.Name}, &clProviderFromBinding); err != nil {
-			logger.Error(err, "Failed to get ContentLibraryProvider for VM reconciliation due to ContentSourceBinding watch")
-			return nil
-		}
-
-		// Filter images that have an OwnerReference to this ContentLibraryProvider.
-		imageList := &vmopv1.VirtualMachineImageList{}
-		if err := c.List(ctx, imageList); err != nil {
-			logger.Error(err, "Failed to list VirtualMachineImages for VM reconciliation due to ContentSourceBinding watch")
-			return nil
-		}
-
-		imagesToReconcile := make(map[string]struct{})
-		for _, img := range imageList.Items {
-			for _, ownerRef := range img.OwnerReferences {
-				if ownerRef.Kind == "ContentLibraryProvider" && ownerRef.UID == clProviderFromBinding.UID {
-					imagesToReconcile[img.Name] = struct{}{}
-				}
-			}
-		}
-
-		// Filter VMs that reference the images from the content source.
-		vmList := &vmopv1.VirtualMachineList{}
-		if err := c.List(ctx, vmList, client.InNamespace(binding.Namespace)); err != nil {
-			logger.Error(err, "Failed to list VirtualMachines for reconciliation due to ContentSourceBinding watch")
-			return nil
-		}
-
-		var reconcileRequests []reconcile.Request
-		for _, vm := range vmList.Items {
-			if _, ok := imagesToReconcile[vm.Spec.ImageName]; ok {
-				key := client.ObjectKey{Namespace: vm.Namespace, Name: vm.Name}
-				reconcileRequests = append(reconcileRequests, reconcile.Request{NamespacedName: key})
-			}
-		}
-
-		logger.V(4).Info("Returning VM reconcile requests due to ContentSourceBinding watch", "requests", reconcileRequests)
-		return reconcileRequests
-	}
-}
-
-// classBindingToVMMapperFn returns a mapper function that can be used to queue reconcile request
-// for the VirtualMachines in response to an event on the VirtualMachineClassBinding resource.
-func classBindingToVMMapperFn(ctx *context.ControllerManagerContext, c client.Client) func(o client.Object) []reconcile.Request {
-	// For a given VirtualMachineClassBinding, return reconcile requests
-	// for those VirtualMachines with corresponding VirtualMachinesClasses referenced
-	return func(o client.Object) []reconcile.Request {
-		classBinding := o.(*vmopv1.VirtualMachineClassBinding)
-		logger := ctx.Logger.WithValues("name", classBinding.Name, "namespace", classBinding.Namespace)
-
-		logger.V(4).Info("Reconciling all VMs referencing a VM class because of a VirtualMachineClassBinding watch")
-
-		// Find all vms that match this vmclassbinding
-		vmList := &vmopv1.VirtualMachineList{}
-		if err := c.List(ctx, vmList, client.InNamespace(classBinding.Namespace)); err != nil {
-			logger.Error(err, "Failed to list VirtualMachines for reconciliation due to VirtualMachineClassBinding watch")
-			return nil
-		}
-
-		// Populate reconcile requests for vms matching the classbinding reference
-		var reconcileRequests []reconcile.Request
-		for _, vm := range vmList.Items {
-			if vm.Spec.ClassName == classBinding.ClassRef.Name {
-				key := client.ObjectKey{Namespace: vm.Namespace, Name: vm.Name}
-				reconcileRequests = append(reconcileRequests, reconcile.Request{NamespacedName: key})
-			}
-		}
-
-		logger.V(4).Info("Returning VM reconcile requests due to VirtualMachineClassBinding watch", "requests", reconcileRequests)
-		return reconcileRequests
-	}
 }
 
 // classToVMMapperFn returns a mapper function that can be used to queue reconcile request
@@ -208,7 +107,7 @@ func NewReconciler(
 	client client.Client,
 	logger logr.Logger,
 	recorder record.Recorder,
-	vmProvider vmprovider.VirtualMachineProviderInterface,
+	vmProvider vmprovider.VirtualMachineProviderInterfaceA2,
 	prober prober.Manager,
 	maxDeployThreads int) *Reconciler {
 
@@ -228,7 +127,7 @@ type Reconciler struct {
 	client.Client
 	Logger           logr.Logger
 	Recorder         record.Recorder
-	VMProvider       vmprovider.VirtualMachineProviderInterface
+	VMProvider       vmprovider.VirtualMachineProviderInterfaceA2
 	Prober           prober.Manager
 	vmMetrics        *metrics.VMMetrics
 	maxDeployThreads int
@@ -241,10 +140,6 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events;configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=resourcequotas;namespaces,verbs=get;list;watch
-// +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineclassbindings,verbs=get;list;watch
-// +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=contentsources,verbs=get;list;watch
-// +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=contentlibraryproviders,verbs=get;list;watch
-// +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=contentsourcebindings,verbs=get;list;watch
 
 func (r *Reconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	vm := &vmopv1.VirtualMachine{}
@@ -252,7 +147,7 @@ func (r *Reconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Resu
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	vmCtx := &context.VirtualMachineContext{
+	vmCtx := &context.VirtualMachineContextA2{
 		Context: goctx.WithValue(ctx, context.MaxDeployThreadsContextKey, r.maxDeployThreads),
 		Logger:  ctrl.Log.WithName("VirtualMachine").WithValues("name", vm.NamespacedName()),
 		VM:      vm,
@@ -301,26 +196,29 @@ func (r *Reconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Resu
 // TODO: It would be much preferable to determine that a non-error resync is required at the source of the determination that
 // TODO: the VM IP isn't available rather than up here in the reconcile loop.  However, in the interest of time, we are making
 // TODO: this determination here and will have to refactor at some later date.
-func requeueDelay(ctx *context.VirtualMachineContext) time.Duration {
-	// If the VM is in Creating phase, the reconciler has run out of threads to Create VMs on the provider. Do not queue
-	// immediately to avoid exponential backoff.
-	if ctx.VM.Status.Phase == vmopv1.Creating {
-		return 10 * time.Second
-	}
+func requeueDelay(ctx *context.VirtualMachineContextA2) time.Duration {
+	/*
+		// If the VM is in Creating phase, the reconciler has run out of threads to Create VMs on the provider. Do not queue
+		// immediately to avoid exponential backoff.
+		if ctx.VM.Status.Phase == vmopv1.Creating {
+			return 10 * time.Second
+		}
+	*/
 
-	if ctx.VM.Status.VmIp == "" && ctx.VM.Status.PowerState == vmopv1.VirtualMachinePoweredOn {
-		return 10 * time.Second
+	if ctx.VM.Status.PowerState == vmopv1.VirtualMachinePowerStateOn {
+		network := ctx.VM.Status.Network
+		if network == nil || (network.PrimaryIP4 == "" && network.PrimaryIP6 == "") {
+			return 10 * time.Second
+		}
 	}
 
 	return 0
 }
 
-func (r *Reconciler) ReconcileDelete(ctx *context.VirtualMachineContext) (reterr error) {
+func (r *Reconciler) ReconcileDelete(ctx *context.VirtualMachineContextA2) (reterr error) {
 	ctx.Logger.Info("Reconciling VirtualMachine Deletion")
 
 	if controllerutil.ContainsFinalizer(ctx.VM, finalizerName) {
-		ctx.VM.Status.Phase = vmopv1.Deleting
-
 		defer func() {
 			r.Recorder.EmitEvent(ctx.VM, "Delete", reterr, false)
 		}()
@@ -330,7 +228,6 @@ func (r *Reconciler) ReconcileDelete(ctx *context.VirtualMachineContext) (reterr
 			return err
 		}
 
-		ctx.VM.Status.Phase = vmopv1.Deleted
 		controllerutil.RemoveFinalizer(ctx.VM, finalizerName)
 		ctx.Logger.Info("Provider Completed deleting Virtual Machine", "time", time.Now().Format(time.RFC3339))
 	}
@@ -344,7 +241,7 @@ func (r *Reconciler) ReconcileDelete(ctx *context.VirtualMachineContext) (reterr
 }
 
 // ReconcileNormal processes a level trigger for this VM: create if it doesn't exist otherwise update the existing VM.
-func (r *Reconciler) ReconcileNormal(ctx *context.VirtualMachineContext) (reterr error) {
+func (r *Reconciler) ReconcileNormal(ctx *context.VirtualMachineContextA2) (reterr error) {
 	if !controllerutil.ContainsFinalizer(ctx.VM, finalizerName) {
 		// The finalizer must be present before proceeding in order to ensure that the VM will
 		// be cleaned up. Return immediately after here to let the patcher helper update the
@@ -355,9 +252,9 @@ func (r *Reconciler) ReconcileNormal(ctx *context.VirtualMachineContext) (reterr
 
 	ctx.Logger.Info("Reconciling VirtualMachine")
 
-	defer func(initialVMStatus *vmopv1.VirtualMachineStatus) {
+	defer func(beforeVMStatus *vmopv1.VirtualMachineStatus) {
 		// Log the reconcile time using the CR creation time and the time the VM reached the desired state
-		if reterr == nil && !apiequality.Semantic.DeepEqual(initialVMStatus, &ctx.VM.Status) {
+		if reterr == nil && !apiequality.Semantic.DeepEqual(beforeVMStatus, &ctx.VM.Status) {
 			ctx.Logger.Info("Finished Reconciling VirtualMachine with updates to the CR",
 				"createdTime", ctx.VM.CreationTimestamp, "currentTime", time.Now().Format(time.RFC3339),
 				"spec.PowerState", ctx.VM.Spec.PowerState, "status.PowerState", ctx.VM.Status.PowerState)
@@ -365,7 +262,9 @@ func (r *Reconciler) ReconcileNormal(ctx *context.VirtualMachineContext) (reterr
 			ctx.Logger.Info("Finished Reconciling VirtualMachine")
 		}
 
-		if ip := initialVMStatus.VmIp; ip == "" && ip != ctx.VM.Status.VmIp {
+		beforeNoIP := beforeVMStatus.Network == nil || (beforeVMStatus.Network.PrimaryIP4 == "" && beforeVMStatus.Network.PrimaryIP6 == "")
+		nowWithIP := ctx.VM.Status.Network != nil && (ctx.VM.Status.Network.PrimaryIP4 != "" || ctx.VM.Status.Network.PrimaryIP6 != "")
+		if beforeNoIP && nowWithIP {
 			ctx.Logger.Info("VM successfully got assigned with an IP address", "time", time.Now().Format(time.RFC3339))
 		}
 	}(ctx.VM.Status.DeepCopy())
@@ -380,7 +279,6 @@ func (r *Reconciler) ReconcileNormal(ctx *context.VirtualMachineContext) (reterr
 		return err
 	}
 
-	ctx.VM.Status.Phase = vmopv1.Created
 	// Add this VM to prober manager if ReconcileNormal succeeds.
 	r.Prober.AddToProberManager(ctx.VM)
 

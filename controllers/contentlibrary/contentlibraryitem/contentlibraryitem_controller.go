@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -19,11 +18,12 @@ import (
 
 	"github.com/go-logr/logr"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
 
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
 	"github.com/vmware-tanzu/vm-operator/controllers/contentlibrary/utils"
-	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/metrics"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
@@ -44,7 +44,7 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 		mgr.GetClient(),
 		ctrl.Log.WithName("controllers").WithName(clItemTypeName),
 		record.New(mgr.GetEventRecorderFor(controllerNameLong)),
-		ctx.VMProvider,
+		ctx.VMProviderA2,
 	)
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -59,7 +59,7 @@ func NewReconciler(
 	client client.Client,
 	logger logr.Logger,
 	recorder record.Recorder,
-	vmProvider vmprovider.VirtualMachineProviderInterface) *Reconciler {
+	vmProvider vmprovider.VirtualMachineProviderInterfaceA2) *Reconciler {
 
 	return &Reconciler{
 		Client:     client,
@@ -76,7 +76,7 @@ type Reconciler struct {
 	client.Client
 	Logger     logr.Logger
 	Recorder   record.Recorder
-	VMProvider vmprovider.VirtualMachineProviderInterface
+	VMProvider vmprovider.VirtualMachineProviderInterfaceA2
 	Metrics    *metrics.ContentLibraryItemMetrics
 }
 
@@ -167,7 +167,6 @@ func (r *Reconciler) ReconcileNormal(ctx *context.ContentLibraryItemContext) err
 			conditions.MarkFalse(vmi,
 				vmopv1.VirtualMachineImageProviderReadyCondition,
 				vmopv1.VirtualMachineImageProviderNotReadyReason,
-				vmopv1.ConditionSeverityError,
 				"Provider item is not in ready condition",
 			)
 			ctx.Logger.Info("ContentLibraryItem is not ready yet, skipping image content sync")
@@ -186,7 +185,7 @@ func (r *Reconciler) ReconcileNormal(ctx *context.ContentLibraryItemContext) err
 	// Registry metrics based on the corresponding error captured.
 	defer func() {
 		r.Metrics.RegisterVMIResourceResolve(ctx.Logger, vmi.Name, vmi.Namespace, createOrPatchErr == nil)
-		r.Metrics.RegisterVMIContentSync(ctx.Logger, vmi.Name, vmi.Namespace, (didSync && syncErr == nil))
+		r.Metrics.RegisterVMIContentSync(ctx.Logger, vmi.Name, vmi.Namespace, didSync && syncErr == nil)
 	}()
 
 	if createOrPatchErr != nil {
@@ -208,7 +207,7 @@ func (r *Reconciler) ReconcileNormal(ctx *context.ContentLibraryItemContext) err
 		return syncErr
 	}
 
-	ctx.Logger.Info("Successfully reconciled VirtualMachineImage", "contentVersion", savedStatus.ContentVersion)
+	ctx.Logger.Info("Successfully reconciled VirtualMachineImage", "contentVersion", savedStatus.ProviderContentVersion)
 	return nil
 }
 
@@ -221,22 +220,13 @@ func (r *Reconciler) setUpVMIFromCLItem(ctx *context.ContentLibraryItemContext) 
 		return err
 	}
 
-	// Do not initialize the Spec or Status directly as it might overwrite the existing fields.
-	vmi.Spec.Type = string(clItem.Status.Type)
-	vmi.Spec.ImageID = string(clItem.Spec.UUID)
-	vmi.Spec.ProviderRef = vmopv1.ContentProviderReference{
+	vmi.Spec.ProviderRef = common.LocalObjectRef{
 		APIVersion: clItem.APIVersion,
 		Kind:       clItem.Kind,
 		Name:       clItem.Name,
 	}
-	vmi.Status.ImageName = clItem.Status.Name
-	if clItem.Status.ContentLibraryRef != nil {
-		vmi.Status.ContentLibraryRef = &corev1.TypedLocalObjectReference{
-			APIGroup: &imgregv1a1.GroupVersion.Group,
-			Kind:     clItem.Status.ContentLibraryRef.Kind,
-			Name:     clItem.Status.ContentLibraryRef.Name,
-		}
-	}
+	vmi.Status.Name = clItem.Status.Name
+	vmi.Status.ProviderItemID = string(clItem.Spec.UUID)
 
 	// Update image condition based on the security compliance of the provider item.
 	clItemSecurityCompliance := ctx.CLItem.Status.SecurityCompliance
@@ -244,7 +234,6 @@ func (r *Reconciler) setUpVMIFromCLItem(ctx *context.ContentLibraryItemContext) 
 		conditions.MarkFalse(vmi,
 			vmopv1.VirtualMachineImageProviderSecurityComplianceCondition,
 			vmopv1.VirtualMachineImageProviderSecurityNotCompliantReason,
-			vmopv1.ConditionSeverityError,
 			"Provider item is not security compliant",
 		)
 	} else {
@@ -260,7 +249,7 @@ func (r *Reconciler) syncImageContent(ctx *context.ContentLibraryItemContext) er
 	clItem := ctx.CLItem
 	vmi := ctx.VMI
 	latestVersion := clItem.Status.ContentVersion
-	if vmi.Status.ContentVersion == latestVersion {
+	if vmi.Status.ProviderContentVersion == latestVersion {
 		return nil
 	}
 
@@ -269,11 +258,10 @@ func (r *Reconciler) syncImageContent(ctx *context.ContentLibraryItemContext) er
 		conditions.MarkFalse(vmi,
 			vmopv1.VirtualMachineImageSyncedCondition,
 			vmopv1.VirtualMachineImageNotSyncedReason,
-			vmopv1.ConditionSeverityError,
 			"Failed to sync to the latest content version from provider")
 	} else {
 		conditions.MarkTrue(vmi, vmopv1.VirtualMachineImageSyncedCondition)
-		vmi.Status.ContentVersion = latestVersion
+		vmi.Status.ProviderContentVersion = latestVersion
 	}
 
 	r.Recorder.EmitEvent(vmi, "Update", err, false)

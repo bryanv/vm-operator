@@ -16,10 +16,10 @@ import (
 
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/controllers/contentlibrary/contentlibraryitem"
 	"github.com/vmware-tanzu/vm-operator/controllers/contentlibrary/utils"
-	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	providerfake "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/fake"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
@@ -35,7 +35,7 @@ func unitTestsReconcile() {
 		ctx         *builder.UnitTestContextForController
 
 		reconciler     *contentlibraryitem.Reconciler
-		fakeVMProvider *providerfake.VMProvider
+		fakeVMProvider *providerfake.VMProviderA2
 
 		clItem *imgregv1a1.ContentLibraryItem
 	)
@@ -55,14 +55,15 @@ func unitTestsReconcile() {
 			ctx.Client,
 			ctx.Logger,
 			ctx.Recorder,
-			ctx.VMProvider,
+			ctx.VMProviderA2,
 		)
-		fakeVMProvider = ctx.VMProvider.(*providerfake.VMProvider)
+
+		fakeVMProvider = ctx.VMProviderA2.(*providerfake.VMProviderA2)
 		fakeVMProvider.SyncVirtualMachineImageFn = func(_ goctx.Context, _, vmi client.Object) error {
 			vmiObj := vmi.(*vmopv1.VirtualMachineImage)
-			// Change a random spec and status field to verify the provider function is called.
-			vmiObj.Spec.HardwareVersion = 123
-			vmiObj.Status.ImageSupported = &[]bool{true}[0]
+			// Change a Status field to verify the provider function is called.
+			var hwVer int32 = 123
+			vmiObj.Status.HardwareVersion = &hwVer
 			return nil
 		}
 	})
@@ -89,7 +90,6 @@ func unitTestsReconcile() {
 		})
 
 		When("ContentLibraryItem doesn't have the VMOP finalizer", func() {
-
 			BeforeEach(func() {
 				clItem.Finalizers = []string{}
 			})
@@ -113,7 +113,7 @@ func unitTestsReconcile() {
 				unreadyVMI := getVMIFromCLItem(*ctx, clItem)
 				providerCondition := conditions.Get(unreadyVMI, vmopv1.VirtualMachineImageProviderReadyCondition)
 				Expect(providerCondition).ToNot(BeNil())
-				Expect(providerCondition.Status).To(Equal(corev1.ConditionFalse))
+				Expect(providerCondition.Status).To(Equal(metav1.ConditionFalse))
 				Expect(providerCondition.Reason).To(Equal(vmopv1.VirtualMachineImageProviderNotReadyReason))
 			})
 		})
@@ -128,7 +128,7 @@ func unitTestsReconcile() {
 				vmi := getVMIFromCLItem(*ctx, clItem)
 				condition := conditions.Get(vmi, vmopv1.VirtualMachineImageProviderSecurityComplianceCondition)
 				Expect(condition).ToNot(BeNil())
-				Expect(condition.Status).To(Equal(corev1.ConditionFalse))
+				Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 				Expect(condition.Reason).To(Equal(vmopv1.VirtualMachineImageProviderSecurityNotCompliantReason))
 			})
 		})
@@ -157,7 +157,7 @@ func unitTestsReconcile() {
 							Namespace: clItem.Namespace,
 						},
 						Status: vmopv1.VirtualMachineImageStatus{
-							ContentVersion: "dummy-old",
+							ProviderContentVersion: "dummy-old",
 						},
 					}
 					initObjects = append(initObjects, existingVMI)
@@ -180,8 +180,7 @@ func unitTestsReconcile() {
 					// The following fields are set from the VMProvider by downloading the library item.
 					// These fields should remain as is if the VMProvider update is skipped below.
 					upToDateVMI := utils.GetExpectedVMIFrom(*clItem, fakeVMProvider.SyncVirtualMachineImageFn)
-					upToDateVMI.Spec.HardwareVersion = 0
-					upToDateVMI.Status.ImageSupported = nil
+					upToDateVMI.Status.HardwareVersion = nil
 					initObjects = append(initObjects, upToDateVMI)
 				})
 
@@ -192,8 +191,7 @@ func unitTestsReconcile() {
 
 					Expect(currentVMI.Name).To(Equal(expectedVMI.Name))
 					Expect(currentVMI.OwnerReferences).To(Equal(expectedVMI.OwnerReferences))
-					Expect(currentVMI.Spec.HardwareVersion).To(BeZero())
-					Expect(currentVMI.Status.ImageSupported).To(BeNil())
+					Expect(currentVMI.Status.HardwareVersion).To(BeNil())
 				})
 			})
 		})
@@ -223,6 +221,5 @@ func getVMIFromCLItem(
 	vmiName := utils.GetTestVMINameFrom(clItem.Name)
 	vmi := &vmopv1.VirtualMachineImage{}
 	Expect(ctx.Client.Get(ctx, client.ObjectKey{Name: vmiName, Namespace: clItem.Namespace}, vmi)).To(Succeed())
-
 	return vmi
 }

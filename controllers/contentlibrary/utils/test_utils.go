@@ -12,7 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	crtlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
@@ -164,9 +163,9 @@ func GetExpectedCVMIFrom(cclItem imgregv1a1.ClusterContentLibraryItem,
 }
 
 func GetExpectedVMIFrom(clItem imgregv1a1.ContentLibraryItem,
-	providerFunc func(context.Context, crtlclient.Object, crtlclient.Object) error) *v1alpha1.VirtualMachineImage {
+	providerFunc func(context.Context, crtlclient.Object, crtlclient.Object) error) *vmopv1.VirtualMachineImage {
 
-	vmi := &v1alpha1.VirtualMachineImage{
+	vmi := &vmopv1.VirtualMachineImage{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      GetTestVMINameFrom(clItem.Name),
 			Namespace: clItem.Namespace,
@@ -180,35 +179,29 @@ func GetExpectedVMIFrom(clItem imgregv1a1.ContentLibraryItem,
 				},
 			},
 		},
-		Spec: v1alpha1.VirtualMachineImageSpec{
-			Type:    string(clItem.Status.Type),
-			ImageID: string(clItem.Spec.UUID),
-			ProviderRef: v1alpha1.ContentProviderReference{
+		Spec: vmopv1.VirtualMachineImageSpec{
+			ProviderRef: common.LocalObjectRef{
 				APIVersion: clItem.APIVersion,
 				Kind:       clItem.Kind,
 				Name:       clItem.Name,
 			},
 		},
-		Status: v1alpha1.VirtualMachineImageStatus{
-			ImageName:      clItem.Status.Name,
-			ContentVersion: clItem.Status.ContentVersion,
-			ContentLibraryRef: &corev1.TypedLocalObjectReference{
-				APIGroup: &imgregv1a1.GroupVersion.Group,
-				Kind:     clItem.Status.ContentLibraryRef.Kind,
-				Name:     clItem.Status.ContentLibraryRef.Name,
-			},
-			Conditions: []v1alpha1.Condition{
+		Status: vmopv1.VirtualMachineImageStatus{
+			Name:                   clItem.Status.Name,
+			ProviderItemID:         string(clItem.Spec.UUID),
+			ProviderContentVersion: clItem.Status.ContentVersion,
+			Conditions: []metav1.Condition{
 				{
 					Type:   vmopv1.VirtualMachineImageProviderReadyCondition,
-					Status: corev1.ConditionTrue,
+					Status: metav1.ConditionTrue,
 				},
 				{
 					Type:   vmopv1.VirtualMachineImageProviderSecurityComplianceCondition,
-					Status: corev1.ConditionTrue,
+					Status: metav1.ConditionTrue,
 				},
 				{
 					Type:   vmopv1.VirtualMachineImageSyncedCondition,
-					Status: corev1.ConditionTrue,
+					Status: metav1.ConditionTrue,
 				},
 			},
 		},

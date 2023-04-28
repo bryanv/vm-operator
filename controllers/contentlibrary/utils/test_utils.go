@@ -12,7 +12,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	crtlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
 )
 
@@ -124,34 +126,31 @@ func GetExpectedCVMIFrom(cclItem imgregv1a1.ClusterContentLibraryItem,
 			},
 		},
 		Spec: vmopv1.VirtualMachineImageSpec{
-			Type:    string(cclItem.Status.Type),
-			ImageID: string(cclItem.Spec.UUID),
-			ProviderRef: vmopv1.ContentProviderReference{
+			ProviderRef: common.LocalObjectRef{
 				APIVersion: cclItem.APIVersion,
 				Kind:       cclItem.Kind,
 				Name:       cclItem.Name,
 			},
 		},
 		Status: vmopv1.VirtualMachineImageStatus{
-			ImageName:      cclItem.Status.Name,
-			ContentVersion: cclItem.Status.ContentVersion,
-			ContentLibraryRef: &corev1.TypedLocalObjectReference{
-				APIGroup: &imgregv1a1.GroupVersion.Group,
-				Kind:     cclItem.Status.ContentLibraryRef.Kind,
-				Name:     cclItem.Status.ContentLibraryRef.Name,
-			},
-			Conditions: []vmopv1.Condition{
+			Name:                   cclItem.Status.Name,
+			ProviderItemID:         string(cclItem.Spec.UUID),
+			ProviderContentVersion: cclItem.Status.ContentVersion,
+			Conditions: []metav1.Condition{
 				{
 					Type:   vmopv1.VirtualMachineImageProviderReadyCondition,
-					Status: corev1.ConditionTrue,
+					Status: metav1.ConditionTrue,
+					Reason: vmopv1.VirtualMachineImageProviderReadyCondition,
 				},
 				{
 					Type:   vmopv1.VirtualMachineImageProviderSecurityComplianceCondition,
-					Status: corev1.ConditionTrue,
+					Status: metav1.ConditionTrue,
+					Reason: vmopv1.VirtualMachineImageProviderSecurityComplianceCondition,
 				},
 				{
 					Type:   vmopv1.VirtualMachineImageSyncedCondition,
-					Status: corev1.ConditionTrue,
+					Status: metav1.ConditionTrue,
+					Reason: vmopv1.VirtualMachineImageSyncedCondition,
 				},
 			},
 		},
@@ -165,9 +164,9 @@ func GetExpectedCVMIFrom(cclItem imgregv1a1.ClusterContentLibraryItem,
 }
 
 func GetExpectedVMIFrom(clItem imgregv1a1.ContentLibraryItem,
-	providerFunc func(context.Context, crtlclient.Object, crtlclient.Object) error) *vmopv1.VirtualMachineImage {
+	providerFunc func(context.Context, crtlclient.Object, crtlclient.Object) error) *v1alpha1.VirtualMachineImage {
 
-	vmi := &vmopv1.VirtualMachineImage{
+	vmi := &v1alpha1.VirtualMachineImage{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      GetTestVMINameFrom(clItem.Name),
 			Namespace: clItem.Namespace,
@@ -181,16 +180,16 @@ func GetExpectedVMIFrom(clItem imgregv1a1.ContentLibraryItem,
 				},
 			},
 		},
-		Spec: vmopv1.VirtualMachineImageSpec{
+		Spec: v1alpha1.VirtualMachineImageSpec{
 			Type:    string(clItem.Status.Type),
 			ImageID: string(clItem.Spec.UUID),
-			ProviderRef: vmopv1.ContentProviderReference{
+			ProviderRef: v1alpha1.ContentProviderReference{
 				APIVersion: clItem.APIVersion,
 				Kind:       clItem.Kind,
 				Name:       clItem.Name,
 			},
 		},
-		Status: vmopv1.VirtualMachineImageStatus{
+		Status: v1alpha1.VirtualMachineImageStatus{
 			ImageName:      clItem.Status.Name,
 			ContentVersion: clItem.Status.ContentVersion,
 			ContentLibraryRef: &corev1.TypedLocalObjectReference{
@@ -198,7 +197,7 @@ func GetExpectedVMIFrom(clItem imgregv1a1.ContentLibraryItem,
 				Kind:     clItem.Status.ContentLibraryRef.Kind,
 				Name:     clItem.Status.ContentLibraryRef.Name,
 			},
-			Conditions: []vmopv1.Condition{
+			Conditions: []v1alpha1.Condition{
 				{
 					Type:   vmopv1.VirtualMachineImageProviderReadyCondition,
 					Status: corev1.ConditionTrue,
@@ -237,11 +236,11 @@ func PopulateRuntimeFieldsTo(vmi, appliedVMI crtlclient.Object) {
 
 	// Populate condition LastTransitionTime.
 	if appliedStatus.Conditions != nil {
-		transactionTimeMap := map[vmopv1.ConditionType]metav1.Time{}
+		transactionTimeMap := map[string]metav1.Time{}
 		for _, condition := range appliedStatus.Conditions {
 			transactionTimeMap[condition.Type] = condition.LastTransitionTime
 		}
-		updatedConditions := []vmopv1.Condition{}
+		updatedConditions := []metav1.Condition{}
 		for _, condition := range status.Conditions {
 			if transactionTime, ok := transactionTimeMap[condition.Type]; ok {
 				condition.LastTransitionTime = transactionTime

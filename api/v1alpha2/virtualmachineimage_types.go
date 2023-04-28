@@ -226,6 +226,14 @@ type VirtualMachineImage struct {
 	Status VirtualMachineImageStatus `json:"status,omitempty"`
 }
 
+func (i *VirtualMachineImage) GetConditions() []metav1.Condition {
+	return i.Status.Conditions
+}
+
+func (i *VirtualMachineImage) SetConditions(conditions []metav1.Condition) {
+	i.Status.Conditions = conditions
+}
+
 // +kubebuilder:object:root=true
 
 // VirtualMachineImageList contains a list of VirtualMachineImage.
@@ -253,6 +261,14 @@ type ClusterVirtualMachineImage struct {
 
 	Spec   VirtualMachineImageSpec   `json:"spec,omitempty"`
 	Status VirtualMachineImageStatus `json:"status,omitempty"`
+}
+
+func (i *ClusterVirtualMachineImage) GetConditions() []metav1.Condition {
+	return i.Status.Conditions
+}
+
+func (i *ClusterVirtualMachineImage) SetConditions(conditions []metav1.Condition) {
+	i.Status.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true

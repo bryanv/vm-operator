@@ -15,7 +15,7 @@ import (
 
 	imgregv1a1 "github.com/vmware-tanzu/vm-operator/external/image-registry/api/v1alpha1"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/controllers/contentlibrary/utils"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -71,12 +71,11 @@ func cclItemReconcile() {
 		ctx = suite.NewIntegrationTestContext()
 		intgFakeVMProvider.Lock()
 		defer intgFakeVMProvider.Unlock()
-		intgFakeVMProvider.SyncVirtualMachineImageFn = func(
-			_ context.Context, _, cvmiObj client.Object) error {
-			// Change a random spec and status field to verify the provider function is called.
+		intgFakeVMProvider.SyncVirtualMachineImageFn = func(_ context.Context, _, cvmiObj client.Object) error {
+			// Update a Status field to verify the provider function is called.
 			cvmi := cvmiObj.(*vmopv1.ClusterVirtualMachineImage)
-			cvmi.Spec.HardwareVersion = 123
-			cvmi.Status.ImageSupported = &[]bool{true}[0]
+			var hwVer int32 = 123
+			cvmi.Status.HardwareVersion = &hwVer
 			return nil
 		}
 	})

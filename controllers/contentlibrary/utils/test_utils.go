@@ -95,71 +95,16 @@ func GetTestVMINameFrom(clItemName string) string {
 	return strings.Replace(clItemName, ItemFieldNamePrefix, ImageFieldNamePrefix, 1)
 }
 
-func GetServiceTypeLabels(labels map[string]string) map[string]string {
-	generatedLabels := make(map[string]string)
+func FilterServicesTypeLabels(labels map[string]string) map[string]string {
+	filtered := make(map[string]string)
 
 	// Only watch for service type labels
 	for label := range labels {
 		if strings.HasPrefix(label, "type.services.vmware.com/") {
-			generatedLabels[label] = ""
+			filtered[label] = ""
 		}
 	}
-	return generatedLabels
-}
-
-func GetExpectedCVMIFrom(cclItem imgregv1a1.ClusterContentLibraryItem,
-	providerFunc func(context.Context, crtlclient.Object, crtlclient.Object) error) *vmopv1.ClusterVirtualMachineImage {
-
-	cvmi := &vmopv1.ClusterVirtualMachineImage{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   GetTestVMINameFrom(cclItem.Name),
-			Labels: GetServiceTypeLabels(cclItem.Labels),
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         cclItem.APIVersion,
-					Kind:               cclItem.Kind,
-					Name:               cclItem.Name,
-					Controller:         &[]bool{true}[0],
-					BlockOwnerDeletion: &[]bool{true}[0],
-				},
-			},
-		},
-		Spec: vmopv1.VirtualMachineImageSpec{
-			ProviderRef: common.LocalObjectRef{
-				APIVersion: cclItem.APIVersion,
-				Kind:       cclItem.Kind,
-				Name:       cclItem.Name,
-			},
-		},
-		Status: vmopv1.VirtualMachineImageStatus{
-			Name:                   cclItem.Status.Name,
-			ProviderItemID:         string(cclItem.Spec.UUID),
-			ProviderContentVersion: cclItem.Status.ContentVersion,
-			Conditions: []metav1.Condition{
-				{
-					Type:   vmopv1.VirtualMachineImageProviderReadyCondition,
-					Status: metav1.ConditionTrue,
-					Reason: vmopv1.VirtualMachineImageProviderReadyCondition,
-				},
-				{
-					Type:   vmopv1.VirtualMachineImageProviderSecurityComplianceCondition,
-					Status: metav1.ConditionTrue,
-					Reason: vmopv1.VirtualMachineImageProviderSecurityComplianceCondition,
-				},
-				{
-					Type:   vmopv1.VirtualMachineImageSyncedCondition,
-					Status: metav1.ConditionTrue,
-					Reason: vmopv1.VirtualMachineImageSyncedCondition,
-				},
-			},
-		},
-	}
-
-	if providerFunc != nil {
-		_ = providerFunc(nil, nil, cvmi)
-	}
-
-	return cvmi
+	return filtered
 }
 
 func GetExpectedVMIFrom(clItem imgregv1a1.ContentLibraryItem,

@@ -26,12 +26,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 
 	cnsv1alpha1 "github.com/vmware-tanzu/vm-operator/external/vsphere-csi-driver/pkg/syncer/cnsoperator/apis/cnsnodevmattachment/v1alpha1"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
-	"github.com/vmware-tanzu/vm-operator/pkg/patch"
+	patch "github.com/vmware-tanzu/vm-operator/pkg/patch2"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/constants"
@@ -54,7 +54,7 @@ func AddToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) er
 		mgr.GetClient(),
 		ctrl.Log.WithName("controllers").WithName("volume"),
 		record.New(mgr.GetEventRecorderFor(controllerNameLong)),
-		ctx.VMProvider,
+		ctx.VMProviderA2,
 	)
 
 	c, err := controller.New(controllerName, mgr, controller.Options{
@@ -96,7 +96,7 @@ func NewReconciler(
 	client client.Client,
 	logger logr.Logger,
 	recorder record.Recorder,
-	vmProvider vmprovider.VirtualMachineProviderInterface) *Reconciler {
+	vmProvider vmprovider.VirtualMachineProviderInterfaceA2) *Reconciler {
 	return &Reconciler{
 		Client:     client,
 		logger:     logger,
@@ -111,7 +111,7 @@ type Reconciler struct {
 	client.Client
 	logger     logr.Logger
 	recorder   record.Recorder
-	VMProvider vmprovider.VirtualMachineProviderInterface
+	VMProvider vmprovider.VirtualMachineProviderInterfaceA2
 }
 
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachines,verbs=get;list;watch;
@@ -176,7 +176,7 @@ func (r *Reconciler) reconcileResult(ctx *context.VolumeContext) ctrl.Result {
 	if ctx.InstanceStorageFSSEnabled {
 		// Requeue the request if all instance storage PVCs are not bound.
 		_, pvcsBound := ctx.VM.Annotations[constants.InstanceStoragePVCsBoundAnnotationKey]
-		if instancestorage.IsConfigured(ctx.VM) && !pvcsBound {
+		if instancestorage.IsConfiguredA2(ctx.VM) && !pvcsBound {
 			return ctrl.Result{RequeueAfter: lib.GetInstanceStorageRequeueDelay()}
 		}
 	}
@@ -244,7 +244,7 @@ func (r *Reconciler) reconcileInstanceStoragePVCs(ctx *context.VolumeContext) (b
 
 	// If the VM Spec doesn't have any instance storage volumes, there is nothing for us to do.
 	// We do not support removing - or changing really - this type of volume.
-	isVolumes := instancestorage.FilterVolumes(ctx.VM)
+	isVolumes := instancestorage.FilterVolumesA2(ctx.VM)
 	if len(isVolumes) == 0 {
 		return true, nil
 	}
@@ -523,7 +523,7 @@ func (r *Reconciler) processAttachments(
 	// to determine from here if the VM is being created so use the power state to infer it. This is mostly
 	// best-effort, and a hack in the current world since the CnsNodeVmAttachment really should not exist in
 	// the first place.
-	onlyAllowOnePendingAttachment := ctx.VM.Status.PowerState == "" || ctx.VM.Status.PowerState == vmopv1.VirtualMachinePoweredOff
+	onlyAllowOnePendingAttachment := ctx.VM.Status.PowerState == "" || ctx.VM.Status.PowerState == vmopv1.VirtualMachinePowerStateOff
 
 	for _, volume := range ctx.VM.Spec.Volumes {
 		if volume.PersistentVolumeClaim == nil {
@@ -595,7 +595,7 @@ func (r *Reconciler) processAttachments(
 
 	// This is how the previous code sorted, but IMO keeping in Spec order makes more sense.
 	sort.Slice(volumeStatus, func(i, j int) bool {
-		return volumeStatus[i].DiskUuid < volumeStatus[j].DiskUuid
+		return volumeStatus[i].DiskUUID < volumeStatus[j].DiskUUID
 	})
 	ctx.VM.Status.Volumes = volumeStatus
 
@@ -655,7 +655,7 @@ func (r *Reconciler) preserveOrphanedAttachmentStatus(
 	// the Volume status has a reference to the CnsNodeVmAttachment.
 	var volumeStatus []vmopv1.VirtualMachineVolumeStatus
 	for _, volume := range ctx.VM.Status.Volumes {
-		if attachment, ok := uuidAttachments[volume.DiskUuid]; ok {
+		if attachment, ok := uuidAttachments[volume.DiskUUID]; ok {
 			volumeStatus = append(volumeStatus, attachmentToVolumeStatus(volume.Name, attachment))
 		}
 	}
@@ -739,7 +739,7 @@ func attachmentToVolumeStatus(
 	return vmopv1.VirtualMachineVolumeStatus{
 		Name:     volumeName, // Name of the volume as in the Spec
 		Attached: attachment.Status.Attached,
-		DiskUuid: attachment.Status.AttachmentMetadata[AttributeFirstClassDiskUUID],
+		DiskUUID: attachment.Status.AttachmentMetadata[AttributeFirstClassDiskUUID],
 		Error:    sanitizeCNSErrorMessage(attachment.Status.Error),
 	}
 }

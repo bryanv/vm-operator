@@ -19,10 +19,10 @@ import (
 
 	"github.com/google/uuid"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
-
-	"github.com/vmware-tanzu/vm-operator/controllers/volume"
 	cnsv1alpha1 "github.com/vmware-tanzu/vm-operator/external/vsphere-csi-driver/pkg/syncer/cnsoperator/apis/cnsnodevmattachment/v1alpha1"
+
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	"github.com/vmware-tanzu/vm-operator/controllers/volume"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/patch"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/constants"
@@ -63,18 +63,22 @@ func intgTests() {
 
 		vmVolume1 = vmopv1.VirtualMachineVolume{
 			Name: "cns-volume-1",
-			PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
-				PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: "pvc-volume-1",
+			VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+				PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "pvc-volume-1",
+					},
 				},
 			},
 		}
 
 		vmVolume2 = vmopv1.VirtualMachineVolume{
 			Name: "cns-volume-2",
-			PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
-				PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: "pvc-volume-2",
+			VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+				PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "pvc-volume-2",
+					},
 				},
 			},
 		}
@@ -86,7 +90,7 @@ func intgTests() {
 			},
 			Spec: vmopv1.VirtualMachineSpec{
 				ImageName:  "dummy-image",
-				PowerState: vmopv1.VirtualMachinePoweredOff,
+				PowerState: vmopv1.VirtualMachinePowerStateOff,
 			},
 		}
 		vmKey = types.NamespacedName{Name: vm.Name, Namespace: vm.Namespace}
@@ -147,7 +151,7 @@ func intgTests() {
 		vm := getVirtualMachine(objKey)
 		Expect(vm).ToNot(BeNil())
 
-		volumes := instancestorage.FilterVolumes(vm)
+		volumes := instancestorage.FilterVolumesA2(vm)
 		Expect(volumes).ToNot(BeEmpty())
 
 		Eventually(func() bool {
@@ -178,7 +182,7 @@ func intgTests() {
 		vm := getVirtualMachine(objKey)
 		Expect(vm).ToNot(BeNil())
 
-		volumes := instancestorage.FilterVolumes(vm)
+		volumes := instancestorage.FilterVolumesA2(vm)
 		Expect(volumes).ToNot(BeEmpty())
 
 		Eventually(func() bool {
@@ -202,7 +206,7 @@ func intgTests() {
 		vm := getVirtualMachine(objKey)
 		Expect(vm).ToNot(BeNil())
 
-		volumes := instancestorage.FilterVolumes(vm)
+		volumes := instancestorage.FilterVolumesA2(vm)
 		Expect(volumes).ToNot(BeEmpty())
 
 		for _, vol := range volumes {
@@ -243,7 +247,7 @@ func intgTests() {
 			origInstanceStorageFailedTTL = os.Getenv(lib.InstanceStoragePVPlacementFailedTTLEnv)
 			Expect(os.Setenv(lib.InstanceStoragePVPlacementFailedTTLEnv, "0s")).To(Succeed())
 
-			vm.Spec.Volumes = append(vm.Spec.Volumes, builder.DummyInstanceStorageVirtualMachineVolumes()...)
+			vm.Spec.Volumes = append(vm.Spec.Volumes, builder.DummyInstanceStorageVirtualMachineVolumesA2()...)
 			vm.Labels = map[string]string{constants.InstanceStorageLabelKey: lib.TrueString}
 			Expect(ctx.Client.Create(ctx, vm)).To(Succeed())
 
@@ -384,7 +388,7 @@ func intgTests() {
 
 				volStatus := vm.Status.Volumes[0]
 				Expect(volStatus.Name).To(Equal(vmVolume1.Name))
-				Expect(volStatus.DiskUuid).To(Equal(dummyDiskUUID1))
+				Expect(volStatus.DiskUUID).To(Equal(dummyDiskUUID1))
 				Expect(volStatus.Error).To(Equal(errMsg))
 			})
 		})
@@ -433,7 +437,7 @@ func intgTests() {
 			By("Simulate VM being powered on", func() {
 				vm := getVirtualMachine(vmKey)
 				Expect(vm).ToNot(BeNil())
-				vm.Status.PowerState = vmopv1.VirtualMachinePoweredOn
+				vm.Status.PowerState = vmopv1.VirtualMachinePowerStateOn
 				Expect(ctx.Client.Status().Update(ctx, vm)).To(Succeed())
 			})
 

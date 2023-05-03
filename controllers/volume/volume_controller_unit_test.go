@@ -19,9 +19,10 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/util/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
-	"github.com/vmware-tanzu/vm-operator/controllers/volume"
 	cnsv1alpha1 "github.com/vmware-tanzu/vm-operator/external/vsphere-csi-driver/pkg/syncer/cnsoperator/apis/cnsnodevmattachment/v1alpha1"
+
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	"github.com/vmware-tanzu/vm-operator/controllers/volume"
 	volContext "github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	providerfake "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/fake"
@@ -55,38 +56,36 @@ func unitTestsReconcile() {
 		ctx         *builder.UnitTestContextForController
 
 		reconciler     *volume.Reconciler
-		fakeVMProvider *providerfake.VMProvider
+		fakeVMProvider *providerfake.VMProviderA2
 		volCtx         *volContext.VolumeContext
 		vm             *vmopv1.VirtualMachine
 
-		vmVol               vmopv1.VirtualMachineVolume
-		vmVolumeWithVsphere *vmopv1.VirtualMachineVolume
-		vmVolumeWithPVC1    *vmopv1.VirtualMachineVolume
-		vmVolumeWithPVC2    *vmopv1.VirtualMachineVolume
+		vmVol            vmopv1.VirtualMachineVolume
+		vmVolumeWithPVC1 *vmopv1.VirtualMachineVolume
+		vmVolumeWithPVC2 *vmopv1.VirtualMachineVolume
 
 		vmVolForInstPVC1 *vmopv1.VirtualMachineVolume
 	)
 
 	BeforeEach(func() {
-		vmVolumeWithVsphere = &vmopv1.VirtualMachineVolume{
-			Name:          "vsphere-volume",
-			VsphereVolume: &vmopv1.VsphereVolumeSource{},
-		}
-
 		vmVolumeWithPVC1 = &vmopv1.VirtualMachineVolume{
 			Name: "cns-volume-1",
-			PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
-				PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: "pvc-volume-1",
+			VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+				PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "pvc-volume-1",
+					},
 				},
 			},
 		}
 
 		vmVolumeWithPVC2 = &vmopv1.VirtualMachineVolume{
 			Name: "cns-volume-2",
-			PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
-				PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: "pvc-volume-2",
+			VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+				PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "pvc-volume-2",
+					},
 				},
 			},
 		}
@@ -103,13 +102,15 @@ func unitTestsReconcile() {
 
 		vmVolForInstPVC1 = &vmopv1.VirtualMachineVolume{
 			Name: "instance-pvc-1",
-			PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
-				PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: "instance-pvc-1",
-				},
-				InstanceVolumeClaim: &vmopv1.InstanceVolumeClaimVolumeSource{
-					StorageClass: dummyInstanceStorageClassName,
-					Size:         resource.MustParse("256Gi"),
+			VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+				PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "instance-pvc-1",
+					},
+					InstanceVolumeClaim: &vmopv1.InstanceVolumeClaimVolumeSource{
+						StorageClass: dummyInstanceStorageClassName,
+						Size:         resource.MustParse("256Gi"),
+					},
 				},
 			},
 		}
@@ -121,9 +122,9 @@ func unitTestsReconcile() {
 			ctx.Client,
 			ctx.Logger,
 			ctx.Recorder,
-			ctx.VMProvider,
+			ctx.VMProviderA2,
 		)
-		fakeVMProvider = ctx.VMProvider.(*providerfake.VMProvider)
+		fakeVMProvider = ctx.VMProviderA2.(*providerfake.VMProviderA2)
 
 		volCtx = &volContext.VolumeContext{
 			Context: ctx,
@@ -288,20 +289,6 @@ func unitTestsReconcile() {
 			})
 		})
 
-		When("VM Spec.Volumes contains Vsphere volume", func() {
-			BeforeEach(func() {
-				vm.Spec.Volumes = append(vm.Spec.Volumes, *vmVolumeWithVsphere)
-			})
-
-			It("returns success", func() {
-				err := reconciler.ReconcileNormal(volCtx)
-				Expect(err).ToNot(HaveOccurred())
-
-				Expect(vm.Spec.Volumes).To(HaveLen(1))
-				Expect(vm.Status.Volumes).To(BeEmpty())
-			})
-		})
-
 		When("VM Spec.Volumes contains CNS volumes and VM isn't powered on", func() {
 			var vmVol1, vmVol2 vmopv1.VirtualMachineVolume
 
@@ -310,7 +297,7 @@ func unitTestsReconcile() {
 				vmVol2 = *vmVolumeWithPVC2
 				vm.Spec.Volumes = append(vm.Spec.Volumes, vmVol1, vmVol2)
 
-				vm.Status.PowerState = vmopv1.VirtualMachinePoweredOff
+				vm.Status.PowerState = vmopv1.VirtualMachinePowerStateOff
 			})
 
 			It("only allows one pending attachment at a time", func() {
@@ -631,7 +618,7 @@ FaultMessage: ([]types.LocalizableMessage) \u003cnil\u003e\\n }\\n },\\n Type: (
 				vmVol = *vmVolumeWithPVC1
 				vm.Status.Volumes = append(vm.Status.Volumes, vmopv1.VirtualMachineVolumeStatus{
 					Name:     vmVol.Name,
-					DiskUuid: dummyDiskUUID,
+					DiskUUID: dummyDiskUUID,
 				})
 
 				attachment = cnsAttachmentForVMVolume(vm, vmVol)
@@ -665,7 +652,7 @@ FaultMessage: ([]types.LocalizableMessage) \u003cnil\u003e\\n }\\n },\\n Type: (
 				vmVol1 = *vmVolumeWithPVC1
 				vmVol2 = *vmVolumeWithPVC2
 				vm.Spec.Volumes = append(vm.Spec.Volumes, vmVol1, vmVol2)
-				vm.Status.PowerState = vmopv1.VirtualMachinePoweredOn
+				vm.Status.PowerState = vmopv1.VirtualMachinePowerStateOn
 			})
 
 			// We sort by DiskUUID, but the CnsNodeVmAttachment haven't been "attached" yet,
@@ -809,7 +796,7 @@ func getInstanceStoragePVCs(ctx *volContext.VolumeContext, testCtx *builder.Unit
 	var errs []error
 	pvcList := make([]corev1.PersistentVolumeClaim, 0)
 
-	volumes := instancestorage.FilterVolumes(ctx.VM)
+	volumes := instancestorage.FilterVolumesA2(ctx.VM)
 	for _, vol := range volumes {
 		objKey := client.ObjectKey{
 			Namespace: ctx.VM.Namespace,
@@ -878,6 +865,6 @@ func assertVMVolStatusFromAttachment(
 
 	ExpectWithOffset(1, vmVolStatus.Name).To(Equal(vmVol.Name))
 	ExpectWithOffset(1, vmVolStatus.Attached).To(Equal(attachment.Status.Attached))
-	ExpectWithOffset(1, vmVolStatus.DiskUuid).To(Equal(diskUUID))
+	ExpectWithOffset(1, vmVolStatus.DiskUUID).To(Equal(diskUUID))
 	ExpectWithOffset(1, vmVolStatus.Error).To(Equal(attachment.Status.Error))
 }

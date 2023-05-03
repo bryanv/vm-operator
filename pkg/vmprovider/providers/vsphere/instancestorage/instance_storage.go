@@ -23,6 +23,17 @@ func IsConfigured(vm *vmopv1.VirtualMachine) bool {
 	return false
 }
 
+// IsConfiguredA2 checks if VM spec has instance volumes to identify if VM is configured with instance storage
+// and returns true/false accordingly.
+func IsConfiguredA2(vm *v1alpha2.VirtualMachine) bool {
+	for _, vol := range vm.Spec.Volumes {
+		if pvc := vol.PersistentVolumeClaim; pvc != nil && pvc.InstanceVolumeClaim != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // FilterVolumes returns instance storage volumes present in VM spec.
 func FilterVolumes(vm *vmopv1.VirtualMachine) []vmopv1.VirtualMachineVolume {
 	var volumes []vmopv1.VirtualMachineVolume

@@ -23,13 +23,24 @@ const (
 	// For more information please see VirtualMachineImage.Status.Ready.
 	VirtualMachineConditionImageReady = "VirtualMachineImageReady"
 
-	VirtualMachineConditionNetworkReady = "VirtualMachineNetworkReady"
+	// VirtualMachineConditionVMSetResourcePolicyReady indicates that a referenced
+	// VirtualMachineSetResourcePolicy is Ready.
+	VirtualMachineConditionVMSetResourcePolicyReady = "VirtualMachineConditionVMSetResourcePolicyReady"
 
+	// VirtualMachineConditionStorageReady indicates that the storage prerequisites for the VM are ready.
 	VirtualMachineConditionStorageReady = "VirtualMachineStorageReady"
 
+	// VirtualMachineConditionBootstrapReady indicates that the bootstrap prerequisites for the VM are ready.
 	VirtualMachineConditionBootstrapReady = "VirtualMachineBootstrapReady"
 
-	VirtualMachineConditionVMSetResourcePolicyReady = "VirtualMachineConditionVMSetResourcePolicyReady"
+	// VirtualMachineConditionNetworkReady indicates that the network prerequisites for the VM are ready.
+	VirtualMachineConditionNetworkReady = "VirtualMachineNetworkReady"
+
+	// VirtualMachineConditionPlacementReady indicates that placement, if required for the VM, was done and is ready.
+	VirtualMachineConditionPlacementReady = "VirtualMachineConditionPlacementReady"
+
+	// VirtualMachineConditionCreated indicates that the VM has been created.
+	VirtualMachineConditionCreated = "VirtualMachineCreated"
 )
 
 const (

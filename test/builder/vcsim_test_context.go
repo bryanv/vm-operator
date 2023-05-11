@@ -38,7 +38,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	// Blank import to make govmomi client aware of these bindings.
 	_ "github.com/vmware/govmomi/pbm/simulator"
@@ -48,6 +47,7 @@ import (
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	"github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
 	"github.com/vmware-tanzu/vm-operator/test/testutil"
@@ -56,8 +56,9 @@ import (
 type NetworkEnv string
 
 const (
-	NetworkEnvVDS  = NetworkEnv("vds")
-	NetworkEnvNSXT = NetworkEnv("nsx-t")
+	NetworkEnvVDS   = NetworkEnv("vds")
+	NetworkEnvNSXT  = NetworkEnv("nsx-t")
+	NetworkEnvNamed = NetworkEnv("named")
 
 	NsxTLogicalSwitchUUID = "nsxt-dummy-ls-uuid"
 )
@@ -73,6 +74,10 @@ type VCSimTestConfig struct {
 	// WithContentLibrary configures a Content Library, populated with one image's
 	// name available in the TestContextForVCSim.ContentLibraryImageName.
 	WithContentLibrary bool
+
+	// WithNamespaceScopedImage creates images as namespace scoped VirtualMachineImage.
+	// Otherwise, cluster scoped ClusterVirtualMachineImage is used.
+	WithNamespaceScopedImages bool
 
 	// WithInstanceStorage enables the WCP_INSTANCE_STORAGE FSS.
 	WithInstanceStorage bool
@@ -161,7 +166,7 @@ func (s *TestSuite) NewTestContextForVCSim(
 
 	ctx := newTestContextForVCSim(config, initObjects)
 
-	ctx.setupEnvFSS(config)
+	ctx.setupEnv(config)
 	ctx.setupVCSim(config)
 	ctx.setupContentLibrary(config)
 	ctx.setupK8sConfig(config)
@@ -315,8 +320,17 @@ func (c *TestContextForVCSim) CreateWorkloadNamespace() WorkloadNamespaceInfo {
 }
 
 // TODO: Get rid of runtime env checks so this isn't needed.
-func (c *TestContextForVCSim) setupEnvFSS(config VCSimTestConfig) {
+func (c *TestContextForVCSim) setupEnv(config VCSimTestConfig) {
 	Expect(lib.SetVMOpNamespaceEnv(c.PodNamespace)).To(Succeed())
+
+	switch config.WithNetworkEnv {
+	case NetworkEnvVDS:
+		Expect(os.Setenv(lib.NetworkProviderType, lib.NetworkProviderTypeVDS)).To(Succeed())
+	case NetworkEnvNSXT:
+		Expect(os.Setenv(lib.NetworkProviderType, lib.NetworkProviderTypeNSXT)).To(Succeed())
+	default: // NetworkEnvNamed
+		Expect(os.Setenv(lib.NetworkProviderType, lib.NetworkProviderTypeNamed)).To(Succeed())
+	}
 
 	if config.WithContentLibrary {
 		Expect(os.Setenv("CONTENT_API_WAIT_SECS", "1")).To(Succeed())
@@ -466,32 +480,6 @@ func (c *TestContextForVCSim) setupContentLibrary(config VCSimTestConfig) {
 	Expect(clID).ToNot(BeEmpty())
 	c.ContentLibraryID = clID
 
-	clProvider := &vmopv1.ContentLibraryProvider{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clID,
-		},
-		Spec: vmopv1.ContentLibraryProviderSpec{
-			UUID: clID,
-		},
-	}
-	Expect(c.Client.Create(c, clProvider)).To(Succeed())
-
-	cs := &vmopv1.ContentSource{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clID,
-		},
-		Spec: vmopv1.ContentSourceSpec{
-			ProviderRef: vmopv1.ContentProviderReference{
-				Name: clProvider.Name,
-				Kind: "ContentLibraryProvider",
-			},
-		},
-	}
-	Expect(c.Client.Create(c, cs)).To(Succeed())
-
-	Expect(controllerutil.SetOwnerReference(cs, clProvider, c.Client.Scheme())).To(Succeed())
-	Expect(c.Client.Update(c, clProvider)).To(Succeed())
-
 	libraryItem := library.Item{
 		Name:      "test-image-ovf",
 		Type:      "ovf",
@@ -499,12 +487,16 @@ func (c *TestContextForVCSim) setupContentLibrary(config VCSimTestConfig) {
 	}
 	c.ContentLibraryImageName = libraryItem.Name
 
-	vmImage := DummyVirtualMachineImage(c.ContentLibraryImageName)
-	Expect(controllerutil.SetOwnerReference(clProvider, vmImage, c.Client.Scheme())).To(Succeed())
-	Expect(c.Client.Create(c, vmImage)).To(Succeed())
-
-	createContentLibraryItem(libMgr, libraryItem,
+	itemID := createContentLibraryItem(libMgr, libraryItem,
 		path.Join(testutil.GetRootDirOrDie(), "images", "ttylinux-pc_i486-16.1.ovf"))
+
+	// The image isn't quite as prod but sufficient for what we need here ATM.
+	clusterVMImage := DummyClusterVirtualMachineImageA2(c.ContentLibraryImageName)
+	clusterVMImage.Spec.ProviderRef.Kind = "ClusterContentLibraryItem"
+	Expect(c.Client.Create(c, clusterVMImage)).To(Succeed())
+	clusterVMImage.Status.ProviderItemID = itemID
+	conditions.MarkTrue(clusterVMImage, v1alpha2.VirtualMachineImageSyncedCondition) // XXX
+	Expect(c.Client.Status().Update(c, clusterVMImage)).To(Succeed())
 }
 
 func (c *TestContextForVCSim) ContentLibraryItemTemplate(srcVMName, templateName string) {
@@ -530,21 +522,22 @@ func (c *TestContextForVCSim) ContentLibraryItemTemplate(srcVMName, templateName
 		},
 	}
 
-	_, err = vcenter.NewManager(c.RestClient).CreateTemplate(c, spec)
+	itemID, err := vcenter.NewManager(c.RestClient).CreateTemplate(c, spec)
 	Expect(err).ToNot(HaveOccurred())
 
 	// Create the expected VirtualMachineImage for the template.
-	vmImage := DummyVirtualMachineImage(templateName)
-	cl := &vmopv1.ContentLibraryProvider{}
-	Expect(c.Client.Get(c, client.ObjectKey{Name: clID}, cl)).To(Succeed())
-	Expect(controllerutil.SetOwnerReference(cl, vmImage, c.Client.Scheme())).To(Succeed())
-	Expect(c.Client.Create(c, vmImage)).To(Succeed())
+	clusterVMImage := DummyClusterVirtualMachineImageA2(templateName)
+	clusterVMImage.Spec.ProviderRef.Kind = "ClusterContentLibraryItem"
+	Expect(c.Client.Create(c, clusterVMImage)).To(Succeed())
+	clusterVMImage.Status.ProviderItemID = itemID
+	conditions.MarkTrue(clusterVMImage, v1alpha2.VirtualMachineImageSyncedCondition)
+	Expect(c.Client.Status().Update(c, clusterVMImage)).To(Succeed())
 }
 
 func createContentLibraryItem(
 	libMgr *library.Manager,
 	libraryItem library.Item,
-	itemPath string) {
+	itemPath string) string {
 
 	ctx := goctx.Background()
 
@@ -591,6 +584,8 @@ func createContentLibraryItem(
 	}
 	Expect(uploadFunc(itemPath)).To(Succeed())
 	Expect(libMgr.CompleteLibraryItemUpdateSession(ctx, sessionID)).To(Succeed())
+
+	return itemID
 }
 
 func (c *TestContextForVCSim) setupK8sConfig(config VCSimTestConfig) {

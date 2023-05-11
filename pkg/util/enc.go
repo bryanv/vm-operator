@@ -55,3 +55,21 @@ func TryToDecodeBase64Gzip(data []byte) (string, error) {
 
 	return string(plainText), nil
 }
+
+// EncodeGzipBase64 gzips and then base64-encodes the string.
+func EncodeGzipBase64(s string) (string, error) {
+	var zbuf bytes.Buffer
+	zw := gzip.NewWriter(&zbuf)
+	if _, err := zw.Write([]byte(s)); err != nil {
+		return "", err
+	}
+	if err := zw.Flush(); err != nil {
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+
+	b64 := base64.StdEncoding.EncodeToString(zbuf.Bytes())
+	return b64, nil
+}

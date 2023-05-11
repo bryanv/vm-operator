@@ -56,9 +56,6 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// Please note this field may not contain IP4 addresses if DHCP4 is set
 	// to true or IP6 addresses if DHCP6 is set to true.
 	//
-	// Please note if the Interfaces field is non-empty then this field is
-	// ignored and should be specified on the elements in the Interfaces list.
-	//
 	// +optional
 	Addresses []string `json:"addresses,omitempty"`
 
@@ -80,7 +77,7 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// Please note this field is only supported if the network connection
 	// supports DHCP.
 	//
-	// Please note this field is mutually exclusive with IP4 addresses in the
+	// Please note this field is mutually exclusive with IP6 addresses in the
 	// Addresses field and the Gateway6 field.
 	//
 	// +optional
@@ -109,7 +106,7 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// supports manual IP allocation.
 	//
 	// If the network connection supports manual IP allocation and the
-	// Addresses field includes at least one IP4 address, then this field
+	// Addresses field includes at least one IP6 address, then this field
 	// is required.
 	//
 	// Please note the IP address must include the network prefix length, ex.

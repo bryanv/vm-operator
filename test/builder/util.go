@@ -289,6 +289,22 @@ func DummyBasicVirtualMachine(name, namespace string) *vmopv1.VirtualMachine {
 	}
 }
 
+func DummyBasicVirtualMachineA2(name, namespace string) *v1alpha2.VirtualMachine {
+	return &v1alpha2.VirtualMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   namespace,
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+		},
+		Spec: v1alpha2.VirtualMachineSpec{
+			ImageName:  DummyImageName,
+			ClassName:  DummyClassName,
+			PowerState: v1alpha2.VirtualMachinePowerStateOn,
+		},
+	}
+}
+
 func DummyVirtualMachine() *vmopv1.VirtualMachine {
 	return &vmopv1.VirtualMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -375,6 +391,10 @@ func DummyVirtualMachineA2() *v1alpha2.VirtualMachine {
 
 func AddDummyInstanceStorageVolume(vm *vmopv1.VirtualMachine) {
 	vm.Spec.Volumes = append(vm.Spec.Volumes, DummyInstanceStorageVirtualMachineVolumes()...)
+}
+
+func AddDummyInstanceStorageVolumeA2(vm *v1alpha2.VirtualMachine) {
+	vm.Spec.Volumes = append(vm.Spec.Volumes, DummyInstanceStorageVirtualMachineVolumesA2()...)
 }
 
 func DummyVirtualMachineService() *vmopv1.VirtualMachineService {
@@ -488,6 +508,21 @@ func DummyVirtualMachineSetResourcePolicy2(name, namespace string) *vmopv1.Virtu
 			Folder: vmopv1.FolderSpec{
 				Name: name,
 			},
+		},
+	}
+}
+
+func DummyVirtualMachineSetResourcePolicy2A2(name, namespace string) *v1alpha2.VirtualMachineSetResourcePolicy {
+	return &v1alpha2.VirtualMachineSetResourcePolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: v1alpha2.VirtualMachineSetResourcePolicySpec{
+			ResourcePool: v1alpha2.ResourcePoolSpec{
+				Name: name,
+			},
+			Folder: name,
 		},
 	}
 }

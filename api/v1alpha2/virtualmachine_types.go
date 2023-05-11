@@ -28,6 +28,8 @@ const (
 	VirtualMachineConditionStorageReady = "VirtualMachineStorageReady"
 
 	VirtualMachineConditionBootstrapReady = "VirtualMachineBootstrapReady"
+
+	VirtualMachineConditionVMSetResourcePolicyReady = "VirtualMachineConditionVMSetResourcePolicyReady"
 )
 
 const (

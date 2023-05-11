@@ -46,6 +46,7 @@ import (
 	_ "github.com/vmware/govmomi/vapi/simulator"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
@@ -754,6 +755,47 @@ func (c *TestContextForVCSim) CreateVirtualMachineSetResourcePolicy(
 	}
 
 	folder, err := nsInfo.Folder.CreateFolder(c, resourcePolicy.Spec.Folder.Name)
+	Expect(err).ToNot(HaveOccurred())
+
+	return resourcePolicy, folder
+}
+
+func (c *TestContextForVCSim) CreateVirtualMachineSetResourcePolicyA2(
+	name string,
+	nsInfo WorkloadNamespaceInfo) (*v1alpha2.VirtualMachineSetResourcePolicy, *object.Folder) {
+
+	resourcePolicy := DummyVirtualMachineSetResourcePolicy2A2(name, nsInfo.Namespace)
+	Expect(c.Client.Create(c, resourcePolicy)).To(Succeed())
+
+	var rps []*object.ResourcePool
+
+	if c.withFaultDomains {
+		for _, ccrs := range c.azCCRs {
+			for _, ccr := range ccrs {
+				rp, err := ccr.ResourcePool(c)
+				Expect(err).ToNot(HaveOccurred())
+				rps = append(rps, rp)
+			}
+		}
+	} else {
+		rp, err := c.singleCCR.ResourcePool(c)
+		Expect(err).ToNot(HaveOccurred())
+		rps = append(rps, rp)
+	}
+
+	si := object.NewSearchIndex(c.VCClient.Client)
+	for _, rp := range rps {
+		objRef, err := si.FindChild(c, rp.Reference(), nsInfo.Namespace)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(objRef).ToNot(BeNil())
+		nsRP, ok := objRef.(*object.ResourcePool)
+		Expect(ok).To(BeTrue())
+
+		_, err = nsRP.Create(c, resourcePolicy.Spec.ResourcePool.Name, types.DefaultResourceConfigSpec())
+		Expect(err).ToNot(HaveOccurred())
+	}
+
+	folder, err := nsInfo.Folder.CreateFolder(c, resourcePolicy.Spec.Folder)
 	Expect(err).ToNot(HaveOccurred())
 
 	return resourcePolicy, folder

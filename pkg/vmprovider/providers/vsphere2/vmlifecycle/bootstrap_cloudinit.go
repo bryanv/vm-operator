@@ -15,15 +15,15 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/internal"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network2"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network"
 )
 
 type CloudInitMetadata struct {
-	InstanceID    string           `yaml:"instance-id,omitempty"`
-	LocalHostname string           `yaml:"local-hostname,omitempty"`
-	Hostname      string           `yaml:"hostname,omitempty"`
-	Network       network2.Netplan `yaml:"network,omitempty"`
-	PublicKeys    string           `yaml:"public-keys,omitempty"`
+	InstanceID    string          `yaml:"instance-id,omitempty"`
+	LocalHostname string          `yaml:"local-hostname,omitempty"`
+	Hostname      string          `yaml:"hostname,omitempty"`
+	Network       network.Netplan `yaml:"network,omitempty"`
+	PublicKeys    string          `yaml:"public-keys,omitempty"`
 }
 
 func BootStrapCloudInit(
@@ -32,7 +32,7 @@ func BootStrapCloudInit(
 	cloudInitSpec *vmopv1.VirtualMachineBootstrapCloudInitSpec,
 	bsArgs *BootstrapArgs) (*types.VirtualMachineConfigSpec, *types.CustomizationSpec, error) {
 
-	netPlan, err := network2.NetPlanCustomization(bsArgs.NetworkResults)
+	netPlan, err := network.NetPlanCustomization(bsArgs.NetworkResults)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create NetPlan customization: %w", err)
 	}
@@ -54,20 +54,18 @@ func BootStrapCloudInit(
 		// we check for a 'value' key when 'user-data' is not supplied.
 		// The 'value' key lookup will eventually be deprecated.
 		for _, k := range []string{cloudInitSpec.RawCloudConfig.Key, "user-data", "value"} {
-			if k == "" {
-				continue
-			}
-
-			userdata = bsArgs.BootstrapData.Data[k]
-			if userdata != "" {
-				break
+			if k != "" {
+				userdata = bsArgs.BootstrapData.Data[k]
+				if userdata != "" {
+					break
+				}
 			}
 		}
 
-		// TODO: if userdata == "" ... ?
+		// NOTE: The old code didn't error out if userdata wasn't found, so keep going.
 
 	} else {
-		return nil, nil, fmt.Errorf("TODO: CloudConfig")
+		return nil, nil, fmt.Errorf("TODO: inlined CloudConfig")
 	}
 
 	var configSpec *types.VirtualMachineConfigSpec
@@ -92,7 +90,7 @@ func BootStrapCloudInit(
 func GetCloudInitMetadata(
 	uid string,
 	hostname string,
-	netplan *network2.Netplan,
+	netplan *network.Netplan,
 	sshPublicKeys string) (string, error) {
 
 	metadata := &CloudInitMetadata{
@@ -177,6 +175,7 @@ func GetCloudInitGuestInfoCustSpec(
 	// FIXME: This is the old behavior but isn't quite correct: we really need the current ExtraConfig,
 	// and then only add/update it if new or updated (so we don't customize with stale data). Also,
 	// always setting VAppConfigRemoved isn't correct: should only set it if the VM has vApp data.
+	// As-is we will always Reconfigure the VM.
 	configSpec := &types.VirtualMachineConfigSpec{}
 	configSpec.ExtraConfig = util.AppendNewExtraConfigValues(config.ExtraConfig, extraConfig)
 	// Remove the VAppConfig to ensure Cloud-Init inside the guest does not

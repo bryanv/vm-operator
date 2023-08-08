@@ -29,7 +29,7 @@ import (
 	vcclient "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/client"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/contentlibrary"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network2"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/placement"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/storage"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/vcenter"
@@ -52,9 +52,9 @@ type VMCreateArgs struct {
 	HasInstanceStorage    bool
 	ChildResourcePoolName string
 	ChildFolderName       string
-	ClusterMoID           string
+	ClusterMoRef          types.ManagedObjectReference
 
-	NetworkResults network2.NetworkInterfaceResults
+	NetworkResults network.NetworkInterfaceResults
 }
 
 const (
@@ -316,8 +316,8 @@ func (vs *vSphereVMProvider) createdVirtualMachineFallthroughUpdate(
 	createArgs *VMCreateArgs,
 	vcClient *vcclient.Client) error {
 
-	// In the common case, we'll call directly into update right after create succeeds, and can use
-	// the createArgs to avoid doing a bunch of lookup work again.
+	// TODO: In the common case, we'll call directly into update right after create succeeds, and
+	// can use the createArgs to avoid doing a bunch of lookup work again.
 	_ = createArgs
 
 	return vs.updateVirtualMachine(vmCtx, vcVM, vcClient)
@@ -506,12 +506,12 @@ func (vs *vSphereVMProvider) vmCreateGetFolderAndRPMoIDs(
 		createArgs.FolderMoID = childFolder.Reference().Value
 	}
 
-	// Now that we know the ResourcePool, use that to look up the ClusterMoID.
+	// Now that we know the ResourcePool, use that to look up the CCR.
 	clusterMoRef, err := vcenter.GetResourcePoolOwnerMoRef(vmCtx, vcClient.VimClient(), createArgs.ResourcePoolMoID)
 	if err != nil {
 		return err
 	}
-	createArgs.ClusterMoID = clusterMoRef.Value
+	createArgs.ClusterMoRef = clusterMoRef
 
 	return nil
 }
@@ -521,8 +521,16 @@ func (vs *vSphereVMProvider) vmCreateFixupConfigSpec(
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
-	// For NSX-T it is not possible to determine the backing prior to placement since the NSX-T SwitchID
-	// may resolve to a different DVPG per CCR.
+	err := network.ResolveNCPBackingPostPlacement(
+		vmCtx,
+		vcClient.VimClient(),
+		createArgs.ClusterMoRef,
+		&createArgs.NetworkResults)
+	if err != nil {
+		return err
+	}
+
+	// TODO: Now fixup the createArgs.ConfigSpec. What a mess. Thanks NSX-T.
 
 	return nil
 }
@@ -533,20 +541,13 @@ func (vs *vSphereVMProvider) vmCreateIsReady(
 	createArgs *VMCreateArgs) error {
 
 	if policy := createArgs.ResourcePolicy; policy != nil {
-		clusterMoRef, err := vcenter.GetResourcePoolOwnerMoRef(vmCtx, vcClient.VimClient(), createArgs.ResourcePoolMoID)
-		if err != nil {
-			return err
-		}
-
 		// TODO: May want to do this as to filter the placement candidates.
-		exists, err := vs.doClusterModulesExist(vmCtx, vcClient.ClusterModuleClient(), clusterMoRef, policy)
+		exists, err := vs.doClusterModulesExist(vmCtx, vcClient.ClusterModuleClient(), createArgs.ClusterMoRef, policy)
 		if err != nil {
 			return err
 		} else if !exists {
 			return fmt.Errorf("VirtualMachineSetResourcePolicy cluster module is not ready")
 		}
-
-		createArgs.ClusterMoID = clusterMoRef.Value
 	}
 
 	if createArgs.HasInstanceStorage {
@@ -823,11 +824,12 @@ func (vs *vSphereVMProvider) vmCreateDoNetworking(
 		interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{defaultInterface}
 	}
 
-	results, err := network2.CreateAndWaitForNetworkInterfaces(
+	results, err := network.CreateAndWaitForNetworkInterfaces(
 		vmCtx,
 		vs.k8sClient,
 		vcClient.VimClient(),
 		vcClient.Finder(),
+		nil, // Don't know the CCR yet (for NSX-T)
 		interfaces)
 	if err != nil {
 		conditions.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionNetworkReady, "NotReady", err.Error())
@@ -943,14 +945,13 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecExtraConfig(
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpecChangeBootDiskSize(
 	vmCtx context.VirtualMachineContextA2,
-	createArgs *VMCreateArgs) error {
-
-	_ = createArgs
+	_ *VMCreateArgs) error {
 
 	capacity := vmCtx.VM.Spec.Advanced.BootDiskCapacity
 	if !capacity.IsZero() { //nolint
 		// TODO: How to we determine the DeviceKey for the DeviceChange entry? Do we have to crack
 		// the OVF envelope which is something we can't really do sanely with current CL APIs.
+		// Otherwise, punt on this for a placement consideration and resize the disk after creation.
 	}
 
 	return nil
@@ -961,16 +962,15 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 	createArgs *VMCreateArgs) error {
 
 	if vmCtx.VM.Spec.Network.Disabled {
-		// TBD: Or keep them but ensure there is no backing and not connected and whatnot?
 		util.RemoveDevicesFromConfigSpec(createArgs.ConfigSpec, util.IsEthernetCard)
 		return nil
 	}
 
 	resultsIdx := 0
-	deviceChanges := createArgs.ConfigSpec.DeviceChange
+	var unmatchedEthDevices []int
 
-	for i := range deviceChanges {
-		spec := deviceChanges[i].GetVirtualDeviceConfigSpec()
+	for idx := range createArgs.ConfigSpec.DeviceChange {
+		spec := createArgs.ConfigSpec.DeviceChange[idx].GetVirtualDeviceConfigSpec()
 		if spec == nil || !util.IsEthernetCard(spec.Device) {
 			continue
 		}
@@ -979,31 +979,34 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 		ethCard := device.(types.BaseVirtualEthernetCard).GetVirtualEthernetCard()
 
 		if resultsIdx < len(createArgs.NetworkResults.Results) {
-			err := network2.ApplyInterfaceResultToVirtualEthCard(vmCtx, ethCard, &createArgs.NetworkResults.Results[resultsIdx])
+			err := network.ApplyInterfaceResultToVirtualEthCard(vmCtx, ethCard, &createArgs.NetworkResults.Results[resultsIdx])
 			if err != nil {
 				return err
 			}
 			resultsIdx++
 
 		} else {
-			// This ConfigSpec device does not have a corresponding entry in the VM Spec. TBD exactly what
-			// we do but for now make sure it doesn't have a backing. Removing them is prb better, and makes
-			// GOSC a little easier since the number of NICs have to match. Would be nice though when/if we
-			// actually support multiple NICs added a new NIC picks up the class's ConfigSpec config.
-			ethCard.Backing = nil
-			/*
-				if ethCard.Connectable != nil {
-					ethCard.Connectable.Connected = false
-					ethCard.Connectable.AllowGuestControl = false
-				}
-			*/
+			// This ConfigSpec Ethernet device does not have a corresponding entry in the VM Spec, so
+			// we won't have a backing for it. Remove it from the ConfigSpec since that is the easiest
+			// thing to do, since extra NICs can cause later complications around GOSC and other
+			// customizations. The downside with this is that if NIC is added to the VM Spec, it won't
+			// have this config but the default. Revisit this later if we don't like that behavior.
+			unmatchedEthDevices = append(unmatchedEthDevices, idx-len(unmatchedEthDevices))
 		}
+	}
+
+	if len(unmatchedEthDevices) > 0 {
+		deviceChange := createArgs.ConfigSpec.DeviceChange
+		for _, idx := range unmatchedEthDevices {
+			deviceChange = append(deviceChange[:idx], deviceChange[idx+1:]...)
+		}
+		createArgs.ConfigSpec.DeviceChange = deviceChange
 	}
 
 	// Any remaining VM Spec network interfaces were not matched with a device in the ConfigSpec, so
 	// create a default virtual ethernet card for them.
 	for i := resultsIdx; i < len(createArgs.NetworkResults.Results); i++ {
-		ethCardDev, err := network2.CreateDefaultEthCard(vmCtx, &createArgs.NetworkResults.Results[i])
+		ethCardDev, err := network.CreateDefaultEthCard(vmCtx, &createArgs.NetworkResults.Results[i])
 		if err != nil {
 			return err
 		}

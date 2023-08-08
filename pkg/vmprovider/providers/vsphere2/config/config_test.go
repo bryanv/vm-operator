@@ -19,7 +19,7 @@ import (
 func configTests() {
 
 	var (
-		ctx        *builder.TestContextForVCSim
+		ctx        *builder.TestContextForVCSimA2
 		testConfig builder.VCSimTestConfig
 	)
 
@@ -28,7 +28,7 @@ func configTests() {
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSim(testConfig)
+		ctx = suite.NewTestContextForVCSimA2(testConfig)
 	})
 
 	AfterEach(func() {

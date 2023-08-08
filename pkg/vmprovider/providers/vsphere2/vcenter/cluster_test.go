@@ -20,7 +20,7 @@ func minFreq() {
 	const expectedCPUFreq = 2294
 
 	var (
-		ctx        *builder.TestContextForVCSim
+		ctx        *builder.TestContextForVCSimA2
 		testConfig builder.VCSimTestConfig
 	)
 
@@ -29,7 +29,7 @@ func minFreq() {
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSim(testConfig)
+		ctx = suite.NewTestContextForVCSimA2(testConfig)
 	})
 
 	AfterEach(func() {

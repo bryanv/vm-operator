@@ -20,7 +20,7 @@ func cpuFreqTests() {
 
 	var (
 		testConfig builder.VCSimTestConfig
-		ctx        *builder.TestContextForVCSim
+		ctx        *builder.TestContextForVCSimA2
 		vmProvider vmprovider.VirtualMachineProviderInterface
 	)
 
@@ -29,7 +29,7 @@ func cpuFreqTests() {
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSim(testConfig)
+		ctx = suite.NewTestContextForVCSimA2(testConfig)
 		vmProvider = vsphere.NewVSphereVMProviderFromClient(ctx.Client, ctx.Recorder)
 	})
 

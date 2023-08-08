@@ -1,8 +1,10 @@
-package network2
+package network
 
 import (
 	goctx "context"
 	"fmt"
+
+	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/property"
@@ -11,11 +13,36 @@ import (
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 )
 
+// ResolveNCPBackingPostPlacement fixes up the results backing for NSX-T networks where we did not
+// know the CCR until after placement. This needs to be called if CreateAndWaitForNetworkInterfaces()
+// was called with a nil clusterMoRef.
 func ResolveNCPBackingPostPlacement(
 	ctx goctx.Context,
-	vimClient *vim25.Client) error {
+	vimClient *vim25.Client,
+	clusterMoRef vimtypes.ManagedObjectReference,
+	results *NetworkInterfaceResults) error {
 
-	_, _ = searchNsxtNetworkReference(ctx, nil, "")
+	networkType := lib.GetNetworkProviderType()
+	if networkType == "" {
+		return fmt.Errorf("no network provider set")
+	} else if networkType != lib.NetworkProviderTypeNSXT {
+		return nil
+	}
+
+	ccr := object.NewClusterComputeResource(vimClient, clusterMoRef)
+
+	for idx := range results.Results {
+		if results.Results[idx].Backing != nil {
+			continue
+		}
+
+		backing, err := searchNsxtNetworkReference(ctx, ccr, results.Results[idx].NetworkID)
+		if err != nil {
+			return fmt.Errorf("post placement NSX-T backing fixup failed: %w", err)
+		}
+
+		results.Results[idx].Backing = backing
+	}
 
 	return nil
 }
@@ -26,6 +53,9 @@ func searchNsxtNetworkReference(
 	ccr *object.ClusterComputeResource,
 	networkID string) (object.NetworkReference, error) {
 
+	// This is more or less how the old code did it. We could save repeated work by moving this
+	// into the callers since it will always be for the same CCR, but the common case is one NIC,
+	// or at most a handful, so that's for later.
 	var obj mo.ClusterComputeResource
 	if err := ccr.Properties(ctx, ccr.Reference(), []string{"network"}, &obj); err != nil {
 		return nil, err

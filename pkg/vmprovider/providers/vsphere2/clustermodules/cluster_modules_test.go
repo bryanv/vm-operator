@@ -19,7 +19,7 @@ func cmTests() {
 	Describe("Cluster Modules", func() {
 
 		var (
-			ctx        *builder.TestContextForVCSim
+			ctx        *builder.TestContextForVCSimA2
 			cmProvider clustermodules.Provider
 
 			moduleGroup  string
@@ -30,7 +30,7 @@ func cmTests() {
 		)
 
 		BeforeEach(func() {
-			ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{})
+			ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
 			cmProvider = clustermodules.NewProvider(ctx.RestClient)
 
 			clusterRef = ctx.GetSingleClusterCompute().Reference()

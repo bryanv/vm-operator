@@ -1,7 +1,8 @@
 // Copyright (c) 2023 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-package network2
+//nolint:revive
+package network
 
 import (
 	goctx "context"
@@ -99,6 +100,7 @@ func CreateAndWaitForNetworkInterfaces(
 	client ctrlruntime.Client,
 	vimClient *vim25.Client,
 	finder *find.Finder,
+	clusterMoRef *vimtypes.ManagedObjectReference,
 	interfaces []vmopv1.VirtualMachineNetworkInterfaceSpec) (NetworkInterfaceResults, error) {
 
 	networkType := lib.GetNetworkProviderType()
@@ -118,7 +120,7 @@ func CreateAndWaitForNetworkInterfaces(
 		case lib.NetworkProviderTypeVDS:
 			result, err = createNetOPNetworkInterface(vmCtx, client, vimClient, interfaceSpec)
 		case lib.NetworkProviderTypeNSXT:
-			result, err = createNCPNetworkInterface(vmCtx, client, vimClient, interfaceSpec)
+			result, err = createNCPNetworkInterface(vmCtx, client, vimClient, clusterMoRef, interfaceSpec)
 		case lib.NetworkProviderTypeNamed:
 			result, err = createNamedNetworkInterface(vmCtx, finder, interfaceSpec)
 		default:
@@ -370,6 +372,7 @@ func createNCPNetworkInterface(
 	vmCtx context.VirtualMachineContextA2,
 	client ctrlruntime.Client,
 	vimClient *vim25.Client,
+	clusterMoRef *vimtypes.ManagedObjectReference,
 	interfaceSpec *vmopv1.VirtualMachineNetworkInterfaceSpec) (*NetworkInterfaceResult, error) {
 
 	// If empty, NCP will use the namespace default.
@@ -400,25 +403,38 @@ func createNCPNetworkInterface(
 		return nil, err
 	}
 
-	return vnetIfToResult(vmCtx, vimClient, vnetIf)
+	return vnetIfToResult(vmCtx, vimClient, clusterMoRef, vnetIf)
 }
 
 func vnetIfToResult(
-	_ context.VirtualMachineContextA2,
-	_ *vim25.Client,
+	ctx goctx.Context,
+	vimClient *vim25.Client,
+	clusterMoRef *vimtypes.ManagedObjectReference,
 	vnetIf *ncpv1alpha1.VirtualNetworkInterface) (*NetworkInterfaceResult, error) {
 
-	// TODO: NCP makes the backing difficult: NsxLogicalSwitchID needs to mapped to a DVPG, since
-	// that is the actual backing. Without the scope of a CCR, we need to list all Networks in
-	// the Datacenter to find it. However, in a supported but very, very rare configuration, the
-	// SwitchID may map to a different DVPG in each CCR. In some situations, we may be able to
-	// determine the CCR by this point, but in general we won't know that until after Placement.
-	// This is an unfortunate complication that forces this mapping lookup to every NCP consumer.
-	// It would have been nice if the switch ID was a backing.
-	//
-	// Punt on determining the backing here for now: we'll fix up the backing after Placement
-	// when we know the CCR. This is no worse than before when the NICs were not included the
-	// placement ConfigSpec.
+	// NSX-T makes the backing determination difficult: NsxLogicalSwitchID must be mapped to an
+	// actual DVPG since that is the backing, but the DVPG can, in some very rare but supported
+	// configurations, vary between CCRs. If we know the CCR - ether the VM already exists, or
+	// (for later work) we might pre-determine CCR w/o placement if there is only one possibility -
+	// get that backing now.
+	// Otherwise, we'll do it post-placement via ResolveNCPBackingPostPlacement() so that we create
+	// the VM with the correct backing. That means we cannot make this a part of the PlaceVMxCluster()
+	// ConfigSpec since we don't know the backing: we'd have to pre-filter the placement candidates.
+	// What a mess. This is an unfortunate decision that forces mapping logic to every NCP consumer.
+
+	var backing object.NetworkReference
+	networkID := vnetIf.Status.ProviderStatus.NsxLogicalSwitchID
+
+	if clusterMoRef != nil {
+		ccr := object.NewClusterComputeResource(vimClient, *clusterMoRef)
+
+		networkRef, err := searchNsxtNetworkReference(ctx, ccr, networkID)
+		if err != nil {
+			return nil, err
+		}
+
+		backing = networkRef
+	}
 
 	var ipConfigs []NetworkInterfaceIPConfig
 	if ipAddress := vnetIf.Status.IPAddresses; len(ipAddress) == 0 || (len(ipAddress) == 1 && ipAddress[0].IP == "") {
@@ -438,8 +454,8 @@ func vnetIfToResult(
 		IPConfigs:  ipConfigs,
 		MacAddress: vnetIf.Status.MacAddress,
 		ExternalID: vnetIf.Status.InterfaceID,
-		NetworkID:  vnetIf.Status.ProviderStatus.NsxLogicalSwitchID,
-		Backing:    nil,
+		NetworkID:  networkID,
+		Backing:    backing,
 	}
 
 	return result, nil
@@ -515,6 +531,8 @@ func CreateDefaultEthCard(
 	ctx goctx.Context,
 	result *NetworkInterfaceResult) (vimtypes.BaseVirtualDevice, error) {
 
+	// TODO: Need to handle when we don't have a Backing yet.
+
 	backing, err := result.Backing.EthernetCardBackingInfo(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get ethernet card backing info for network %v: %w", result.Backing.Reference(), err)
@@ -543,6 +561,8 @@ func ApplyInterfaceResultToVirtualEthCard(
 	ctx goctx.Context,
 	ethCard *vimtypes.VirtualEthernetCard,
 	result *NetworkInterfaceResult) error {
+
+	// TODO: Need to handle when we don't have a Backing yet.
 
 	backing, err := result.Backing.EthernetCardBackingInfo(ctx)
 	if err != nil {

@@ -25,14 +25,14 @@ func getVM() {
 	const vcVMName = "DC0_C0_RP0_VM0"
 
 	var (
-		ctx    *builder.TestContextForVCSim
+		ctx    *builder.TestContextForVCSimA2
 		nsInfo builder.WorkloadNamespaceInfo
 
 		vmCtx context.VirtualMachineContextA2
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
 		nsInfo = ctx.CreateWorkloadNamespace()
 
 		vm := builder.DummyVirtualMachineA2()

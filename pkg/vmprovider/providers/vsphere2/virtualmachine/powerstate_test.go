@@ -17,13 +17,13 @@ import (
 func powerStateTests() {
 
 	var (
-		ctx   *builder.TestContextForVCSim
+		ctx   *builder.TestContextForVCSimA2
 		vcVM  *object.VirtualMachine
 		vmCtx context.VirtualMachineContextA2
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
 
 		var err error
 		vcVM, err = ctx.Finder.VirtualMachine(ctx, "DC0_C0_RP0_VM0")

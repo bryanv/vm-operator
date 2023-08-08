@@ -4,26 +4,36 @@
 package vmlifecycle
 
 import (
+	goctx "context"
+
 	vimTypes "github.com/vmware/govmomi/vim25/types"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
-	"github.com/vmware-tanzu/vm-operator/pkg/context"
 )
 
 func BootstrapVAppConfig(
-	vmCtx context.VirtualMachineContextA2,
+	ctx goctx.Context,
 	config *vimTypes.VirtualMachineConfigInfo,
 	vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec,
 	bsArgs *BootstrapArgs) (*vimTypes.VirtualMachineConfigSpec, *vimTypes.CustomizationSpec, error) {
 
-	return nil, nil, nil
+	configSpec := &vimTypes.VirtualMachineConfigSpec{}
+	configSpec.VAppConfig = GetOVFVAppConfigForConfigSpec(
+		config,
+		vAppConfigSpec,
+		bsArgs.BootstrapData.VAppData,
+		bsArgs.BootstrapData.VAppExData,
+		bsArgs.TemplateRenderFn)
+
+	return configSpec, nil, nil
 }
 
 func GetOVFVAppConfigForConfigSpec(
 	config *vimTypes.VirtualMachineConfigInfo,
 	vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec,
 	vAppData map[string]string,
-	vAppExData map[string]map[string]string) vimTypes.BaseVmConfigSpec {
+	vAppExData map[string]map[string]string,
+	templateRenderFn TemplateRenderFunc) vimTypes.BaseVmConfigSpec {
 
 	if config.VAppConfig == nil {
 		// BMV: Should we really silently return here and below?
@@ -45,6 +55,13 @@ func GetOVFVAppConfigForConfigSpec(
 				from := p.Value.From
 				vAppData[p.Key] = vAppExData[from.Name][from.Key]
 			}
+		}
+	}
+
+	if templateRenderFn != nil {
+		// If we have a templating func, apply it to whatever data we have, regardless of the source.
+		for k, v := range vAppData {
+			vAppData[k] = templateRenderFn(k, v)
 		}
 	}
 

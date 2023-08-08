@@ -10,7 +10,7 @@ import (
 	vimTypes "github.com/vmware/govmomi/vim25/types"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network2"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network"
 )
 
 func BootStrapLinuxPrep(
@@ -20,7 +20,7 @@ func BootStrapLinuxPrep(
 	vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec,
 	bsArgs *BootstrapArgs) (*vimTypes.VirtualMachineConfigSpec, *vimTypes.CustomizationSpec, error) {
 
-	nicSettingMap, err := network2.GuestOSCustomization(bsArgs.NetworkResults)
+	nicSettingMap, err := network.GuestOSCustomization(bsArgs.NetworkResults)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create GOSC NIC mappings: %w", err)
 	}
@@ -43,8 +43,12 @@ func BootStrapLinuxPrep(
 	var configSpec *vimTypes.VirtualMachineConfigSpec
 	if vAppConfigSpec != nil {
 		configSpec = &vimTypes.VirtualMachineConfigSpec{}
-		configSpec.VAppConfig = GetOVFVAppConfigForConfigSpec(config, vAppConfigSpec,
-			bsArgs.BootstrapData.VAppData, bsArgs.BootstrapData.VAppExData)
+		configSpec.VAppConfig = GetOVFVAppConfigForConfigSpec(
+			config,
+			vAppConfigSpec,
+			bsArgs.BootstrapData.VAppData,
+			bsArgs.BootstrapData.VAppExData,
+			bsArgs.TemplateRenderFn)
 	}
 
 	return configSpec, customSpec, nil

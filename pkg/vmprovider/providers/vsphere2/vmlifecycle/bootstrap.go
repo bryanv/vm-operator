@@ -16,7 +16,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/config"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network2"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/resources"
 )
 
@@ -32,13 +32,16 @@ type BootstrapData struct {
 	VAppExData map[string]map[string]string
 }
 
+type TemplateRenderFunc func(string, string) string
+
 type BootstrapArgs struct {
 	BootstrapData
 
-	NetworkResults network2.NetworkInterfaceResults
-	Hostname       string
-	DNSServers     []string
-	SearchSuffixes []string
+	TemplateRenderFn TemplateRenderFunc
+	NetworkResults   network.NetworkInterfaceResults
+	Hostname         string
+	DNSServers       []string
+	SearchSuffixes   []string
 }
 
 func DoBootstrap(
@@ -46,7 +49,7 @@ func DoBootstrap(
 	vcVM *object.VirtualMachine,
 	config *vimTypes.VirtualMachineConfigInfo,
 	k8sClient ctrl.Client,
-	networkResults network2.NetworkInterfaceResults,
+	networkResults network.NetworkInterfaceResults,
 	bootstrapData BootstrapData) error {
 
 	bootstrap := &vmCtx.VM.Spec.Bootstrap
@@ -60,7 +63,12 @@ func DoBootstrap(
 		return err
 	}
 
-	// TODO: Sort out how to deal with the old TemplateVMMetadata(). Ugg.
+	if vAppConfig != nil {
+		// I think the intention was to only apply this to vAppData. Old code would apply it to entire
+		// Data map but for like SysPrep that data may be base64/gzip'd encoded, and we'd do the template
+		// stuff prior to plain texting it.
+		bootstrapArgs.TemplateRenderFn = GetTemplateRenderFunc(vmCtx, bootstrapArgs)
+	}
 
 	var configSpec *vimTypes.VirtualMachineConfigSpec
 	var customSpec *vimTypes.CustomizationSpec
@@ -104,7 +112,7 @@ func getBootstrapArgs(
 	vmCtx context.VirtualMachineContextA2,
 	k8sClient ctrl.Client,
 	isCloudInit bool,
-	networkResults network2.NetworkInterfaceResults,
+	networkResults network.NetworkInterfaceResults,
 	bootstrapData BootstrapData) (*BootstrapArgs, error) {
 
 	bootstrapArgs := BootstrapArgs{
@@ -117,9 +125,9 @@ func getBootstrapArgs(
 		bootstrapArgs.Hostname = vmCtx.VM.Name
 	}
 
-	// If the VM is missing DNS info - that is it did not specify a DNS for the interfaces - populate that
-	// now from the cluster's global configuration. Note that the VM is probably good as long as at least
-	// one interface has DNS info, but we would previously set it for every interface so keep doing that
+	// If the VM is missing DNS info - that is, it did not specify DNS for the interfaces - populate that
+	// now from the SV global configuration. Note that the VM is probably OK as long as at least one
+	// interface has DNS info, but we would previously set it for every interface so keep doing that
 	// here. Similarly, we didn't populate SearchDomains for non-TKG VMs so we don't here either. This is
 	// all a little nuts & complicated and probably not correct for every situation.
 	isTKG := hasTKGLabels(vmCtx.VM.Labels)

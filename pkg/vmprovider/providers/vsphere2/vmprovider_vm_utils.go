@@ -106,8 +106,9 @@ func getSecretData(
 	if err := k8sClient.Get(vmCtx, key, secret); err != nil {
 		configMap := &corev1.ConfigMap{}
 
-		// For backwards compat if we cannot find the Secret, fallback to a ConfigMap. In v1a1, both
-		// Secrets and ConfigMaps were supported for metadata (bootstrap), but v1a2 only supports Secrets.
+		// For backwards compat if we cannot find the Secret, fallback to a ConfigMap. In v1a1, either a
+		// Secret and ConfigMap was supported for metadata (bootstrap) as separate fields, but v1a2 only
+		// supports Secrets.
 		if cmFallback && apierrors.IsNotFound(err) {
 			err = k8sClient.Get(vmCtx, key, configMap)
 		}

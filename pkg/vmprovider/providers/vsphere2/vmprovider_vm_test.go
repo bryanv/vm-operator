@@ -52,7 +52,7 @@ func vmTests() {
 	var (
 		initObjects []client.Object
 		testConfig  builder.VCSimTestConfig
-		ctx         *builder.TestContextForVCSim
+		ctx         *builder.TestContextForVCSimA2
 		vmProvider  vmprovider.VirtualMachineProviderInterfaceA2
 		nsInfo      builder.WorkloadNamespaceInfo
 	)
@@ -62,7 +62,7 @@ func vmTests() {
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
+		ctx = suite.NewTestContextForVCSimA2(testConfig, initObjects...)
 		ctx.Context = goctx.WithValue(ctx.Context, context.MaxDeployThreadsContextKey, 1)
 		vmProvider = vsphere.NewVSphereVMProviderFromClient(ctx.Client, ctx.Recorder)
 		nsInfo = ctx.CreateWorkloadNamespace()
@@ -127,7 +127,7 @@ func vmTests() {
 		})
 
 		createOrUpdateAndGetVcVM := func(
-			ctx *builder.TestContextForVCSim,
+			ctx *builder.TestContextForVCSimA2,
 			vm *vmopv1.VirtualMachine) (*object.VirtualMachine, error) {
 
 			err := vmProvider.CreateOrUpdateVirtualMachine(ctx, vm)
@@ -1122,6 +1122,7 @@ func vmTests() {
 					})
 
 					isVol0 := vm.Spec.Volumes[0]
+					Expect(isVol0.PersistentVolumeClaim.InstanceVolumeClaim).ToNot(BeNil())
 
 					By("simulate volume controller workflow", func() {
 						// Simulate what would be set by volume controller.
@@ -1632,7 +1633,7 @@ func vmTests() {
 
 // getVMHomeDisk gets the VM's "home" disk. It makes some assumptions about the backing and disk name.
 func getVMHomeDisk(
-	ctx *builder.TestContextForVCSim,
+	ctx *builder.TestContextForVCSimA2,
 	vcVM *object.VirtualMachine,
 	o mo.VirtualMachine) (*types.VirtualDisk, *types.VirtualDiskFlatVer2BackingInfo) {
 
@@ -1657,7 +1658,7 @@ func getVMHomeDisk(
 
 //nolint:unparam
 func getDVPG(
-	ctx *builder.TestContextForVCSim,
+	ctx *builder.TestContextForVCSimA2,
 	path string) (object.NetworkReference, *object.DistributedVirtualPortgroup) {
 
 	network, err := ctx.Finder.Network(ctx, path)

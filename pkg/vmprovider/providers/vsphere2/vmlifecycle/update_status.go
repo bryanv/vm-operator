@@ -37,6 +37,7 @@ func UpdateStatus(
 
 	// This is implicitly true: ensure the condition is set since it is how we determine the old v1a1 Phase.
 	conditions.MarkTrue(vmCtx.VM, vmopv1.VirtualMachineConditionCreated)
+	// TODO: Might set other "prereq" conditions too for version conversion but we'd have to fib a little.
 
 	if vmMO == nil {
 		// In the common case, our caller will have already gotten the MO properties in order to determine
@@ -46,7 +47,7 @@ func UpdateStatus(
 		vmMO = &mo.VirtualMachine{}
 		if err := vcVM.Properties(vmCtx, vcVM.Reference(), vmStatusPropertiesSelector, vmMO); err != nil {
 			// TBD: Leave the current Status unchanged? Maybe have some condition for this?
-			return err
+			return fmt.Errorf("failed to get VM properties for status update: %w", err)
 		}
 	}
 
@@ -117,7 +118,7 @@ func getGuestNetworkStatus(guestInfo *types.GuestInfo) *vmopv1.VirtualMachineNet
 	status := &vmopv1.VirtualMachineNetworkStatus{}
 
 	if ipAddr := guestInfo.IpAddress; ipAddr != "" {
-		// TODO: Should filter out local address types here.
+		// TODO: Filter out local addresses.
 		if len(ipAddr) == net.IPv4len && net.ParseIP(ipAddr).To4() != nil {
 			status.PrimaryIP4 = ipAddr
 		} else {
@@ -143,7 +144,7 @@ func getGuestNetworkStatus(guestInfo *types.GuestInfo) *vmopv1.VirtualMachineNet
 func guestNicInfoToInterfaceStatus(idx int, guestNicInfo *types.GuestNicInfo) vmopv1.VirtualMachineNetworkInterfaceStatus {
 	status := vmopv1.VirtualMachineNetworkInterfaceStatus{}
 
-	status.Name = fmt.Sprintf("tbd-%d", idx) // XXX
+	status.Name = fmt.Sprintf("nic-%d-%d", idx, guestNicInfo.DeviceConfigId) // TODO: What name exactly? CRD name may be the most useful but hard to line that up
 	status.IP.MACAddr = guestNicInfo.MacAddress
 
 	if guestIPConfig := guestNicInfo.IpConfig; guestIPConfig != nil {

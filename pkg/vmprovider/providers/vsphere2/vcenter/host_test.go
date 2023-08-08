@@ -19,7 +19,7 @@ func hostTests() {
 
 func hostFQDN() {
 	var (
-		ctx        *builder.TestContextForVCSim
+		ctx        *builder.TestContextForVCSimA2
 		testConfig builder.VCSimTestConfig
 
 		hostMoID string
@@ -31,7 +31,7 @@ func hostFQDN() {
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSim(testConfig)
+		ctx = suite.NewTestContextForVCSimA2(testConfig)
 
 		hosts, err := ctx.Finder.HostSystemList(ctx, "*")
 		Expect(err).ToNot(HaveOccurred())

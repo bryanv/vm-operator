@@ -11,12 +11,13 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
 )
 
-func getTemplateRenderFunc(
+func GetTemplateRenderFunc(
 	vmCtx context.VirtualMachineContextA2,
 	bsArgs *BootstrapArgs,
 ) TemplateRenderFunc {
@@ -27,11 +28,24 @@ func getTemplateRenderFunc(
 		Nameservers: bsArgs.DNSServers,
 	}
 
-	// TODO: Oh version conversion? This VM itself really should not have been included here.
+	networkDevicesStatusV1A1 := toTemplateNetworkStatusV1A1(bsArgs)
+	networkStatusV1A1 := v1alpha1.NetworkStatus{
+		Devices:     networkDevicesStatusV1A1,
+		Nameservers: bsArgs.DNSServers,
+	}
+
+	// Oh dear. The VM itself really should not have been included here.
+	v1a1VM := &v1alpha1.VirtualMachine{}
+	_ = v1a1VM.ConvertFrom(vmCtx.VM)
+
 	templateData := struct {
-		// V1alpha1 ...
+		V1alpha1 v1alpha1.VirtualMachineTemplate
 		V1alpha2 vmopv1.VirtualMachineTemplate
 	}{
+		V1alpha1: v1alpha1.VirtualMachineTemplate{
+			Net: networkStatusV1A1,
+			VM:  v1a1VM,
+		},
 		V1alpha2: vmopv1.VirtualMachineTemplate{
 			Net: networkStatus,
 			VM:  vmCtx.VM,
@@ -219,6 +233,35 @@ func toTemplateNetworkStatus(bsArgs *BootstrapArgs) []vmopv1.NetworkDeviceStatus
 		macAddr := strings.ReplaceAll(result.MacAddress, ":", "-")
 
 		status := vmopv1.NetworkDeviceStatus{
+			MacAddress: macAddr,
+		}
+
+		for _, ipConfig := range result.IPConfigs {
+			// We mostly only did IPv4 before so keep that going.
+			if ipConfig.IsIPv4 {
+				if status.Gateway4 == "" {
+					status.Gateway4 = ipConfig.Gateway
+				}
+
+				status.IPAddresses = append(status.IPAddresses, ipConfig.IPCIDR)
+			}
+		}
+
+		networkDevicesStatus = append(networkDevicesStatus, status)
+	}
+
+	return networkDevicesStatus
+}
+
+func toTemplateNetworkStatusV1A1(bsArgs *BootstrapArgs) []v1alpha1.NetworkDeviceStatus {
+	networkDevicesStatus := make([]v1alpha1.NetworkDeviceStatus, 0, len(bsArgs.NetworkResults.Results))
+
+	for _, result := range bsArgs.NetworkResults.Results {
+		// When using Sysprep, the MAC address must be in the format of "-".
+		// CloudInit normalizes it again to ":" when adding it to the netplan.
+		macAddr := strings.ReplaceAll(result.MacAddress, ":", "-")
+
+		status := v1alpha1.NetworkDeviceStatus{
 			MacAddress: macAddr,
 		}
 

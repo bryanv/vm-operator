@@ -67,7 +67,7 @@ func DoBootstrap(
 		// I think the intention was to only apply this to vAppData. Old code would apply it to entire
 		// Data map but for like SysPrep that data may be base64/gzip'd encoded, and we'd do the template
 		// stuff prior to plain texting it.
-		bootstrapArgs.TemplateRenderFn = getTemplateRenderFunc(vmCtx, bootstrapArgs)
+		bootstrapArgs.TemplateRenderFn = GetTemplateRenderFunc(vmCtx, bootstrapArgs)
 	}
 
 	var configSpec *vimTypes.VirtualMachineConfigSpec

@@ -46,3 +46,6 @@ var _ = Describe("Customization utils", func() {
 		})
 	})
 })
+
+// TODO: We should at least a few basic DoBootstrap() tests so we test the overall
+// Reconfigure/Customize flow but the old code didn't.

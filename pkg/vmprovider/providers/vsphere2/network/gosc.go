@@ -20,7 +20,8 @@ func GuestOSCustomization(results NetworkInterfaceResults) ([]vimtypes.Customiza
 		if r.DHCP4 {
 			adapter.Ip = &vimtypes.CustomizationDhcpIpGenerator{}
 		} else {
-			// GOSC doesn't support multiple IPv4 address per interface so use the first one.
+			// GOSC doesn't support multiple IPv4 address per interface so use the first one. Old code
+			// only ever set one gateway so do the same here too.
 			for _, ipConfig := range r.IPConfigs {
 				if !ipConfig.IsIPv4 {
 					continue

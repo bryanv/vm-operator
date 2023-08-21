@@ -65,10 +65,13 @@ type NetworkInterfaceRoute struct {
 }
 
 const (
-	RetryTimeout  = 15 * time.Second
-	retryInterval = 100 * time.Millisecond
-
+	retryInterval           = 100 * time.Millisecond
 	defaultEthernetCardType = "vmxnet3"
+)
+
+var (
+	// RetryTimeout is var so tests can change it, until we get rid of the poll.
+	RetryTimeout = 1 * time.Second
 )
 
 // CreateAndWaitForNetworkInterfaces creates the appropriate CRs for the VM's network
@@ -197,7 +200,15 @@ func createNamedNetworkInterface(
 	finder *find.Finder,
 	interfaceSpec *vmopv1.VirtualMachineNetworkInterfaceSpec) (*NetworkInterfaceResult, error) {
 
+	if interfaceSpec.Network.Kind != "" || interfaceSpec.Network.APIVersion != "" {
+		return nil, fmt.Errorf("network TypeMeta not supported for name network: %v", interfaceSpec.Network.TypeMeta)
+	}
+
 	networkName := interfaceSpec.Network.Name
+	if networkName == "" {
+		return nil, fmt.Errorf("network name is required")
+	}
+
 	backing, err := finder.Network(vmCtx, networkName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to find named network %q: %w", networkName, err)
@@ -236,6 +247,10 @@ func createNetOPNetworkInterface(
 	client ctrlruntime.Client,
 	vimClient *vim25.Client,
 	interfaceSpec *vmopv1.VirtualMachineNetworkInterfaceSpec) (*NetworkInterfaceResult, error) {
+
+	if kind := interfaceSpec.Network.Kind; kind != "" && kind != "Network" {
+		return nil, fmt.Errorf("network kind %q is not supported for VDS", kind)
+	}
 
 	// If empty, NetOP will try to select a namespace default.
 	networkName := interfaceSpec.Network.Name
@@ -375,6 +390,11 @@ func createNCPNetworkInterface(
 	clusterMoRef *vimtypes.ManagedObjectReference,
 	interfaceSpec *vmopv1.VirtualMachineNetworkInterfaceSpec) (*NetworkInterfaceResult, error) {
 
+	// TODO: Do we need to still support the odd-ball NetOP in NSX-T? Sigh
+	if kind := interfaceSpec.Network.Kind; kind != "" && kind != "VirtualNetwork" {
+		return nil, fmt.Errorf("network kind %q is not supported for NCP", kind)
+	}
+
 	// If empty, NCP will use the namespace default.
 	networkName := interfaceSpec.Network.Name
 
@@ -440,14 +460,21 @@ func vnetIfToResult(
 	if ipAddress := vnetIf.Status.IPAddresses; len(ipAddress) == 0 || (len(ipAddress) == 1 && ipAddress[0].IP == "") {
 		// NCP's way of saying DHCP.
 	} else {
-		// Historically, we only grabbed the first entry and assume it is always IPv4 (!!!).
-		ipAddr := ipAddress[0]
-		ipConfig := NetworkInterfaceIPConfig{
-			IPCIDR:  ipCIDRNotation(ipAddr.IP, ipAddr.SubnetMask, true),
-			IsIPv4:  true,
-			Gateway: ipAddr.Gateway,
+		// Historically, we only grabbed the first entry and assume it is always IPv4 (!!!). Try to do better now.
+		for _, ipAddr := range ipAddress {
+			if ipAddr.IP == "" {
+				continue
+			}
+
+			isIPv4 := net.ParseIP(ipAddr.IP).To4() != nil
+			ipConfig := NetworkInterfaceIPConfig{
+				IPCIDR:  ipCIDRNotation(ipAddr.IP, ipAddr.SubnetMask, isIPv4),
+				IsIPv4:  isIPv4,
+				Gateway: ipAddr.Gateway,
+			}
+
+			ipConfigs = append(ipConfigs, ipConfig)
 		}
-		ipConfigs = append(ipConfigs, ipConfig)
 	}
 
 	result := &NetworkInterfaceResult{
@@ -507,7 +534,7 @@ func waitForReadyNCPNetworkInterface(
 }
 
 // ipCIDRNotation takes the IP and subnet mask and returns the IP in CIDR notation.
-// TODO: Better error checking.
+// TODO: Better error checking. Nail down exactly how we want handke IPv4inV6 addresses.
 func ipCIDRNotation(ip string, mask string, isIPv4 bool) string {
 	if isIPv4 {
 		ipNet := net.IPNet{
@@ -517,10 +544,14 @@ func ipCIDRNotation(ip string, mask string, isIPv4 bool) string {
 		return ipNet.String()
 	}
 
+	// TODO: Looks like we're not using this right: unlike IPv4 this doesn't
+	// count the ones in the subnet mask? We don't really support IPv6 yet so
+	// punt for later.
 	ipNet := net.IPNet{
 		IP:   net.ParseIP(ip).To16(),
 		Mask: net.IPMask(net.ParseIP(mask).To16()),
 	}
+
 	return ipNet.String()
 }
 

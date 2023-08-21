@@ -598,7 +598,7 @@ func (vs *vSphereVMProvider) vmCreateGetArgs(
 		return nil, err
 	}
 
-	err = vs.vmCreateGenConfigSpec(vmCtx, vcClient, createArgs)
+	err = vs.vmCreateGenConfigSpec(vmCtx, createArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -844,10 +844,7 @@ func (vs *vSphereVMProvider) vmCreateDoNetworking(
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 	vmCtx context.VirtualMachineContextA2,
-	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
-
-	_ = vcClient
 
 	var vmClassConfigSpec *types.VirtualMachineConfigSpec
 	if rawConfigSpec := createArgs.VMClass.Spec.ConfigSpec; len(rawConfigSpec) > 0 {

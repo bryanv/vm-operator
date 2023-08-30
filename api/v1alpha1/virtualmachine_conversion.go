@@ -155,7 +155,7 @@ func convert_v1alpha1_VmMetadata_To_v1alpha2_BootstrapSpec(
 			out.CloudInit = &v1alpha2.VirtualMachineBootstrapCloudInitSpec{
 				RawCloudConfig: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: objectName},
-					Key:                  "guestinfo.userdata",
+					Key:                  "guestinfo.userdata", // TODO: Is this good enough? v1a1 would include everything with the "guestinfo" prefix
 				},
 			}
 		case VirtualMachineMetadataOvfEnvTransport:

@@ -1,29 +1,17 @@
-// Copyright (c) 2019-2021 VMware, Inc. All Rights Reserved.
+// Copyright (c) 2019-2023 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 // Package builder is a comment just to silence the linter
-//
-//nolint:goconst
 package builder
 
 import (
-	goctx "context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
-	"math/big"
-	"net"
-	"net/url"
 	"os"
 	"path"
-	"path/filepath"
-	"time"
 
 	. "github.com/onsi/gomega"
+
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
@@ -31,39 +19,28 @@ import (
 	"github.com/vmware/govmomi/vapi/library"
 	"github.com/vmware/govmomi/vapi/rest"
 	"github.com/vmware/govmomi/vapi/vcenter"
-	"github.com/vmware/govmomi/vim25/soap"
 	"github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	// Blank import to make govmomi client aware of these bindings.
 	_ "github.com/vmware/govmomi/pbm/simulator"
 	_ "github.com/vmware/govmomi/vapi/cluster/simulator"
 	_ "github.com/vmware/govmomi/vapi/simulator"
 
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
+	conditions "github.com/vmware-tanzu/vm-operator/pkg/conditions2"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/record"
 	"github.com/vmware-tanzu/vm-operator/test/testutil"
 )
 
-type NetworkEnv string
-
-const (
-	NetworkEnvVDS   = NetworkEnv("vds")
-	NetworkEnvNSXT  = NetworkEnv("nsx-t")
-	NetworkEnvNamed = NetworkEnv("named")
-
-	NsxTLogicalSwitchUUID = "nsxt-dummy-ls-uuid"
-)
-
-// VCSimTestConfig configures the vcsim environment.
-type VCSimTestConfig struct {
+// VCSimTestConfigA2 configures the vcsim environment.
+type VCSimTestConfigA2 struct {
 	// WithFaultDomains enables the HA WCP_FAULTDOMAINS_FSS.
 	WithFaultDomains bool
 
@@ -71,8 +48,12 @@ type VCSimTestConfig struct {
 	NumFaultDomains int
 
 	// WithContentLibrary configures a Content Library, populated with one image's
-	// name available in the TestContextForVCSim.ContentLibraryImageName.
+	// name available in the TestContextForVCSimA2.ContentLibraryImageName.
 	WithContentLibrary bool
+
+	// WithNamespaceScopedImage creates images as namespace scoped VirtualMachineImage.
+	// Otherwise, cluster scoped ClusterVirtualMachineImage is used.
+	WithNamespaceScopedImages bool
 
 	// WithInstanceStorage enables the WCP_INSTANCE_STORAGE FSS.
 	WithInstanceStorage bool
@@ -101,7 +82,7 @@ type VCSimTestConfig struct {
 	WithNetworkEnv NetworkEnv
 }
 
-type TestContextForVCSim struct {
+type TestContextForVCSimA2 struct {
 	// NOTE: Unit test in the context of test suite framework means we use
 	// the fake k8s client, which is sufficient for our needs. Otherwise,
 	// unit testing is a little misleading here since we're using vcsim.
@@ -143,25 +124,13 @@ type TestContextForVCSim struct {
 	azCCRs    map[string][]*object.ClusterComputeResource
 }
 
-type WorkloadNamespaceInfo struct {
-	Namespace string
-	Folder    *object.Folder
-}
-
-const (
-	// zoneCount is how many zones to create for HA.
-	zoneCount = 3
-	// clustersPerZone is how many clusters to create per zone.
-	clustersPerZone = 1
-)
-
-func (s *TestSuite) NewTestContextForVCSim(
+func (s *TestSuite) NewTestContextForVCSimA2(
 	config VCSimTestConfig,
-	initObjects ...client.Object) *TestContextForVCSim {
+	initObjects ...client.Object) *TestContextForVCSimA2 {
 
-	ctx := newTestContextForVCSim(config, initObjects)
+	ctx := newTestContextForVCSimA2(config, initObjects)
 
-	ctx.setupEnvFSS(config)
+	ctx.setupEnv(config)
 	ctx.setupVCSim(config)
 	ctx.setupContentLibrary(config)
 	ctx.setupK8sConfig(config)
@@ -170,13 +139,13 @@ func (s *TestSuite) NewTestContextForVCSim(
 	return ctx
 }
 
-func newTestContextForVCSim(
+func newTestContextForVCSimA2(
 	config VCSimTestConfig,
-	initObjects []client.Object) *TestContextForVCSim {
+	initObjects []client.Object) *TestContextForVCSimA2 {
 
 	fakeRecorder, _ := NewFakeRecorder()
 
-	ctx := &TestContextForVCSim{
+	ctx := &TestContextForVCSimA2{
 		UnitTestContext:  NewUnitTestContext(initObjects...),
 		PodNamespace:     "vmop-pod-test",
 		Recorder:         fakeRecorder,
@@ -198,7 +167,7 @@ func newTestContextForVCSim(
 
 // AfterEach is a comment just to silence the linter
 // TODO: Once we update ginkgo, this is more suitable as an AfterAll().
-func (c *TestContextForVCSim) AfterEach() {
+func (c *TestContextForVCSimA2) AfterEach() {
 	if c.RestClient != nil {
 		_ = c.RestClient.Logout(c)
 	}
@@ -218,7 +187,7 @@ func (c *TestContextForVCSim) AfterEach() {
 	c.UnitTestContext.AfterEach()
 }
 
-func (c *TestContextForVCSim) CreateWorkloadNamespace() WorkloadNamespaceInfo {
+func (c *TestContextForVCSimA2) CreateWorkloadNamespace() WorkloadNamespaceInfo {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "workload-",
@@ -273,21 +242,6 @@ func (c *TestContextForVCSim) CreateWorkloadNamespace() WorkloadNamespaceInfo {
 		Expect(c.Client.Update(c, ns)).To(Succeed())
 	}
 
-	if clID := c.ContentLibraryID; clID != "" {
-		csBinding := &vmopv1.ContentSourceBinding{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      clID,
-				Namespace: ns.Name,
-			},
-			ContentSourceRef: vmopv1.ContentSourceReference{
-				APIVersion: vmopv1.SchemeGroupVersion.Group,
-				Kind:       "ContentSource",
-				Name:       clID,
-			},
-		}
-		Expect(c.Client.Create(c, csBinding)).To(Succeed())
-	}
-
 	resourceQuota := &corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "dummy-resource-quota",
@@ -315,8 +269,19 @@ func (c *TestContextForVCSim) CreateWorkloadNamespace() WorkloadNamespaceInfo {
 }
 
 // TODO: Get rid of runtime env checks so this isn't needed.
-func (c *TestContextForVCSim) setupEnvFSS(config VCSimTestConfig) {
+func (c *TestContextForVCSimA2) setupEnv(config VCSimTestConfig) {
 	Expect(lib.SetVMOpNamespaceEnv(c.PodNamespace)).To(Succeed())
+
+	Expect(os.Setenv(lib.VMServiceV1Alpha2FSS, "true")).To(Succeed())
+
+	switch config.WithNetworkEnv {
+	case NetworkEnvVDS:
+		Expect(os.Setenv(lib.NetworkProviderType, lib.NetworkProviderTypeVDS)).To(Succeed())
+	case NetworkEnvNSXT:
+		Expect(os.Setenv(lib.NetworkProviderType, lib.NetworkProviderTypeNSXT)).To(Succeed())
+	default: // NetworkEnvNamed
+		Expect(os.Setenv(lib.NetworkProviderType, lib.NetworkProviderTypeNamed)).To(Succeed())
+	}
 
 	if config.WithContentLibrary {
 		Expect(os.Setenv("CONTENT_API_WAIT_SECS", "1")).To(Succeed())
@@ -353,7 +318,7 @@ func (c *TestContextForVCSim) setupEnvFSS(config VCSimTestConfig) {
 	}
 }
 
-func (c *TestContextForVCSim) setupVCSim(config VCSimTestConfig) {
+func (c *TestContextForVCSimA2) setupVCSim(config VCSimTestConfig) {
 	c.tlsServerKeyPath, c.tlsServerCertPath = generateSelfSignedCert()
 	tlsCert, err := tls.LoadX509KeyPair(c.tlsServerCertPath, c.tlsServerKeyPath)
 	Expect(err).NotTo(HaveOccurred())
@@ -443,7 +408,7 @@ func (c *TestContextForVCSim) setupVCSim(config VCSimTestConfig) {
 	}
 }
 
-func (c *TestContextForVCSim) setupContentLibrary(config VCSimTestConfig) {
+func (c *TestContextForVCSimA2) setupContentLibrary(config VCSimTestConfig) {
 	if !config.WithContentLibrary {
 		return
 	}
@@ -466,32 +431,6 @@ func (c *TestContextForVCSim) setupContentLibrary(config VCSimTestConfig) {
 	Expect(clID).ToNot(BeEmpty())
 	c.ContentLibraryID = clID
 
-	clProvider := &vmopv1.ContentLibraryProvider{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clID,
-		},
-		Spec: vmopv1.ContentLibraryProviderSpec{
-			UUID: clID,
-		},
-	}
-	Expect(c.Client.Create(c, clProvider)).To(Succeed())
-
-	cs := &vmopv1.ContentSource{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clID,
-		},
-		Spec: vmopv1.ContentSourceSpec{
-			ProviderRef: vmopv1.ContentProviderReference{
-				Name: clProvider.Name,
-				Kind: "ContentLibraryProvider",
-			},
-		},
-	}
-	Expect(c.Client.Create(c, cs)).To(Succeed())
-
-	Expect(controllerutil.SetOwnerReference(cs, clProvider, c.Client.Scheme())).To(Succeed())
-	Expect(c.Client.Update(c, clProvider)).To(Succeed())
-
 	libraryItem := library.Item{
 		Name:      "test-image-ovf",
 		Type:      "ovf",
@@ -499,15 +438,19 @@ func (c *TestContextForVCSim) setupContentLibrary(config VCSimTestConfig) {
 	}
 	c.ContentLibraryImageName = libraryItem.Name
 
-	vmImage := DummyVirtualMachineImage(c.ContentLibraryImageName)
-	Expect(controllerutil.SetOwnerReference(clProvider, vmImage, c.Client.Scheme())).To(Succeed())
-	Expect(c.Client.Create(c, vmImage)).To(Succeed())
-
-	createContentLibraryItem(libMgr, libraryItem,
+	itemID := createContentLibraryItem(libMgr, libraryItem,
 		path.Join(testutil.GetRootDirOrDie(), "images", "ttylinux-pc_i486-16.1.ovf"))
+
+	// The image isn't quite as prod but sufficient for what we need here ATM.
+	clusterVMImage := DummyClusterVirtualMachineImageA2(c.ContentLibraryImageName)
+	clusterVMImage.Spec.ProviderRef.Kind = "ClusterContentLibraryItem"
+	Expect(c.Client.Create(c, clusterVMImage)).To(Succeed())
+	clusterVMImage.Status.ProviderItemID = itemID
+	conditions.MarkTrue(clusterVMImage, vmopv1.VirtualMachineImageSyncedCondition) // TODO: Until we get rollup Ready condition
+	Expect(c.Client.Status().Update(c, clusterVMImage)).To(Succeed())
 }
 
-func (c *TestContextForVCSim) ContentLibraryItemTemplate(srcVMName, templateName string) {
+func (c *TestContextForVCSimA2) ContentLibraryItemTemplate(srcVMName, templateName string) {
 	clID := c.ContentLibraryID
 	Expect(clID).ToNot(BeEmpty())
 
@@ -530,72 +473,19 @@ func (c *TestContextForVCSim) ContentLibraryItemTemplate(srcVMName, templateName
 		},
 	}
 
-	_, err = vcenter.NewManager(c.RestClient).CreateTemplate(c, spec)
+	itemID, err := vcenter.NewManager(c.RestClient).CreateTemplate(c, spec)
 	Expect(err).ToNot(HaveOccurred())
 
 	// Create the expected VirtualMachineImage for the template.
-	vmImage := DummyVirtualMachineImage(templateName)
-	cl := &vmopv1.ContentLibraryProvider{}
-	Expect(c.Client.Get(c, client.ObjectKey{Name: clID}, cl)).To(Succeed())
-	Expect(controllerutil.SetOwnerReference(cl, vmImage, c.Client.Scheme())).To(Succeed())
-	Expect(c.Client.Create(c, vmImage)).To(Succeed())
+	clusterVMImage := DummyClusterVirtualMachineImageA2(templateName)
+	clusterVMImage.Spec.ProviderRef.Kind = "ClusterContentLibraryItem"
+	Expect(c.Client.Create(c, clusterVMImage)).To(Succeed())
+	clusterVMImage.Status.ProviderItemID = itemID
+	conditions.MarkTrue(clusterVMImage, vmopv1.VirtualMachineImageSyncedCondition) // TODO: Until we get rollup Ready condition
+	Expect(c.Client.Status().Update(c, clusterVMImage)).To(Succeed())
 }
 
-func createContentLibraryItem(
-	libMgr *library.Manager,
-	libraryItem library.Item,
-	itemPath string) string {
-
-	ctx := goctx.Background()
-
-	itemID, err := libMgr.CreateLibraryItem(ctx, libraryItem)
-	Expect(err).ToNot(HaveOccurred())
-
-	sessionID, err := libMgr.CreateLibraryItemUpdateSession(ctx, library.Session{LibraryItemID: itemID})
-	Expect(err).ToNot(HaveOccurred())
-
-	uploadFunc := func(path string) error {
-		f, err := os.Open(filepath.Clean(path))
-		if err != nil {
-			return err
-		}
-		defer func() {
-			_ = f.Close()
-		}()
-
-		fi, err := f.Stat()
-		if err != nil {
-			return err
-		}
-
-		info := library.UpdateFile{
-			Name:       filepath.Base(path),
-			SourceType: "PUSH",
-			Size:       fi.Size(),
-		}
-
-		update, err := libMgr.AddLibraryItemFile(ctx, sessionID, info)
-		if err != nil {
-			return err
-		}
-
-		u, err := url.Parse(update.UploadEndpoint.URI)
-		if err != nil {
-			return err
-		}
-
-		p := soap.DefaultUpload
-		p.ContentLength = info.Size
-
-		return libMgr.Client.Upload(ctx, f, u, &p)
-	}
-	Expect(uploadFunc(itemPath)).To(Succeed())
-	Expect(libMgr.CompleteLibraryItemUpdateSession(ctx, sessionID)).To(Succeed())
-
-	return itemID
-}
-
-func (c *TestContextForVCSim) setupK8sConfig(config VCSimTestConfig) {
+func (c *TestContextForVCSimA2) setupK8sConfig(config VCSimTestConfig) {
 	password, _ := simulator.DefaultLogin.Password()
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -677,7 +567,7 @@ func (c *TestContextForVCSim) setupK8sConfig(config VCSimTestConfig) {
 	Expect(c.Client.Create(c, networkCM)).To(Succeed())
 }
 
-func (c *TestContextForVCSim) setupAZs(config VCSimTestConfig) {
+func (c *TestContextForVCSimA2) setupAZs(config VCSimTestConfig) {
 	if !config.WithFaultDomains {
 		return
 	}
@@ -706,14 +596,14 @@ func (c *TestContextForVCSim) setupAZs(config VCSimTestConfig) {
 	}
 }
 
-func (c *TestContextForVCSim) GetSingleClusterCompute() *object.ClusterComputeResource {
+func (c *TestContextForVCSimA2) GetSingleClusterCompute() *object.ClusterComputeResource {
 	Expect(c.withFaultDomains).To(BeFalse())
 	Expect(c.singleCCR).ToNot(BeNil())
 
 	return c.singleCCR
 }
 
-func (c *TestContextForVCSim) GetAZClusterComputes(azName string) []*object.ClusterComputeResource {
+func (c *TestContextForVCSimA2) GetAZClusterComputes(azName string) []*object.ClusterComputeResource {
 	Expect(c.withFaultDomains).To(BeTrue())
 
 	ccrs, ok := c.azCCRs[azName]
@@ -721,11 +611,11 @@ func (c *TestContextForVCSim) GetAZClusterComputes(azName string) []*object.Clus
 	return ccrs
 }
 
-func (c *TestContextForVCSim) CreateVirtualMachineSetResourcePolicy(
+func (c *TestContextForVCSimA2) CreateVirtualMachineSetResourcePolicy(
 	name string,
 	nsInfo WorkloadNamespaceInfo) (*vmopv1.VirtualMachineSetResourcePolicy, *object.Folder) {
 
-	resourcePolicy := DummyVirtualMachineSetResourcePolicy2(name, nsInfo.Namespace)
+	resourcePolicy := DummyVirtualMachineSetResourcePolicy2A2(name, nsInfo.Namespace)
 	Expect(c.Client.Create(c, resourcePolicy)).To(Succeed())
 
 	var rps []*object.ResourcePool
@@ -756,13 +646,13 @@ func (c *TestContextForVCSim) CreateVirtualMachineSetResourcePolicy(
 		Expect(err).ToNot(HaveOccurred())
 	}
 
-	folder, err := nsInfo.Folder.CreateFolder(c, resourcePolicy.Spec.Folder.Name)
+	folder, err := nsInfo.Folder.CreateFolder(c, resourcePolicy.Spec.Folder)
 	Expect(err).ToNot(HaveOccurred())
 
 	return resourcePolicy, folder
 }
 
-func (c *TestContextForVCSim) GetVMFromMoID(moID string) *object.VirtualMachine {
+func (c *TestContextForVCSimA2) GetVMFromMoID(moID string) *object.VirtualMachine {
 	objRef, err := c.Finder.ObjectReference(c, types.ManagedObjectReference{Type: "VirtualMachine", Value: moID})
 	if err != nil {
 		return nil
@@ -773,7 +663,7 @@ func (c *TestContextForVCSim) GetVMFromMoID(moID string) *object.VirtualMachine 
 	return vm
 }
 
-func (c *TestContextForVCSim) GetResourcePoolForNamespace(namespace, azName, childName string) *object.ResourcePool {
+func (c *TestContextForVCSimA2) GetResourcePoolForNamespace(namespace, azName, childName string) *object.ResourcePool {
 	var ccr *object.ClusterComputeResource
 
 	if c.withFaultDomains {
@@ -799,54 +689,4 @@ func (c *TestContextForVCSim) GetResourcePoolForNamespace(namespace, azName, chi
 	Expect(err).ToNot(HaveOccurred())
 
 	return nsRP
-}
-
-func generatePrivateKey() *rsa.PrivateKey {
-	reader := rand.Reader
-	bitSize := 2048
-
-	// Based on https://golang.org/src/crypto/tls/generate_cert.go
-	privateKey, err := rsa.GenerateKey(reader, bitSize)
-	Expect(err).ToNot(HaveOccurred())
-	return privateKey
-}
-
-func generateSelfSignedCert() (string, string) {
-	priv := generatePrivateKey()
-	now := time.Now()
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
-	Expect(err).NotTo(HaveOccurred())
-
-	template := x509.Certificate{
-		Subject: pkix.Name{
-			Organization: []string{"Acme Co"},
-		},
-		SerialNumber:          serialNumber,
-		NotBefore:             now,
-		NotAfter:              now.Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	Expect(err).NotTo(HaveOccurred())
-	certOut, err := os.CreateTemp("", "cert.pem")
-	Expect(err).NotTo(HaveOccurred())
-	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	Expect(err).NotTo(HaveOccurred())
-	err = certOut.Close()
-	Expect(err).NotTo(HaveOccurred())
-
-	keyOut, err := os.CreateTemp("", "key.pem")
-	Expect(err).NotTo(HaveOccurred())
-	privBytes, err := x509.MarshalPKCS8PrivateKey(priv)
-	Expect(err).NotTo(HaveOccurred())
-	err = pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes})
-	Expect(err).NotTo(HaveOccurred())
-	err = keyOut.Close()
-	Expect(err).NotTo(HaveOccurred())
-
-	return keyOut.Name(), certOut.Name()
 }

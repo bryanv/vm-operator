@@ -154,4 +154,12 @@ var _ = Describe("TryToDecodeBase64Gzip", func() {
 		})
 	})
 
+	Context("EncodeGzipBase64", func() {
+		It("Encodes a string correctly", func() {
+			input := "HelloWorld"
+			output, err := util.EncodeGzipBase64(input)
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(output).To(Equal("H4sIAAAAAAAA//JIzcnJD88vykkBAAAA//8BAAD//3kMd3cKAAAA"))
+		})
+	})
 })

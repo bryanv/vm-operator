@@ -4,6 +4,7 @@
 //nolint
 package session
 
+/*
 import (
 	"bytes"
 	"errors"
@@ -275,7 +276,6 @@ func (s *Session) customize(
 	return nil
 }
 
-/*
 func (s *Session) customize(
 	vmCtx context.VirtualMachineContext,
 	resVM *res.VirtualMachine,
@@ -352,7 +352,6 @@ func (s *Session) customize(
 
 	return nil
 }
-*/
 
 func getFirstNicMacAddr(vmCtx context.VirtualMachineContext, resVM *res.VirtualMachine) string {
 	ethCards, err := resVM.GetNetworkDevices(vmCtx)
@@ -603,3 +602,4 @@ func TemplateVMMetadata(
 		data[key] = renderTemplate(key, val)
 	}
 }
+*/

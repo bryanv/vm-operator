@@ -10,6 +10,8 @@ import (
 	"sync"
 	"text/template"
 
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/session"
+
 	"github.com/pkg/errors"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
@@ -56,6 +58,9 @@ type VMCreateArgs struct {
 
 	NetworkResults network.NetworkInterfaceResults
 }
+
+// TODO: Until we sort out what the Session becomes.
+type vmUpdateArgs = session.VMUpdateArgs
 
 const (
 	FirstBootDoneAnnotation = "virtualmachine.vmoperator.vmware.com/first-boot-done"
@@ -108,7 +113,7 @@ func (vs *vSphereVMProvider) CreateOrUpdateVirtualMachine(
 		return vs.createdVirtualMachineFallthroughUpdate(vmCtx, vcVM, createArgs, client)
 	}
 
-	return vs.updateVirtualMachine(vmCtx, vcVM, client)
+	return vs.updateVirtualMachine(vmCtx, vcVM, client, nil)
 }
 
 func (vs *vSphereVMProvider) DeleteVirtualMachine(
@@ -318,72 +323,46 @@ func (vs *vSphereVMProvider) createdVirtualMachineFallthroughUpdate(
 
 	// TODO: In the common case, we'll call directly into update right after create succeeds, and
 	// can use the createArgs to avoid doing a bunch of lookup work again.
-	_ = createArgs
 
-	return vs.updateVirtualMachine(vmCtx, vcVM, vcClient)
+	return vs.updateVirtualMachine(vmCtx, vcVM, vcClient, createArgs)
 }
 
 func (vs *vSphereVMProvider) updateVirtualMachine(
 	vmCtx context.VirtualMachineContextA2,
 	vcVM *object.VirtualMachine,
-	vcClient *vcclient.Client) (err error) {
+	vcClient *vcclient.Client,
+	createArgs *VMCreateArgs) (err error) {
 
-	_ = vcClient
+	_ = createArgs
 
 	vmCtx.Logger.V(4).Info("Updating VirtualMachine")
 
-	var vmMO *mo.VirtualMachine
+	{
+		// Hack - create just enough of the Session that's needed for update
 
-	defer func() {
-		if statusErr := vmlifecycle.UpdateStatus(vmCtx, vs.k8sClient, vcVM, vmMO); statusErr != nil {
-			if err == nil {
-				err = statusErr
-			}
+		cluster, err := virtualmachine.GetVMClusterComputeResource(vmCtx, vcVM)
+		if err != nil {
+			return err
 		}
-	}()
 
-	switch vmCtx.VM.Spec.PowerState {
-	case vmopv1.VirtualMachinePowerStateOff, vmopv1.VirtualMachinePowerStateSuspended: /*vmopv1.VirtualMachinePowerStateGuestOff*/
-		vmMO, err = vmlifecycle.PowerVirtualMachineNotOn(vmCtx, vcVM)
-
-	case vmopv1.VirtualMachinePowerStateOn:
-		vmMO, err = vmlifecycle.PowerVirtualMachineOn(vmCtx, vcVM)
-
-	default:
-
-	}
-
-	if err != nil {
-		return err
-	}
-
-	/*
-		{
-			// Hack - create just enough of the Session that's needed for update
-
-			cluster, err := virtualmachine.GetVMClusterComputeResource(vmCtx, vcVM)
-			if err != nil {
-				return err
-			}
-
-			ses := &session.Session{
-				K8sClient: vs.k8sClient,
-				Client:    vcClient,
-				Finder:    vcClient.Finder(),
-				Cluster:   cluster,
-			}
-			ses.NetworkProvider = network.NewProvider(ses.K8sClient, ses.Client.VimClient(), ses.Finder, ses.Cluster)
-
-			getUpdateArgsFn := func() (*vmUpdateArgs, error) {
-				return vs.vmUpdateGetArgs(vmCtx)
-			}
-
-			err = ses.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgsFn)
-			if err != nil {
-				return err
-			}
+		ses := &session.Session{
+			K8sClient: vs.k8sClient,
+			Client:    vcClient,
+			Finder:    vcClient.Finder(),
+			Cluster:   cluster,
 		}
-	*/
+		// ses.NetworkProvider = network.NewProvider(ses.K8sClient, ses.Client.VimClient(), ses.Finder, ses.Cluster)
+
+		getUpdateArgsFn := func() (*vmUpdateArgs, error) {
+			// TODO: Use createArgs if we got them
+			return vs.vmUpdateGetArgs(vmCtx)
+		}
+
+		err = ses.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgsFn)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -1054,7 +1033,6 @@ func (vs *vSphereVMProvider) vmCreateValidateArgs(
 	return nil
 }
 
-/*
 func (vs *vSphereVMProvider) vmUpdateGetArgs(
 	vmCtx context.VirtualMachineContextA2) (*vmUpdateArgs, error) {
 
@@ -1068,7 +1046,7 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 		return nil, err
 	}
 
-	vmMD, err := GetVMMetadata(vmCtx, vs.k8sClient)
+	data, vAppData, vAppExData, err := GetVirtualMachineBootstrap(vmCtx, vs.k8sClient)
 	if err != nil {
 		return nil, err
 	}
@@ -1076,11 +1054,13 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 	updateArgs := &vmUpdateArgs{}
 	updateArgs.VMClass = vmClass
 	updateArgs.ResourcePolicy = resourcePolicy
-	updateArgs.VMMetadata = vmMD
+	updateArgs.BootstrapData.Data = data
+	updateArgs.BootstrapData.VAppData = vAppData
+	updateArgs.BootstrapData.VAppExData = vAppExData
 
 	// We're always ready - again - at this point since we've fetched the above objects. We really should
 	// not be touching this condition after creation but that is for another day.
-	conditions.MarkTrue(vmCtx.VM, vmopv1.VirtualMachinePrereqReadyCondition)
+	// conditions.MarkTrue(vmCtx.VM, vmopv1.VirtualMachinePrereqReadyCondition)
 
 	if res := vmClass.Spec.Policies.Resources; !res.Requests.Cpu.IsZero() || !res.Limits.Cpu.IsZero() {
 		freq, err := vs.getOrComputeCPUMinFrequency(vmCtx)
@@ -1090,20 +1070,21 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 		updateArgs.MinCPUFreq = freq
 	}
 
+	var vmClassConfigSpec *types.VirtualMachineConfigSpec
 	if lib.IsVMClassAsConfigFSSDaynDateEnabled() {
 		if cs := updateArgs.VMClass.Spec.ConfigSpec; cs != nil {
-			classConfigSpec, err := GetVMClassConfigSpec(cs)
+			var err error
+			vmClassConfigSpec, err = GetVMClassConfigSpec(cs)
 			if err != nil {
 				return nil, err
 			}
-			updateArgs.ClassConfigSpec = classConfigSpec
 		}
 	}
 
 	imageFirmware := ""
 	// Only get VM image when this is the VM first boot.
 	if isVMFirstBoot(vmCtx) {
-		vmImageStatus, _, err := GetVMImageStatusAndContentLibraryUUID(vmCtx, vs.k8sClient)
+		_, _, vmImageStatus, err := GetVirtualMachineImageSpecAndStatus(vmCtx, vs.k8sClient)
 		if err != nil {
 			return nil, err
 		}
@@ -1111,6 +1092,7 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 
 		// The only use of this is for the global JSON_EXTRA_CONFIG to set the image name.
 		// The global extra config should only be set during first boot.
+		// BMV: We can just finally kill this with the demise of old gce2e?
 		renderTemplateFn := func(name, text string) string {
 			t, err := template.New(name).Parse(text)
 			if err != nil {
@@ -1130,19 +1112,18 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 		// Enabling the defer-cloud-init extraConfig key for V1Alpha1Compatible images defers cloud-init from running on first boot
 		// and disables networking configurations by cloud-init. Therefore, only set the extraConfig key to enabled
 		// when the vmMetadata is nil or when the transport requested is not CloudInit.
-		if conditions.IsTrueFromConditions(vmImageStatus.Conditions,
-			vmopv1.VirtualMachineImageV1Alpha1CompatibleCondition) {
+		if conditions.IsTrueFromConditions(vmImageStatus.Conditions, "VirtualMachineImageV1Alpha1Compatible" /*vmopv1.VirtualMachineImageV1Alpha1CompatibleCondition*/) {
 			updateArgs.VirtualMachineImageV1Alpha1Compatible = true
 		}
 		updateArgs.ExtraConfig = extraConfig
 	}
 
 	updateArgs.ConfigSpec = virtualmachine.CreateConfigSpec(
-		vmCtx.VM.Name,
+		vmCtx,
+		vmClassConfigSpec,
 		&updateArgs.VMClass.Spec,
 		updateArgs.MinCPUFreq,
-		imageFirmware,
-		updateArgs.ClassConfigSpec)
+		imageFirmware)
 
 	return updateArgs, nil
 }
@@ -1154,4 +1135,3 @@ func isVMFirstBoot(vmCtx context.VirtualMachineContextA2) bool {
 
 	return true
 }
-*/

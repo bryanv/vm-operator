@@ -12,14 +12,11 @@ import (
 
 	"k8s.io/utils/pointer"
 
-	apiEquality "k8s.io/apimachinery/pkg/api/equality"
-	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
-
 	"github.com/go-logr/logr"
 	"github.com/vmware/govmomi/object"
 	vimTypes "github.com/vmware/govmomi/vim25/types"
+	apiEquality "k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/pkg"
@@ -29,7 +26,6 @@ import (
 	vmutil "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/vm"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/clustermodules"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/config"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/instancestorage"
 	network2 "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network"
@@ -52,14 +48,16 @@ type VMUpdateArgs struct {
 	ResourcePolicy *vmopv1.VirtualMachineSetResourcePolicy
 	MinCPUFreq     uint64
 	ExtraConfig    map[string]string
-	VMMetadata     VMMetadata
 
-	ConfigSpec      *vimTypes.VirtualMachineConfigSpec
-	ClassConfigSpec *vimTypes.VirtualMachineConfigSpec
+	// VMMetadata     VMMetadata
+	BootstrapData vmlifecycle.BootstrapData
 
-	NetIfList      network.InterfaceInfoList
-	DNSServers     []string
-	SearchSuffixes []string
+	ConfigSpec *vimTypes.VirtualMachineConfigSpec
+	// ClassConfigSpec *vimTypes.VirtualMachineConfigSpec
+
+	NetIfList network.InterfaceInfoList
+	// DNSServers     []string
+	// SearchSuffixes []string
 
 	// hack. Remove after VMSVC-1261.
 	// indicating if this VM image used is VM service v1alpha1 compatible.
@@ -675,20 +673,6 @@ func (s *Session) prepareVMForPowerOn(
 
 	updateArgs.NetIfList = netIfList
 
-	if err := MutateUpdateArgsWithDNSInformation(
-		vmCtx.VM.Labels,
-		updateArgs,
-		s.K8sClient); err != nil {
-
-		// Due to an internal pipeline not properly creating the ConfigMap, this
-		// error is swallowed if it's a 404.
-		if apierrs.IsNotFound(err) {
-			vmCtx.Logger.Error(err, "VM Op ConfigMap not found")
-		} else {
-			return err
-		}
-	}
-
 	err = s.prePowerOnVMReconfigure(vmCtx, resVM, cfg, updateArgs)
 	if err != nil {
 		return err
@@ -711,44 +695,6 @@ func (s *Session) prepareVMForPowerOn(
 		return err
 	}
 
-	return nil
-}
-
-const (
-	// CAPWClusterRoleLabelKey is the key for the label applied to a VM that was
-	// created by CAPW.
-	CAPWClusterRoleLabelKey = "capw.vmware.com/cluster.role" //nolint:gosec
-
-	// CAPVClusterRoleLabelKey is the key for the label applied to a VM that was
-	// created by CAPV.
-	CAPVClusterRoleLabelKey = "capv.vmware.com/cluster.role"
-)
-
-func MutateUpdateArgsWithDNSInformation(
-	vmLabels map[string]string,
-	updateArgs *VMUpdateArgs,
-	client ctrl.Client) error {
-
-	nameservers, searchSuffixes, err := config.GetDNSInformationFromConfigMap(client)
-	if err != nil {
-		return err
-	}
-
-	updateArgs.DNSServers = nameservers
-
-	// Propagate the DNS search suffixes from the config map if this is a TKGs
-	// node. Please note that this will only be used by guests for VMs created
-	// by TKGs that use Cloud-Init. Guest OS Customization (GOSC) has no means
-	// to set the DNS search suffix.
-	_, ok := vmLabels[CAPWClusterRoleLabelKey]
-	if !ok {
-		_, ok = vmLabels[CAPVClusterRoleLabelKey]
-	}
-	if !ok {
-		return nil
-	}
-
-	updateArgs.SearchSuffixes = searchSuffixes
 	return nil
 }
 

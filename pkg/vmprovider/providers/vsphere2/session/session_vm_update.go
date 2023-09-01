@@ -353,18 +353,17 @@ func UpdateConfigSpecExtraConfig(
 	// VMSVC-1261: we may always set this extra config key to remove image from VM customization.
 	// If a VM is deployed from an incompatible image,
 	// it will do nothing and won't cause any issues, but can introduce confusion.
-	// BMV: TODO
-	/*
-		if vm.Spec.VmMetadata == nil || vm.Spec.VmMetadata.Transport != vmopv1.VirtualMachineMetadataCloudInitTransport {
-			ecMap := ExtraConfigToMap(config.ExtraConfig)
-			if ecMap[constants.VMOperatorV1Alpha1ExtraConfigKey] == constants.VMOperatorV1Alpha1ConfigReady &&
-				imageV1Alpha1Compatible {
-				// Set VMOperatorV1Alpha1ExtraConfigKey for v1alpha1 VirtualMachineImage compatibility.
-				configSpec.ExtraConfig = append(configSpec.ExtraConfig,
-					&vimTypes.OptionValue{Key: constants.VMOperatorV1Alpha1ExtraConfigKey, Value: constants.VMOperatorV1Alpha1ConfigEnabled})
-			}
+	// BMV: Is this needed anymore? IMO we shouldn't have bootstrap stuff here. The EC mangling is already hard to follow.
+	emptyBSSpec := vmopv1.VirtualMachineBootstrapSpec{}
+	if vm.Spec.Bootstrap == emptyBSSpec || vm.Spec.Bootstrap.CloudInit == nil {
+		ecMap := ExtraConfigToMap(config.ExtraConfig)
+		if ecMap[constants.VMOperatorV1Alpha1ExtraConfigKey] == constants.VMOperatorV1Alpha1ConfigReady &&
+			imageV1Alpha1Compatible {
+			// Set VMOperatorV1Alpha1ExtraConfigKey for v1alpha1 VirtualMachineImage compatibility.
+			configSpec.ExtraConfig = append(configSpec.ExtraConfig,
+				&vimTypes.OptionValue{Key: constants.VMOperatorV1Alpha1ExtraConfigKey, Value: constants.VMOperatorV1Alpha1ConfigEnabled})
 		}
-	*/
+	}
 }
 
 func setMMIOExtraConfig(vm *vmopv1.VirtualMachine, extraConfig map[string]string) {
@@ -385,7 +384,8 @@ func UpdateConfigSpecChangeBlockTracking(
 
 	// When VM_Class_as_Config_DaynDate is enabled, class config spec cbt if
 	// set overrides the VM spec advanced options cbt.
-	// BMV: I don't think this is correct: the class shouldn't dictate this for backup purposes.
+	// BMV: I don't think this is correct: the class shouldn't dictate this for backup purposes. There is a
+	// webhook out there that changes this in the VM spec.
 	if lib.IsVMClassAsConfigFSSDaynDateEnabled() && classConfigSpec != nil {
 		if classConfigSpec.ChangeTrackingEnabled != nil {
 			if !apiEquality.Semantic.DeepEqual(config.ChangeTrackingEnabled, classConfigSpec.ChangeTrackingEnabled) {
@@ -396,11 +396,11 @@ func UpdateConfigSpecChangeBlockTracking(
 	}
 
 	if vmSpec.Advanced.ChangeBlockTracking {
-		if configSpec.ChangeTrackingEnabled == nil || !*configSpec.ChangeTrackingEnabled {
+		if config.ChangeTrackingEnabled == nil || !*config.ChangeTrackingEnabled {
 			configSpec.ChangeTrackingEnabled = pointer.Bool(true)
 		}
 	} else {
-		if configSpec.ChangeTrackingEnabled != nil && *configSpec.ChangeTrackingEnabled {
+		if config.ChangeTrackingEnabled != nil && *config.ChangeTrackingEnabled {
 			configSpec.ChangeTrackingEnabled = pointer.Bool(false)
 		}
 	}

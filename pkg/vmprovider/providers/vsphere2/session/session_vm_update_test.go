@@ -4,176 +4,24 @@
 package session_test
 
 import (
-	"context"
 	"fmt"
-	"os"
 
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
+
+	"github.com/vmware/govmomi/object"
+	vimTypes "github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
-	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-	"github.com/vmware/govmomi/object"
-	vimTypes "github.com/vmware/govmomi/vim25/types"
-
-	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
-
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/config"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/constants"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/session"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/virtualmachine"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/session"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/virtualmachine"
 )
-
-var _ = Describe("Mutate update args with DNS information", func() {
-	var (
-		err        error
-		labels     map[string]string
-		configMap  *corev1.ConfigMap
-		updateArgs *session.VMUpdateArgs
-		client     ctrl.Client
-	)
-
-	BeforeEach(func() {
-		Expect(os.Setenv(lib.VmopNamespaceEnv, "fake")).To(Succeed())
-		updateArgs = &session.VMUpdateArgs{}
-		client = fake.NewClientBuilder().Build()
-		configMap = &corev1.ConfigMap{
-			TypeMeta: metav1.TypeMeta{
-				Kind: "ConfigMap",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.NetworkConfigMapName,
-				Namespace: "fake",
-			},
-			Data: map[string]string{
-				config.NameserversKey:    "8.8.8.8 1.1.1.1",
-				config.SearchSuffixesKey: "vmware.com example.com",
-			},
-		}
-	})
-
-	JustBeforeEach(func() {
-		if configMap != nil {
-			Expect(client.Create(context.Background(), configMap)).To(Succeed())
-		}
-		err = session.MutateUpdateArgsWithDNSInformation(
-			labels, updateArgs, client)
-	})
-
-	Context("nameservers", func() {
-		It("update args should have the nameservers", func() {
-			Expect(err).ToNot(HaveOccurred())
-			Expect(updateArgs.DNSServers).To(HaveLen(2))
-			Expect(updateArgs.DNSServers).To(BeEquivalentTo(
-				[]string{"8.8.8.8", "1.1.1.1"},
-			))
-		})
-	})
-
-	Context("search suffixes", func() {
-
-		Context("the ConfigMap is missing", func() {
-			BeforeEach(func() {
-				configMap = nil
-			})
-			It("the update args will not have the search suffixes", func() {
-				Expect(err.Error()).To(Equal(
-					fmt.Sprintf(
-						`configmaps "%s" not found`,
-						config.NetworkConfigMapName,
-					)))
-			})
-		})
-
-		Context("the TKG labels are not present", func() {
-			It("the update args will not have the search suffixes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(updateArgs.SearchSuffixes).To(HaveLen(0))
-			})
-		})
-
-		Context("the CAPW label is present", func() {
-			BeforeEach(func() {
-				labels = map[string]string{
-					session.CAPWClusterRoleLabelKey: "",
-				}
-			})
-			It("the update args will have the search suffixes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(updateArgs.SearchSuffixes).To(HaveLen(2))
-				Expect(updateArgs.SearchSuffixes).To(BeEquivalentTo(
-					[]string{"vmware.com", "example.com"},
-				))
-			})
-		})
-
-		Context("the CAPW label is present w a non-empty value", func() {
-			BeforeEach(func() {
-				labels = map[string]string{
-					session.CAPWClusterRoleLabelKey: "fake",
-				}
-			})
-			It("the update args will have the search suffixes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(updateArgs.SearchSuffixes).To(HaveLen(2))
-				Expect(updateArgs.SearchSuffixes).To(BeEquivalentTo(
-					[]string{"vmware.com", "example.com"},
-				))
-			})
-		})
-
-		Context("the CAPV label is present", func() {
-			BeforeEach(func() {
-				labels = map[string]string{
-					session.CAPVClusterRoleLabelKey: "",
-				}
-			})
-			It("the update args will have the search suffixes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(updateArgs.SearchSuffixes).To(HaveLen(2))
-				Expect(updateArgs.SearchSuffixes).To(BeEquivalentTo(
-					[]string{"vmware.com", "example.com"},
-				))
-			})
-		})
-
-		Context("the CAPV label is present w a non-empty value", func() {
-			BeforeEach(func() {
-				labels = map[string]string{
-					session.CAPVClusterRoleLabelKey: "fake",
-				}
-			})
-			It("the update args will have the search suffixes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(updateArgs.SearchSuffixes).To(HaveLen(2))
-				Expect(updateArgs.SearchSuffixes).To(BeEquivalentTo(
-					[]string{"vmware.com", "example.com"},
-				))
-			})
-		})
-
-		Context("the CAPW and CAPW labels are present", func() {
-			BeforeEach(func() {
-				labels = map[string]string{
-					session.CAPWClusterRoleLabelKey: "",
-					session.CAPVClusterRoleLabelKey: "",
-				}
-			})
-			It("the update args will have the search suffixes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(updateArgs.SearchSuffixes).To(HaveLen(2))
-				Expect(updateArgs.SearchSuffixes).To(BeEquivalentTo(
-					[]string{"vmware.com", "example.com"},
-				))
-			})
-		})
-	})
-})
 
 var _ = Describe("Update ConfigSpec", func() {
 
@@ -451,10 +299,7 @@ var _ = Describe("Update ConfigSpec", func() {
 
 			Context("When VM uses metadata transport types other than CloudInit", func() {
 				BeforeEach(func() {
-					vm.Spec.VmMetadata = &vmopv1.VirtualMachineMetadata{
-						Transport:     vmopv1.VirtualMachineMetadataExtraConfigTransport,
-						ConfigMapName: "dummy-config",
-					}
+					vm.Spec.Bootstrap.Sysprep = &vmopv1.VirtualMachineBootstrapSysprepSpec{}
 				})
 				It("defer cloud-init extra config is enabled", func() {
 					Expect(ecMap).To(HaveKeyWithValue("guestinfo.vmservice.defer-cloud-init", "enabled"))
@@ -463,10 +308,7 @@ var _ = Describe("Update ConfigSpec", func() {
 
 			Context("When VM uses CloudInit metadata transport type", func() {
 				BeforeEach(func() {
-					vm.Spec.VmMetadata = &vmopv1.VirtualMachineMetadata{
-						Transport:     vmopv1.VirtualMachineMetadataCloudInitTransport,
-						ConfigMapName: "dummy-config",
-					}
+					vm.Spec.Bootstrap.CloudInit = &vmopv1.VirtualMachineBootstrapCloudInitSpec{}
 				})
 				It("defer cloud-init extra config is not enabled", func() {
 					Expect(ecMap).ToNot(HaveKeyWithValue("guestinfo.vmservice.defer-cloud-init", "enabled"))
@@ -497,13 +339,15 @@ var _ = Describe("Update ConfigSpec", func() {
 				BeforeEach(func() {
 					vm.Spec.Volumes = append(vm.Spec.Volumes, vmopv1.VirtualMachineVolume{
 						Name: "pvc-volume-1",
-						PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
-							PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: "pvc-volume-1",
-							},
-							InstanceVolumeClaim: &vmopv1.InstanceVolumeClaimVolumeSource{
-								StorageClass: "dummyStorageClass",
-								Size:         resource.MustParse("256Gi"),
+						VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+							PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+								PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: "pvc-volume-1",
+								},
+								InstanceVolumeClaim: &vmopv1.InstanceVolumeClaimVolumeSource{
+									StorageClass: "dummyStorageClass",
+									Size:         resource.MustParse("256Gi"),
+								},
 							},
 						},
 					})
@@ -680,9 +524,6 @@ var _ = Describe("Update ConfigSpec", func() {
 		var classConfigSpec *vimTypes.VirtualMachineConfigSpec
 
 		BeforeEach(func() {
-			vmSpec = vmopv1.VirtualMachineSpec{
-				AdvancedOptions: &vmopv1.VirtualMachineAdvancedOptions{},
-			}
 			config.ChangeTrackingEnabled = nil
 			classConfigSpec = nil
 		})
@@ -696,9 +537,9 @@ var _ = Describe("Update ConfigSpec", func() {
 			Expect(configSpec.ChangeTrackingEnabled).To(BeNil())
 		})
 
-		It("configSpec cbt set to true", func() {
+		It("configSpec cbt set to true OMG", func() {
 			config.ChangeTrackingEnabled = pointer.Bool(true)
-			vmSpec.AdvancedOptions.ChangeBlockTracking = pointer.Bool(false)
+			vmSpec.Advanced.ChangeBlockTracking = false
 
 			session.UpdateConfigSpecChangeBlockTracking(config, configSpec, classConfigSpec, vmSpec)
 			Expect(configSpec.ChangeTrackingEnabled).ToNot(BeNil())
@@ -707,7 +548,7 @@ var _ = Describe("Update ConfigSpec", func() {
 
 		It("configSpec cbt set to false", func() {
 			config.ChangeTrackingEnabled = pointer.Bool(false)
-			vmSpec.AdvancedOptions.ChangeBlockTracking = pointer.Bool(true)
+			vmSpec.Advanced.ChangeBlockTracking = true
 
 			session.UpdateConfigSpecChangeBlockTracking(config, configSpec, classConfigSpec, vmSpec)
 			Expect(configSpec.ChangeTrackingEnabled).ToNot(BeNil())
@@ -716,7 +557,7 @@ var _ = Describe("Update ConfigSpec", func() {
 
 		It("configSpec cbt matches", func() {
 			config.ChangeTrackingEnabled = pointer.Bool(true)
-			vmSpec.AdvancedOptions.ChangeBlockTracking = pointer.Bool(true)
+			vmSpec.Advanced.ChangeBlockTracking = true
 
 			session.UpdateConfigSpecChangeBlockTracking(config, configSpec, classConfigSpec, vmSpec)
 			Expect(configSpec.ChangeTrackingEnabled).To(BeNil())
@@ -724,7 +565,7 @@ var _ = Describe("Update ConfigSpec", func() {
 
 		It("classConfigSpec not nil and is ignored", func() {
 			config.ChangeTrackingEnabled = pointer.Bool(false)
-			vmSpec.AdvancedOptions.ChangeBlockTracking = pointer.Bool(true)
+			vmSpec.Advanced.ChangeBlockTracking = true
 			classConfigSpec = &vimTypes.VirtualMachineConfigSpec{
 				ChangeTrackingEnabled: pointer.Bool(false),
 			}
@@ -742,7 +583,7 @@ var _ = Describe("Update ConfigSpec", func() {
 					return true
 				}
 				config.ChangeTrackingEnabled = pointer.Bool(false)
-				vmSpec.AdvancedOptions.ChangeBlockTracking = pointer.Bool(true)
+				vmSpec.Advanced.ChangeBlockTracking = true
 			})
 
 			AfterEach(func() {
@@ -804,7 +645,6 @@ var _ = Describe("Update ConfigSpec", func() {
 			session.UpdateConfigSpecFirmware(config, configSpec, vm)
 			Expect(configSpec.Firmware).To(BeEmpty())
 		})
-
 	})
 
 	Context("DeviceGroups", func() {

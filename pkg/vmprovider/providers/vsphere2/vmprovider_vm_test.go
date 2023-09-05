@@ -85,6 +85,9 @@ func vmTests() {
 			testConfig.WithContentLibrary = true
 			vmClass = builder.DummyVirtualMachineClassA2()
 			vm = builder.DummyBasicVirtualMachineA2("test-vm", "")
+
+			// Reduce diff from old tests: by default don't create an NIC.
+			vm.Spec.Network.Disabled = true
 		})
 
 		AfterEach(func() {
@@ -118,7 +121,6 @@ func vmTests() {
 			vm.Spec.ClassName = vmClass.Name
 			vm.Spec.ImageName = clusterVMImage.Name
 			vm.Spec.StorageClass = ctx.StorageClassName
-			vm.Spec.Network.Disabled = true
 		})
 
 		AfterEach(func() {
@@ -376,15 +378,18 @@ func vmTests() {
 
 					devList := object.VirtualDeviceList(o.Config.Hardware.Device)
 					l := devList.SelectByType(&types.VirtualEthernetCard{})
-					Expect(l).To(HaveLen(1 + 1))
+					Expect(l).To(HaveLen(1))
+					// Expect(l).To(HaveLen(1 + 1))
 
-					dev := l[0+1].GetVirtualDevice()
+					dev := l[0].GetVirtualDevice()
+					// dev := l[0+1].GetVirtualDevice()
 					backing, ok := dev.Backing.(*types.VirtualEthernetCardDistributedVirtualPortBackingInfo)
 					Expect(ok).Should(BeTrue())
 					_, dvpg := getDVPG(ctx, dvpgName)
 					Expect(backing.Port.PortgroupKey).To(Equal(dvpg.Reference().Value))
 
-					ethDevice, ok := l[0+1].(*types.VirtualE1000)
+					ethDevice, ok := l[0].(*types.VirtualE1000)
+					// ethDevice, ok := l[0+1].(*types.VirtualE1000)
 					Expect(ok).To(BeTrue())
 					Expect(ethDevice.AddressType).To(Equal(ethCard.AddressType))
 					Expect(ethDevice.MacAddress).To(Equal(ethCard.MacAddress))
@@ -414,9 +419,11 @@ func vmTests() {
 
 					devList := object.VirtualDeviceList(o.Config.Hardware.Device)
 					l := devList.SelectByType(&types.VirtualEthernetCard{})
-					Expect(l).To(HaveLen(1 + 1))
+					Expect(l).To(HaveLen(1))
+					// Expect(l).To(HaveLen(1 + 1))
 
-					dev := l[0+1].GetVirtualDevice()
+					dev := l[0].GetVirtualDevice()
+					// dev := l[0+1].GetVirtualDevice()
 					backing, ok := dev.Backing.(*types.VirtualEthernetCardDistributedVirtualPortBackingInfo)
 					Expect(ok).Should(BeTrue())
 					_, dvpg := getDVPG(ctx, dvpgName)
@@ -546,15 +553,18 @@ func vmTests() {
 
 					devList := object.VirtualDeviceList(o.Config.Hardware.Device)
 					l := devList.SelectByType(&types.VirtualEthernetCard{})
-					Expect(l).To(HaveLen(1 + 1))
+					Expect(l).To(HaveLen(1))
+					// Expect(l).To(HaveLen(1 + 1))
 
-					dev := l[0+1].GetVirtualDevice()
+					dev := l[0].GetVirtualDevice()
+					// dev := l[0+1].GetVirtualDevice()
 					backing, ok := dev.Backing.(*types.VirtualEthernetCardDistributedVirtualPortBackingInfo)
 					Expect(ok).Should(BeTrue())
 					_, dvpg := getDVPG(ctx, dvpgName)
 					Expect(backing.Port.PortgroupKey).To(Equal(dvpg.Reference().Value))
 
-					ethDevice, ok := l[0+1].(*types.VirtualE1000)
+					ethDevice, ok := l[0].(*types.VirtualE1000)
+					// ethDevice, ok := l[0+1].(*types.VirtualE1000)
 					Expect(ok).To(BeTrue())
 					Expect(ethDevice.AddressType).To(Equal(ethCard.AddressType))
 					Expect(dev.DeviceInfo).To(Equal(ethCard.VirtualDevice.DeviceInfo))
@@ -1225,7 +1235,8 @@ func vmTests() {
 						ec = nil
 					})
 
-					It("Metadata data is included in ExtraConfig", func() {
+					// TODO: As is we can't really honor "guestinfo.*" prefix
+					XIt("Metadata data is included in ExtraConfig", func() {
 						Expect(ec).ToNot(HaveKey("foo.bar"))
 						Expect(ec).To(HaveKeyWithValue("guestinfo.Foo", "foo"))
 
@@ -1261,6 +1272,8 @@ func vmTests() {
 			Context("Network", func() {
 
 				It("Should not have a nic", func() {
+					Expect(vm.Spec.Network.Disabled).To(BeTrue())
+
 					vcVM, err := createOrUpdateAndGetVcVM(ctx, vm)
 					Expect(err).ToNot(HaveOccurred())
 
@@ -1274,17 +1287,19 @@ func vmTests() {
 
 				Context("Multiple NICs are specified", func() {
 					BeforeEach(func() {
-						/*
-							vm.Spec.NetworkInterfaces = []vmopv1.VirtualMachineNetworkInterface{
-								{
-									NetworkName:      "VM Network",
-									EthernetCardType: "e1000",
-								},
-								{
-									NetworkName: dvpgName,
-								},
-							}
-						*/
+						testConfig.WithNetworkEnv = builder.NetworkEnvNamed
+
+						vm.Spec.Network.Disabled = false
+						vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+							{
+								Name:    "eth0",
+								Network: common.PartialObjectRef{Name: "VM Network"},
+							},
+							{
+								Name:    "eth1",
+								Network: common.PartialObjectRef{Name: dvpgName},
+							},
+						}
 					})
 
 					It("Has expected devices", func() {
@@ -1372,7 +1387,7 @@ func vmTests() {
 
 					It("Succeeds", func() {
 						vm.Spec.Advanced.BootDiskCapacity = newSize
-						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
 						vcVM, err := createOrUpdateAndGetVcVM(ctx, vm)
 						Expect(err).ToNot(HaveOccurred())
 

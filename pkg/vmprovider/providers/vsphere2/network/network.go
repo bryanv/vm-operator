@@ -42,6 +42,8 @@ type NetworkInterfaceResult struct {
 	NetworkID  string
 	Backing    object.NetworkReference
 
+	Device vimtypes.BaseVirtualDevice
+
 	// Fields from the InterfaceSpec used later during customization.
 	Name          string
 	DHCP4         bool

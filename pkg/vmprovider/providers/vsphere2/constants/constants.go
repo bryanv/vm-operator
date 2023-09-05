@@ -56,7 +56,7 @@ const (
 	PCIPassthruMMIOSizeDefault        = "512"
 
 	// MinSupportedHWVersionForPVC is the supported virtual hardware version for persistent volumes.
-	MinSupportedHWVersionForPVC = 13
+	MinSupportedHWVersionForPVC = 15
 	// MinSupportedHWVersionForPCIPassthruDevices is the supported virtual hardware version for NVidia PCI devices.
 	MinSupportedHWVersionForPCIPassthruDevices = 17
 

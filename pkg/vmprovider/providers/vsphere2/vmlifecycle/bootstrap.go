@@ -6,13 +6,13 @@ package vmlifecycle
 import (
 	"fmt"
 
-	"github.com/vmware/govmomi/task"
-	apiEquality "k8s.io/apimachinery/pkg/api/equality"
-
 	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/task"
 	vimTypes "github.com/vmware/govmomi/vim25/types"
+	apiEquality "k8s.io/apimachinery/pkg/api/equality"
 	ctrl "sigs.k8s.io/controller-runtime/pkg/client"
 
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/config"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
@@ -84,8 +84,8 @@ func DoBootstrap(
 		configSpec, customSpec, err = BootstrapVAppConfig(vmCtx, config, vAppConfig, bootstrapArgs)
 	default:
 		// Old code fell back to LinuxPrep. Is that really appropriate anymore?
-		//linuxPrep = &vmopv1.VirtualMachineBootstrapLinuxPrepSpec{}
-		//configSpec, customSpec, err = BootStrapLinuxPrep(vmCtx, config, linuxPrep, nil, bootstrapArgs)
+		linuxPrep = &vmopv1.VirtualMachineBootstrapLinuxPrepSpec{HardwareClockIsUTC: true}
+		configSpec, customSpec, err = BootStrapLinuxPrep(vmCtx, config, linuxPrep, nil, bootstrapArgs)
 	}
 
 	if err != nil {

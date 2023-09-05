@@ -8,8 +8,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/vmlifecycle"
-
 	"k8s.io/utils/pointer"
 
 	"github.com/go-logr/logr"
@@ -24,13 +22,13 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
 	vmutil "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/vm"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/clustermodules"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/instancestorage"
 	network2 "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network"
 	res "github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/resources"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/virtualmachine"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/vmlifecycle"
 )
 
 const (
@@ -47,9 +45,7 @@ type VMUpdateArgs struct {
 	BootstrapData vmlifecycle.BootstrapData
 
 	ConfigSpec *vimTypes.VirtualMachineConfigSpec
-	// ClassConfigSpec *vimTypes.VirtualMachineConfigSpec
 
-	NetIfList      network.InterfaceInfoList
 	NetworkResults network2.NetworkInterfaceResults
 
 	// hack. Remove after VMSVC-1261.
@@ -497,7 +493,7 @@ func (s *Session) prePowerOnVMConfigSpec(
 
 	virtualDevices := object.VirtualDeviceList(config.Hardware.Device)
 	currentDisks := virtualDevices.SelectByType((*vimTypes.VirtualDisk)(nil))
-	//currentEthCards := virtualDevices.SelectByType((*vimTypes.VirtualEthernetCard)(nil))
+	currentEthCards := virtualDevices.SelectByType((*vimTypes.VirtualEthernetCard)(nil))
 	currentPciDevices := virtualDevices.SelectByType((*vimTypes.VirtualPCIPassthrough)(nil))
 
 	diskDeviceChanges, err := updateVirtualDiskDeviceChanges(vmCtx, currentDisks)
@@ -506,14 +502,16 @@ func (s *Session) prePowerOnVMConfigSpec(
 	}
 	configSpec.DeviceChange = append(configSpec.DeviceChange, diskDeviceChanges...)
 
-	/*
-		expectedEthCards := updateArgs.NetIfList.GetVirtualDeviceList()
-		ethCardDeviceChanges, err := UpdateEthCardDeviceChanges(expectedEthCards, currentEthCards)
-		if err != nil {
-			return nil, err
-		}
-		configSpec.DeviceChange = append(configSpec.DeviceChange, ethCardDeviceChanges...)
-	*/
+	var expectedEthCards object.VirtualDeviceList
+	for idx := range updateArgs.NetworkResults.Results {
+		expectedEthCards = append(expectedEthCards, updateArgs.NetworkResults.Results[idx].Device)
+	}
+
+	ethCardDeviceChanges, err := UpdateEthCardDeviceChanges(expectedEthCards, currentEthCards)
+	if err != nil {
+		return nil, err
+	}
+	configSpec.DeviceChange = append(configSpec.DeviceChange, ethCardDeviceChanges...)
 
 	var expectedPCIDevices []vimTypes.BaseVirtualDevice
 	if lib.IsVMClassAsConfigFSSDaynDateEnabled() {
@@ -559,72 +557,111 @@ func (s *Session) prePowerOnVMReconfigure(
 
 func (s *Session) ensureNetworkInterfaces(
 	vmCtx context.VirtualMachineContextA2,
-	configSpec *vimTypes.VirtualMachineConfigSpec) (network.InterfaceInfoList, error) {
+	configSpec *vimTypes.VirtualMachineConfigSpec) (network2.NetworkInterfaceResults, error) {
 
-	return nil, nil
+	// This negative device key is the traditional range used for network interfaces.
+	deviceKey := int32(-100)
 
-	/*
-		// This negative device key is the traditional range used for network interfaces.
-		deviceKey := int32(-100)
+	var networkDevices []vimTypes.BaseVirtualDevice
+	if lib.IsVMClassAsConfigFSSDaynDateEnabled() && configSpec != nil {
+		networkDevices = util.SelectDevicesByTypes(
+			util.DevicesFromConfigSpec(configSpec),
+			&vimTypes.VirtualE1000{},
+			&vimTypes.VirtualE1000e{},
+			&vimTypes.VirtualPCNet32{},
+			&vimTypes.VirtualVmxnet2{},
+			&vimTypes.VirtualVmxnet3{},
+			&vimTypes.VirtualVmxnet3Vrdma{},
+			&vimTypes.VirtualSriovEthernetCard{},
+		)
+	}
+	networkSpec := &vmCtx.VM.Spec.Network
+	if networkSpec.Disabled {
+		// No connected networking for this VM.
+		return network2.NetworkInterfaceResults{}, nil
+	}
 
-		var networkDevices []vimTypes.BaseVirtualDevice
-		if lib.IsVMClassAsConfigFSSDaynDateEnabled() && configSpec != nil {
-			networkDevices = util.SelectDevicesByTypes(
-				util.DevicesFromConfigSpec(configSpec),
-				&vimTypes.VirtualE1000{},
-				&vimTypes.VirtualE1000e{},
-				&vimTypes.VirtualPCNet32{},
-				&vimTypes.VirtualVmxnet2{},
-				&vimTypes.VirtualVmxnet3{},
-				&vimTypes.VirtualVmxnet3Vrdma{},
-				&vimTypes.VirtualSriovEthernetCard{},
-			)
+	interfaces := networkSpec.Interfaces
+	if len(interfaces) == 0 {
+		// VM gets one automatic NIC. Create the default interface from fields in the network spec.
+		defaultInterface := vmopv1.VirtualMachineNetworkInterfaceSpec{
+			Name:          networkSpec.DeviceName,
+			Addresses:     networkSpec.Addresses,
+			DHCP4:         networkSpec.DHCP4,
+			DHCP6:         networkSpec.DHCP6,
+			Gateway4:      networkSpec.Gateway4,
+			Gateway6:      networkSpec.Gateway6,
+			MTU:           networkSpec.MTU,
+			Nameservers:   networkSpec.Nameservers,
+			Routes:        networkSpec.Routes,
+			SearchDomains: networkSpec.SearchDomains,
 		}
 
-		// XXX: The following logic assumes that the order of network interfaces specified in the
-		// VM spec matches one to one with the device changes in the ConfigSpec in VM class.
-		// This is a safe assumption for now since VM service only supports one network interface.
-		// TODO: Needs update when VM Service supports VMs with more then one network interface.
-		var netIfList = make(network.InterfaceInfoList, len(vmCtx.VM.Spec.NetworkInterfaces))
-		for i := range vmCtx.VM.Spec.NetworkInterfaces {
-			vif := vmCtx.VM.Spec.NetworkInterfaces[i]
+		if defaultInterface.Name == "" {
+			defaultInterface.Name = "eth0"
+		}
+		if networkSpec.Network != nil {
+			defaultInterface.Network = *networkSpec.Network
+		}
 
-			info, err := s.NetworkProvider.EnsureNetworkInterface(vmCtx, &vif)
-			if err != nil {
-				return nil, err
-			}
+		interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{defaultInterface}
+	}
 
-			if lib.IsVMClassAsConfigFSSDaynDateEnabled() {
-				// If VM Class-as-a-Config is supported, we use the network device from the Class.
-				// If the VM class doesn't specify enough number of network devices, we fall back to default behavior.
-				if i < len(networkDevices) {
-					ethCardFromNetProvider := info.Device.(vimTypes.BaseVirtualEthernetCard)
+	clusterMoRef := s.Cluster.Reference()
 
-					if mac := ethCardFromNetProvider.GetVirtualEthernetCard().MacAddress; mac != "" {
-						networkDevices[i].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().MacAddress = mac
-						networkDevices[i].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().AddressType = string(vimTypes.VirtualEthernetCardMacTypeManual)
-					}
+	results, err := network2.CreateAndWaitForNetworkInterfaces(
+		vmCtx,
+		s.K8sClient,
+		s.Client.VimClient(),
+		s.Finder,
+		&clusterMoRef,
+		interfaces)
+	if err != nil {
+		return network2.NetworkInterfaceResults{}, err
+	}
 
-					networkDevices[i].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().ExternalId =
-						ethCardFromNetProvider.GetVirtualEthernetCard().ExternalId
-					// If the device from VM class has a DVX backing, this should still work if the backing as well
-					// as the DVX backing are set. VPXD checks for DVX backing before checking for normal device backings.
-					networkDevices[i].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().Backing =
-						ethCardFromNetProvider.GetVirtualEthernetCard().Backing
+	// XXX: The following logic assumes that the order of network interfaces specified in the
+	// VM spec matches one to one with the device changes in the ConfigSpec in VM class.
+	// This is a safe assumption for now since VM service only supports one network interface.
+	// TODO: Needs update when VM Service supports VMs with more then one network interface.
+	for idx := range results.Results {
+		result := &results.Results[idx]
 
-					info.Device = networkDevices[i]
+		dev, err := network2.CreateDefaultEthCard(vmCtx, result)
+		if err != nil {
+			return network2.NetworkInterfaceResults{}, err
+		}
+
+		if lib.IsVMClassAsConfigFSSDaynDateEnabled() {
+			// If VM Class-as-a-Config is supported, we use the network device from the Class.
+			// If the VM class doesn't specify enough number of network devices, we fall back to default behavior.
+			if idx < len(networkDevices) {
+				ethCardFromNetProvider := dev.(vimTypes.BaseVirtualEthernetCard)
+
+				if mac := ethCardFromNetProvider.GetVirtualEthernetCard().MacAddress; mac != "" {
+					networkDevices[idx].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().MacAddress = mac
+					networkDevices[idx].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().AddressType = string(vimTypes.VirtualEthernetCardMacTypeManual)
 				}
+
+				networkDevices[idx].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().ExternalId =
+					ethCardFromNetProvider.GetVirtualEthernetCard().ExternalId
+				// If the device from VM class has a DVX backing, this should still work if the backing as well
+				// as the DVX backing are set. VPXD checks for DVX backing before checking for normal device backings.
+				networkDevices[idx].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().Backing =
+					ethCardFromNetProvider.GetVirtualEthernetCard().Backing
+
+				dev = networkDevices[idx]
 			}
-
-			// govmomi assigns a random device key. Fix that up here.
-			info.Device.GetVirtualDevice().Key = deviceKey
-			netIfList[i] = *info
-
-			deviceKey--
 		}
 
-		return netIfList, nil
-	*/
+		// govmomi assigns a random device key. Fix that up here.
+		dev.GetVirtualDevice().Key = deviceKey
+		deviceKey--
+
+		result.Device = dev
+	}
+
+	return results, nil
 }
 
 func (s *Session) ensureCNSVolumes(vmCtx context.VirtualMachineContextA2) error {
@@ -666,7 +703,7 @@ func (s *Session) prepareVMForPowerOn(
 		return err
 	}
 
-	updateArgs.NetIfList = netIfList
+	updateArgs.NetworkResults = netIfList
 
 	err = s.prePowerOnVMReconfigure(vmCtx, resVM, cfg, updateArgs)
 	if err != nil {
@@ -678,7 +715,7 @@ func (s *Session) prepareVMForPowerOn(
 		resVM.VcVM(),
 		cfg,
 		s.K8sClient,
-		network2.NetworkInterfaceResults{},
+		updateArgs.NetworkResults,
 		updateArgs.BootstrapData)
 	if err != nil {
 		return err

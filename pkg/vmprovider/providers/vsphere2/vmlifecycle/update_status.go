@@ -21,6 +21,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/topology"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/virtualmachine"
 )
 
 var (
@@ -79,15 +80,19 @@ func UpdateStatus(
 	if lib.IsWcpFaultDomainsFSSEnabled() {
 		zoneName := vm.Labels[topology.KubernetesTopologyZoneLabelKey]
 		if zoneName == "" {
-			var err error
-			zoneName, err = topology.LookupZoneForClusterMoID(vmCtx, k8sClient, "TODO")
+			cluster, err := virtualmachine.GetVMClusterComputeResource(vmCtx, vcVM)
 			if err != nil {
 				errs = append(errs, err)
 			} else {
-				if vm.Labels == nil {
-					vm.Labels = map[string]string{}
+				zoneName, err = topology.LookupZoneForClusterMoID(vmCtx, k8sClient, cluster.Reference().Value)
+				if err != nil {
+					errs = append(errs, err)
+				} else {
+					if vm.Labels == nil {
+						vm.Labels = map[string]string{}
+					}
+					vm.Labels[topology.KubernetesTopologyZoneLabelKey] = zoneName
 				}
-				vm.Labels[topology.KubernetesTopologyZoneLabelKey] = zoneName
 			}
 		}
 

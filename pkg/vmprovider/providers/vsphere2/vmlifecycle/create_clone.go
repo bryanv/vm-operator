@@ -159,8 +159,8 @@ func resizeBootDiskDeviceChange(
 	vmCtx context.VirtualMachineContextA2,
 	virtualDisks object.VirtualDeviceList) []vimtypes.BaseVirtualDeviceConfigSpec {
 
-	bootDiskSize := vmCtx.VM.Spec.Advanced.BootDiskCapacity
-	if bootDiskSize.IsZero() {
+	capacity := vmCtx.VM.Spec.Advanced.BootDiskCapacity
+	if capacity.IsZero() {
 		return nil
 	}
 
@@ -173,8 +173,8 @@ func resizeBootDiskDeviceChange(
 		}
 
 		// Maybe don't allow shrink?
-		if vmDisk.CapacityInBytes != bootDiskSize.Value() {
-			vmDisk.CapacityInBytes = bootDiskSize.Value()
+		if vmDisk.CapacityInBytes != capacity.Value() {
+			vmDisk.CapacityInBytes = capacity.Value()
 			deviceChanges = append(deviceChanges, &vimtypes.VirtualDeviceConfigSpec{
 				Operation: vimtypes.VirtualDeviceConfigSpecOperationEdit,
 				Device:    vmDisk,

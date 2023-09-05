@@ -37,11 +37,6 @@ const (
 	FirstBootDoneAnnotation = "virtualmachine.vmoperator.vmware.com/first-boot-done"
 )
 
-type VMMetadata struct {
-	Data map[string]string
-	// Transport vmopv1.VirtualMachineMetadataTransport
-}
-
 // VMUpdateArgs contains the arguments needed to update a VM on VC.
 type VMUpdateArgs struct {
 	VMClass        *vmopv1.VirtualMachineClass
@@ -49,15 +44,13 @@ type VMUpdateArgs struct {
 	MinCPUFreq     uint64
 	ExtraConfig    map[string]string
 
-	// VMMetadata     VMMetadata
 	BootstrapData vmlifecycle.BootstrapData
 
 	ConfigSpec *vimTypes.VirtualMachineConfigSpec
 	// ClassConfigSpec *vimTypes.VirtualMachineConfigSpec
 
-	NetIfList network.InterfaceInfoList
-	// DNSServers     []string
-	// SearchSuffixes []string
+	NetIfList      network.InterfaceInfoList
+	NetworkResults network2.NetworkInterfaceResults
 
 	// hack. Remove after VMSVC-1261.
 	// indicating if this VM image used is VM service v1alpha1 compatible.
@@ -504,7 +497,7 @@ func (s *Session) prePowerOnVMConfigSpec(
 
 	virtualDevices := object.VirtualDeviceList(config.Hardware.Device)
 	currentDisks := virtualDevices.SelectByType((*vimTypes.VirtualDisk)(nil))
-	currentEthCards := virtualDevices.SelectByType((*vimTypes.VirtualEthernetCard)(nil))
+	//currentEthCards := virtualDevices.SelectByType((*vimTypes.VirtualEthernetCard)(nil))
 	currentPciDevices := virtualDevices.SelectByType((*vimTypes.VirtualPCIPassthrough)(nil))
 
 	diskDeviceChanges, err := updateVirtualDiskDeviceChanges(vmCtx, currentDisks)
@@ -513,12 +506,14 @@ func (s *Session) prePowerOnVMConfigSpec(
 	}
 	configSpec.DeviceChange = append(configSpec.DeviceChange, diskDeviceChanges...)
 
-	expectedEthCards := updateArgs.NetIfList.GetVirtualDeviceList()
-	ethCardDeviceChanges, err := UpdateEthCardDeviceChanges(expectedEthCards, currentEthCards)
-	if err != nil {
-		return nil, err
-	}
-	configSpec.DeviceChange = append(configSpec.DeviceChange, ethCardDeviceChanges...)
+	/*
+		expectedEthCards := updateArgs.NetIfList.GetVirtualDeviceList()
+		ethCardDeviceChanges, err := UpdateEthCardDeviceChanges(expectedEthCards, currentEthCards)
+		if err != nil {
+			return nil, err
+		}
+		configSpec.DeviceChange = append(configSpec.DeviceChange, ethCardDeviceChanges...)
+	*/
 
 	var expectedPCIDevices []vimTypes.BaseVirtualDevice
 	if lib.IsVMClassAsConfigFSSDaynDateEnabled() {
@@ -684,8 +679,7 @@ func (s *Session) prepareVMForPowerOn(
 		cfg,
 		s.K8sClient,
 		network2.NetworkInterfaceResults{},
-		vmlifecycle.BootstrapData{})
-	// err = s.customize(vmCtx, resVM, cfg, *updateArgs)
+		updateArgs.BootstrapData)
 	if err != nil {
 		return err
 	}

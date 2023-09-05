@@ -84,7 +84,8 @@ func DoBootstrap(
 		configSpec, customSpec, err = BootstrapVAppConfig(vmCtx, config, vAppConfig, bootstrapArgs)
 	default:
 		// Old code fell back to LinuxPrep. Is that really appropriate anymore?
-		configSpec, customSpec, err = BootStrapLinuxPrep(vmCtx, config, linuxPrep, vAppConfig, bootstrapArgs)
+		//linuxPrep = &vmopv1.VirtualMachineBootstrapLinuxPrepSpec{}
+		//configSpec, customSpec, err = BootStrapLinuxPrep(vmCtx, config, linuxPrep, nil, bootstrapArgs)
 	}
 
 	if err != nil {

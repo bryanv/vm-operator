@@ -26,25 +26,28 @@ func deployOVF(
 	item *library.Item,
 	createArgs *CreateArgs) (*vimtypes.ManagedObjectReference, error) {
 
-	configSpecXML, err := util.MarshalConfigSpecToXML(createArgs.ConfigSpec)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal ConfigSpec to XML: %w", err)
-	}
-
 	deploymentSpec := vcenter.DeploymentSpec{
 		Name:                vmCtx.VM.Name,
 		StorageProfileID:    createArgs.StorageProfileID,
 		StorageProvisioning: createArgs.StorageProvisioning,
 		AcceptAllEULA:       true,
-		VmConfigSpec: &vcenter.VmConfigSpec{
-			Provider: constants.ConfigSpecProviderXML,
-			XML:      base64.StdEncoding.EncodeToString(configSpecXML),
-		},
 	}
 
 	if deploymentSpec.StorageProfileID == "" {
 		// Without a storage profile, fall back to the datastore.
 		deploymentSpec.DefaultDatastoreID = createArgs.DatastoreMoID
+	}
+
+	if createArgs.ConfigSpec != nil {
+		configSpecXML, err := util.MarshalConfigSpecToXML(createArgs.ConfigSpec)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal ConfigSpec to XML: %w", err)
+		}
+
+		deploymentSpec.VmConfigSpec = &vcenter.VmConfigSpec{
+			Provider: constants.ConfigSpecProviderXML,
+			XML:      base64.StdEncoding.EncodeToString(configSpecXML),
+		}
 	}
 
 	deploy := vcenter.Deploy{

@@ -110,7 +110,7 @@ func (vs *vSphereVMProvider) CreateOrUpdateVirtualMachine(
 			return nil
 		}
 
-		return vs.createdVirtualMachineFallthroughUpdate(vmCtx, vcVM, createArgs, client)
+		return vs.createdVirtualMachineFallthroughUpdate(vmCtx, vcVM, client, createArgs)
 	}
 
 	return vs.updateVirtualMachine(vmCtx, vcVM, client, nil)
@@ -318,8 +318,8 @@ func (vs *vSphereVMProvider) createVirtualMachine(
 func (vs *vSphereVMProvider) createdVirtualMachineFallthroughUpdate(
 	vmCtx context.VirtualMachineContextA2,
 	vcVM *object.VirtualMachine,
-	createArgs *VMCreateArgs,
-	vcClient *vcclient.Client) error {
+	vcClient *vcclient.Client,
+	createArgs *VMCreateArgs) error {
 
 	// TODO: In the common case, we'll call directly into update right after create succeeds, and
 	// can use the createArgs to avoid doing a bunch of lookup work again.
@@ -332,8 +332,6 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 	vcVM *object.VirtualMachine,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) (err error) {
-
-	_ = createArgs
 
 	vmCtx.Logger.V(4).Info("Updating VirtualMachine")
 
@@ -351,10 +349,10 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 			Finder:    vcClient.Finder(),
 			Cluster:   cluster,
 		}
-		// ses.NetworkProvider = network.NewProvider(ses.K8sClient, ses.Client.VimClient(), ses.Finder, ses.Cluster)
 
 		getUpdateArgsFn := func() (*vmUpdateArgs, error) {
-			// TODO: Use createArgs if we got them
+			// TODO: Use createArgs if we already got them
+			_ = createArgs
 			return vs.vmUpdateGetArgs(vmCtx)
 		}
 
@@ -923,11 +921,10 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecChangeBootDiskSize(
 	vmCtx context.VirtualMachineContextA2,
 	_ *VMCreateArgs) error {
 
-	capacity := vmCtx.VM.Spec.Advanced.BootDiskCapacity
-	if !capacity.IsZero() { //nolint
-		// TODO: How to we determine the DeviceKey for the DeviceChange entry? Do we have to crack
-		// the OVF envelope which is something we can't really do sanely with current CL APIs.
-		// Otherwise, punt on this for a placement consideration and resize the disk after creation.
+	if capacity := vmCtx.VM.Spec.Advanced.BootDiskCapacity; !capacity.IsZero() { //nolint
+		// TODO: How to we determine the DeviceKey for the DeviceChange entry? Do we have to crack the
+		// image/source, which is hard to do ATM for ContentLibrary OVF?
+		// Otherwise, punt on this for a placement consideration and resize the disk after VM create.
 	}
 
 	return nil

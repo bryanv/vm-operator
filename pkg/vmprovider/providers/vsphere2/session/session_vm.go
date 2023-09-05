@@ -10,11 +10,15 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 )
 
-// TODO: We don't have VshereVolumes anymore - just the BootDisk field.
 func updateVirtualDiskDeviceChanges(
 	vmCtx context.VirtualMachineContextA2,
 	virtualDisks object.VirtualDeviceList) ([]vimTypes.BaseVirtualDeviceConfigSpec, error) {
 
+	if vmCtx.VM.Spec.Advanced.BootDiskCapacity.IsZero() {
+		return nil, nil
+	}
+
+	// TODO
 	return nil, nil
 }
 

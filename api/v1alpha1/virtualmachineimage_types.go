@@ -154,7 +154,7 @@ func (vmImage *VirtualMachineImage) SetConditions(conditions Conditions) {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=vmi;vmimage
-// +kubebuilder:storageversion
+// +kubebuilder:storageversion:false
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Provider-Name",type="string",JSONPath=".spec.providerRef.name"
 // +kubebuilder:printcolumn:name="Content-Library-Name",type="string",JSONPath=".status.contentLibraryRef.name"
@@ -196,7 +196,7 @@ func (clusterVirtualMachineImage *ClusterVirtualMachineImage) SetConditions(cond
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=cvmi;cvmimage;clustervmi;clustervmimage
-// +kubebuilder:storageversion
+// +kubebuilder:storageversion:false
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Provider-Name",type="string",JSONPath=".spec.providerRef.name"
 // +kubebuilder:printcolumn:name="Content-Library-Name",type="string",JSONPath=".status.contentLibraryRef.name"

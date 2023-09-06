@@ -16,6 +16,9 @@ import (
 
 // CreateConfigSpec returns an initial ConfigSpec that is created by overlaying the
 // base ConfigSpec with VM Class spec and other arguments.
+// TODO: We eventually need to de-dupe much of this with the ConfigSpec manipulation that's later done
+// in the "update" pre-power on path. That operates on a ConfigInfo so we'd need to populate that from
+// the config we build here.
 func CreateConfigSpec(
 	vmCtx context.VirtualMachineContextA2,
 	vmClassConfigSpec *types.VirtualMachineConfigSpec,
@@ -44,8 +47,9 @@ func CreateConfigSpec(
 		Type:         constants.ManagedByExtensionType,
 	}
 
-	// TODO: Honor the VM's constants.FirmwareOverrideAnnotation if set?
-	if configSpec.Firmware == "" {
+	if val, ok := vmCtx.VM.Annotations[constants.FirmwareOverrideAnnotation]; ok {
+		configSpec.Firmware = val
+	} else if configSpec.Firmware == "" {
 		// Use firmware type from the image if config spec doesn't have it.
 		configSpec.Firmware = imageFirmware
 	}

@@ -25,10 +25,11 @@ func ResolveNCPBackingPostPlacement(
 	clusterMoRef vimtypes.ManagedObjectReference,
 	results *NetworkInterfaceResults) error {
 
-	networkType := lib.GetNetworkProviderType()
-	if networkType == "" {
+	if networkType := lib.GetNetworkProviderType(); networkType == "" {
 		return fmt.Errorf("no network provider set")
 	} else if networkType != lib.NetworkProviderTypeNSXT {
+		return nil
+	} else if !results.NeedCCRBacking {
 		return nil
 	}
 
@@ -47,6 +48,7 @@ func ResolveNCPBackingPostPlacement(
 		results.Results[idx].Backing = backing
 	}
 
+	results.NeedCCRBacking = false
 	return nil
 }
 

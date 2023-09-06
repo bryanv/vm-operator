@@ -331,7 +331,7 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 	vmCtx context.VirtualMachineContextA2,
 	vcVM *object.VirtualMachine,
 	vcClient *vcclient.Client,
-	createArgs *VMCreateArgs) (err error) {
+	createArgs *VMCreateArgs) error {
 
 	vmCtx.Logger.V(4).Info("Updating VirtualMachine")
 
@@ -404,7 +404,7 @@ func (vs *vSphereVMProvider) vmCreateDoPlacement(
 
 		hostFQDN, err := vcenter.GetESXHostFQDN(vmCtx, vcClient.VimClient(), hostMoID)
 		if err != nil {
-			// TODO: conditions.MarkFalse(..., VirtualMachineConditionPlacementReady, ...) ?
+			conditions.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionPlacementReady, "NotReady", err.Error())
 			return err
 		}
 
@@ -419,6 +419,8 @@ func (vs *vSphereVMProvider) vmCreateDoPlacement(
 		if vmCtx.VM.Labels == nil {
 			vmCtx.VM.Labels = map[string]string{}
 		}
+		// Note if the VM create fails for some reason, but this label gets updated on the k8s VM,
+		// then this is the pre-assigned zone on later create attempts.
 		vmCtx.VM.Labels[topology.KubernetesTopologyZoneLabelKey] = result.ZoneName
 	}
 
@@ -498,16 +500,18 @@ func (vs *vSphereVMProvider) vmCreateFixupConfigSpec(
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
-	err := network.ResolveNCPBackingPostPlacement(
-		vmCtx,
-		vcClient.VimClient(),
-		createArgs.ClusterMoRef,
-		&createArgs.NetworkResults)
-	if err != nil {
-		return err
-	}
+	if createArgs.NetworkResults.NeedCCRBacking {
+		err := network.ResolveNCPBackingPostPlacement(vmCtx, vcClient.VimClient(), createArgs.ClusterMoRef, &createArgs.NetworkResults)
+		if err != nil {
+			return err
+		}
 
-	// TODO: Now fixup the createArgs.ConfigSpec. What a mess. Thanks NSX-T.
+		// Now that we have the backing resolved, re-zip the interfaces to update the ConfigSpec. What a mess.
+		err = vs.vmCreateGenConfigSpecZipNetworkInterfaces(vmCtx, createArgs)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -771,7 +775,7 @@ func (vs *vSphereVMProvider) vmCreateDoNetworking(
 
 	networkSpec := &vmCtx.VM.Spec.Network
 	if networkSpec.Disabled {
-		// No connected networking for this VM.
+		// No connected networking for this VM. Any EthCards will be removed later.
 		return nil
 	}
 
@@ -806,7 +810,7 @@ func (vs *vSphereVMProvider) vmCreateDoNetworking(
 		vs.k8sClient,
 		vcClient.VimClient(),
 		vcClient.Finder(),
-		nil, // Don't know the CCR yet (for NSX-T)
+		nil, // Don't know the CCR yet (needed to resolve backings for NSX-T)
 		interfaces)
 	if err != nil {
 		conditions.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionNetworkReady, "NotReady", err.Error())
@@ -891,7 +895,6 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecExtraConfig(
 		ecMap[k] = renderTemplateFn(k, v)
 	}
 
-	// TODO: Add util.HasPassthroughDevices() bool to avoid wasted work
 	hasPassthroughDevices := len(util.SelectVirtualPCIPassthrough(util.DevicesFromConfigSpec(createArgs.ConfigSpec))) > 0
 
 	if hasPassthroughDevices || createArgs.HasInstanceStorage {
@@ -909,10 +912,10 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecExtraConfig(
 		}
 	}
 
-	// The ConfigSpec's current ExtraConfig values take precedence over what was set here.
+	// The ConfigSpec's current ExtraConfig values (that came from the class) take precedence over what was set here.
 	createArgs.ConfigSpec.ExtraConfig = util.AppendNewExtraConfigValues(createArgs.ConfigSpec.ExtraConfig, ecMap)
 
-	// TODO: Do we still need to do anything with constants.VMOperatorV1Alpha1ExtraConfigKey?
+	// Leave constants.VMOperatorV1Alpha1ExtraConfigKey for the update path (if that's still even needed)
 
 	return nil
 }
@@ -922,9 +925,9 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecChangeBootDiskSize(
 	_ *VMCreateArgs) error {
 
 	if capacity := vmCtx.VM.Spec.Advanced.BootDiskCapacity; !capacity.IsZero() { //nolint
-		// TODO: How to we determine the DeviceKey for the DeviceChange entry? Do we have to crack the
-		// image/source, which is hard to do ATM for ContentLibrary OVF?
-		// Otherwise, punt on this for a placement consideration and resize the disk after VM create.
+		// TODO: How to we determine the DeviceKey for the DeviceChange entry? We probably have to
+		// crack the image/source, which is hard to do ATM. Otherwise, punt on this for a placement
+		// consideration and we'll resize the disk after VM create.
 	}
 
 	return nil
@@ -960,9 +963,9 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 
 		} else {
 			// This ConfigSpec Ethernet device does not have a corresponding entry in the VM Spec, so
-			// we won't have a backing for it. Remove it from the ConfigSpec since that is the easiest
-			// thing to do, since extra NICs can cause later complications around GOSC and other
-			// customizations. The downside with this is that if NIC is added to the VM Spec, it won't
+			// we won't ever have a backing for it. Remove it from the ConfigSpec since that is the
+			// easiest thing to do, since extra NICs can cause later complications around GOSC and other
+			// customizations. The downside with this is that if a NIC is added to the VM Spec, it won't
 			// have this config but the default. Revisit this later if we don't like that behavior.
 			unmatchedEthDevices = append(unmatchedEthDevices, idx-len(unmatchedEthDevices))
 		}
@@ -984,10 +987,12 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 			return err
 		}
 
-		createArgs.ConfigSpec.DeviceChange = append(createArgs.ConfigSpec.DeviceChange, &types.VirtualDeviceConfigSpec{
-			Operation: types.VirtualDeviceConfigSpecOperationAdd,
-			Device:    ethCardDev,
-		})
+		if ethCardDev != nil {
+			createArgs.ConfigSpec.DeviceChange = append(createArgs.ConfigSpec.DeviceChange, &types.VirtualDeviceConfigSpec{
+				Operation: types.VirtualDeviceConfigSpecOperationAdd,
+				Device:    ethCardDev,
+			})
+		}
 	}
 
 	return nil
@@ -1055,10 +1060,6 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 	updateArgs.BootstrapData.VAppData = vAppData
 	updateArgs.BootstrapData.VAppExData = vAppExData
 
-	// We're always ready - again - at this point since we've fetched the above objects. We really should
-	// not be touching this condition after creation but that is for another day.
-	// conditions.MarkTrue(vmCtx.VM, vmopv1.VirtualMachinePrereqReadyCondition)
-
 	if res := vmClass.Spec.Policies.Resources; !res.Requests.Cpu.IsZero() || !res.Limits.Cpu.IsZero() {
 		freq, err := vs.getOrComputeCPUMinFrequency(vmCtx)
 		if err != nil {
@@ -1089,7 +1090,7 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 
 		// The only use of this is for the global JSON_EXTRA_CONFIG to set the image name.
 		// The global extra config should only be set during first boot.
-		// BMV: We can just finally kill this with the demise of old gce2e?
+		// TODO: We can just finally kill this with the demise of old gce2e?
 		renderTemplateFn := func(name, text string) string {
 			t, err := template.New(name).Parse(text)
 			if err != nil {
@@ -1105,14 +1106,14 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 		for k, v := range vs.globalExtraConfig {
 			extraConfig[k] = renderTemplateFn(k, v)
 		}
+		updateArgs.ExtraConfig = extraConfig
 
 		// Enabling the defer-cloud-init extraConfig key for V1Alpha1Compatible images defers cloud-init from running on first boot
 		// and disables networking configurations by cloud-init. Therefore, only set the extraConfig key to enabled
 		// when the vmMetadata is nil or when the transport requested is not CloudInit.
-		if conditions.IsTrueFromConditions(vmImageStatus.Conditions, "VirtualMachineImageV1Alpha1Compatible" /*vmopv1.VirtualMachineImageV1Alpha1CompatibleCondition*/) {
-			updateArgs.VirtualMachineImageV1Alpha1Compatible = true
-		}
-		updateArgs.ExtraConfig = extraConfig
+		// TODO: Is this still actually needed?
+		updateArgs.VirtualMachineImageV1Alpha1Compatible =
+			conditions.IsTrueFromConditions(vmImageStatus.Conditions, "VirtualMachineImageV1Alpha1Compatible" /*vmopv1.VirtualMachineImageV1Alpha1CompatibleCondition*/)
 	}
 
 	updateArgs.ConfigSpec = virtualmachine.CreateConfigSpec(

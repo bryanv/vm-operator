@@ -31,7 +31,7 @@ func updateVirtualDiskDeviceChanges(
 
 		// Assume the first disk as the boot disk. We can make this smarter by
 		// looking at the disk path or whatever else later.
-		// TODO De-dupe this with resizeBootDiskDeviceChange() in the clone path.
+		// TODO: De-dupe this with resizeBootDiskDeviceChange() in the clone path.
 
 		newCapacityInBytes := capacity.Value()
 		if newCapacityInBytes < vmDisk.CapacityInBytes {

@@ -21,7 +21,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/topology"
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere/virtualmachine"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/virtualmachine"
 )
 
 var (
@@ -47,7 +47,7 @@ func UpdateStatus(
 		// NOTE: The properties must have been retrieved with at least vmStatusPropertiesSelector.
 		vmMO = &mo.VirtualMachine{}
 		if err := vcVM.Properties(vmCtx, vcVM.Reference(), vmStatusPropertiesSelector, vmMO); err != nil {
-			// TBD: Leave the current Status unchanged? Maybe have some condition for this?
+			// Leave the current Status unchanged for now.
 			return fmt.Errorf("failed to get VM properties for status update: %w", err)
 		}
 	}
@@ -148,7 +148,8 @@ func getGuestNetworkStatus(guestInfo *types.GuestInfo) *vmopv1.VirtualMachineNet
 func guestNicInfoToInterfaceStatus(idx int, guestNicInfo *types.GuestNicInfo) vmopv1.VirtualMachineNetworkInterfaceStatus {
 	status := vmopv1.VirtualMachineNetworkInterfaceStatus{}
 
-	status.Name = fmt.Sprintf("nic-%d-%d", idx, guestNicInfo.DeviceConfigId) // TODO: What name exactly? CRD name may be the most useful but hard to line that up
+	// TODO: What name exactly? The CRD name may be the most useful here but hard to line that up.
+	status.Name = fmt.Sprintf("nic-%d-%d", idx, guestNicInfo.DeviceConfigId)
 	status.IP.MACAddr = guestNicInfo.MacAddress
 
 	if guestIPConfig := guestNicInfo.IpConfig; guestIPConfig != nil {

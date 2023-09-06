@@ -80,6 +80,8 @@ func GetVirtualMachineImageSpecAndStatus(
 		}
 
 		if err != nil {
+			// Don't use the k8s error as-is as we don't know to prefer the NS or cluster scoped error message.
+			// This is the same error/message that the prior code used.
 			reason, msg := "NotFound", fmt.Sprintf("Failed to get the VM's image: %s", key.Name)
 			conditions.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionImageReady, reason, msg)
 			return nil, nil, nil, fmt.Errorf("%s: %w", msg, err)

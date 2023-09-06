@@ -33,6 +33,11 @@ import (
 
 type NetworkInterfaceResults struct {
 	Results []NetworkInterfaceResult
+
+	// NeedCCRBacking denoted that the results has a nil backing because the CCR is required
+	// to resolve the correct backing. This applies to NSX-T, and ResolveNCPBackingPostPlacement()
+	// should be called once the CCR is known.
+	NeedCCRBacking bool
 }
 
 type NetworkInterfaceResult struct {
@@ -72,8 +77,8 @@ const (
 )
 
 var (
-	// RetryTimeout is var so tests can change it, until we get rid of the poll.
-	RetryTimeout = 1 * time.Second
+	// RetryTimeout is var so tests can change it to shorten tests until we get rid of the poll.
+	RetryTimeout = 15 * time.Second
 )
 
 // CreateAndWaitForNetworkInterfaces creates the appropriate CRs for the VM's network
@@ -114,6 +119,7 @@ func CreateAndWaitForNetworkInterfaces(
 	}
 
 	results := make([]NetworkInterfaceResult, 0, len(interfaces))
+	needCCRBacking := false
 
 	for i := range interfaces {
 		interfaceSpec := &interfaces[i]
@@ -137,11 +143,15 @@ func CreateAndWaitForNetworkInterfaces(
 				fmt.Errorf("network interface %q error: %w", interfaceSpec.Name, err)
 		}
 
+		needCCRBacking = needCCRBacking || result.Backing == nil
 		applyInterfaceSpecToResult(interfaceSpec, result)
 		results = append(results, *result)
 	}
 
-	return NetworkInterfaceResults{Results: results}, nil
+	return NetworkInterfaceResults{
+		Results:        results,
+		NeedCCRBacking: needCCRBacking,
+	}, nil
 }
 
 // applyInterfaceSpecToResult applies the InterfaceSpec to results. Much of the InterfaceSpec - like DHCP -
@@ -462,7 +472,7 @@ func vnetIfToResult(
 	if ipAddress := vnetIf.Status.IPAddresses; len(ipAddress) == 0 || (len(ipAddress) == 1 && ipAddress[0].IP == "") {
 		// NCP's way of saying DHCP.
 	} else {
-		// Historically, we only grabbed the first entry and assume it is always IPv4 (!!!). Try to do better now.
+		// Historically, we only grabbed the first entry and assume it is always IPv4 (!!!). Try to do slightly better.
 		for _, ipAddr := range ipAddress {
 			if ipAddr.IP == "" {
 				continue
@@ -522,6 +532,7 @@ func waitForReadyNCPNetworkInterface(
 					return nil, fmt.Errorf("network interface is not ready: %s - %s", cond.Reason, cond.Message)
 				}
 			}
+			// TODO: NCP also has an annotation but that usually doesn't provide very useful details.
 			return nil, fmt.Errorf("network interface is not ready yet")
 		}
 
@@ -536,7 +547,7 @@ func waitForReadyNCPNetworkInterface(
 }
 
 // ipCIDRNotation takes the IP and subnet mask and returns the IP in CIDR notation.
-// TODO: Better error checking. Nail down exactly how we want handke IPv4inV6 addresses.
+// TODO: Better error checking. Nail down exactly how we want handle IPv4inV6 addresses.
 func ipCIDRNotation(ip string, mask string, isIPv4 bool) string {
 	if isIPv4 {
 		ipNet := net.IPNet{
@@ -564,7 +575,11 @@ func CreateDefaultEthCard(
 	ctx goctx.Context,
 	result *NetworkInterfaceResult) (vimtypes.BaseVirtualDevice, error) {
 
-	// TODO: Need to handle when we don't have a Backing yet.
+	// We may not have the backing yet if this is NSX-T. The backing will be resolved after placement
+	// when we'll know the CCR, so we can resolve the correct DVPG.
+	if result.Backing == nil {
+		return nil, nil
+	}
 
 	backing, err := result.Backing.EthernetCardBackingInfo(ctx)
 	if err != nil {
@@ -582,7 +597,7 @@ func CreateDefaultEthCard(
 		ethCard.MacAddress = result.MacAddress
 		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeManual)
 	} else {
-		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeGenerated) // TODO: Should prb be TypeAssigned
+		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeGenerated) // TODO: Or TypeAssigned?
 	}
 
 	return dev, nil
@@ -595,16 +610,7 @@ func ApplyInterfaceResultToVirtualEthCard(
 	ethCard *vimtypes.VirtualEthernetCard,
 	result *NetworkInterfaceResult) error {
 
-	// TODO: Need to handle when we don't have a Backing yet.
-
-	backing, err := result.Backing.EthernetCardBackingInfo(ctx)
-	if err != nil {
-		return fmt.Errorf("unable to get ethernet card backing info for network %v: %w", result.NetworkID, err)
-	}
-
-	ethCard.Backing = backing
 	ethCard.ExternalId = result.ExternalID
-
 	if result.MacAddress != "" {
 		// BMV: Too much confusion and possible breakage if we don't honor the provider MAC.
 		// Otherwise, IMO a foot gun and will break on setups that enforce MAC filtering.
@@ -615,6 +621,16 @@ func ApplyInterfaceResultToVirtualEthCard(
 		// this is left as-is.
 		// ethCard.MacAddress = ""
 		// ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeGenerated)
+	}
+
+	// We may not have the backing yet if this is NSX-T. The backing will be resolved after placement
+	// when we'll know the CCR, so we can resolve the correct DVPG.
+	if result.Backing != nil {
+		backing, err := result.Backing.EthernetCardBackingInfo(ctx)
+		if err != nil {
+			return fmt.Errorf("unable to get ethernet card backing info for network %v: %w", result.NetworkID, err)
+		}
+		ethCard.Backing = backing
 	}
 
 	return nil

@@ -16,40 +16,54 @@ import (
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 )
 
-// ResolveNCPBackingPostPlacement fixes up the results backing for NSX-T networks where we did not
-// know the CCR until after placement. This needs to be called if CreateAndWaitForNetworkInterfaces()
-// was called with a nil clusterMoRef.
-func ResolveNCPBackingPostPlacement(
+// ResolveBackingPostPlacement fixes up the backings where we did not know the CCR until after
+// placement. This should be called if CreateAndWaitForNetworkInterfaces() was called with a nil
+// clusterMoRef. Returns true if a backing was resolved, so the ConfigSpec needs to be updated.
+func ResolveBackingPostPlacement(
 	ctx goctx.Context,
 	vimClient *vim25.Client,
 	clusterMoRef vimtypes.ManagedObjectReference,
-	results *NetworkInterfaceResults) error {
+	results *NetworkInterfaceResults) (bool, error) {
 
-	if networkType := lib.GetNetworkProviderType(); networkType == "" {
-		return fmt.Errorf("no network provider set")
-	} else if networkType != lib.NetworkProviderTypeNSXT {
-		return nil
-	} else if !results.NeedCCRBacking {
-		return nil
+	if len(results.Results) == 0 {
+		return false, nil
+	}
+
+	networkType := lib.GetNetworkProviderType()
+	if networkType == "" {
+		return false, fmt.Errorf("no network provider set")
 	}
 
 	ccr := object.NewClusterComputeResource(vimClient, clusterMoRef)
+	fixedUp := false
 
 	for idx := range results.Results {
 		if results.Results[idx].Backing != nil {
 			continue
 		}
 
-		backing, err := searchNsxtNetworkReference(ctx, ccr, results.Results[idx].NetworkID)
-		if err != nil {
-			return fmt.Errorf("post placement NSX-T backing fixup failed: %w", err)
+		var backing object.NetworkReference
+		var err error
+
+		switch networkType {
+		case lib.NetworkProviderTypeNSXT:
+			backing, err = searchNsxtNetworkReference(ctx, ccr, results.Results[idx].NetworkID)
+			if err != nil {
+				err = fmt.Errorf("post placement NSX-T backing fixup failed: %w", err)
+			}
+		default:
+			err = fmt.Errorf("only NSX-T networks are expected to need post placement backing fixup")
 		}
 
+		if err != nil {
+			return false, err
+		}
+
+		fixedUp = true
 		results.Results[idx].Backing = backing
 	}
 
-	results.NeedCCRBacking = false
-	return nil
+	return fixedUp, nil
 }
 
 // searchNsxtNetworkReference takes in NSX-T LogicalSwitchUUID and returns the reference of the network.

@@ -29,7 +29,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", func() {
 
 	var (
 		testConfig builder.VCSimTestConfig
-		ctx        *builder.TestContextForVCSimA2
+		ctx        *builder.TestContextForVCSim
 
 		vmCtx          context.VirtualMachineContextA2
 		vm             *vmopv1.VirtualMachine
@@ -40,7 +40,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", func() {
 	)
 
 	BeforeEach(func() {
-		testConfig = builder.VCSimTestConfig{}
+		testConfig = builder.VCSimTestConfig{WithV1A2: true}
 
 		vm = &vmopv1.VirtualMachine{
 			ObjectMeta: metav1.ObjectMeta{
@@ -59,7 +59,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", func() {
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(testConfig)
+		ctx = suite.NewTestContextForVCSim(testConfig)
 
 		results, err = network.CreateAndWaitForNetworkInterfaces(
 			vmCtx,

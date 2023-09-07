@@ -4,28 +4,28 @@
 package virtualmachine
 
 import (
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/types"
 
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
+	vmutil "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/vm"
 )
 
 func DeleteVirtualMachine(
 	vmCtx context.VirtualMachineContextA2,
 	vcVM *object.VirtualMachine) error {
 
-	state, err := vcVM.PowerState(vmCtx)
-	if err != nil {
-		return err
-	}
+	if _, err := vmutil.SetAndWaitOnPowerState(
+		logr.NewContext(vmCtx, vmCtx.Logger),
+		vcVM.Client(),
+		vmutil.ManagedObjectFromObject(vcVM),
+		false,
+		types.VirtualMachinePowerStatePoweredOff,
+		vmutil.ParsePowerOpMode(string(vmCtx.VM.Spec.PowerOffMode))); err != nil {
 
-	// Only a powered off VM can be destroyed.
-	if state != types.VirtualMachinePowerStatePoweredOff {
-		vmCtx.Logger.Info("Powering off VM prior to destroy", "currentState", state)
-		if err := ChangePowerState(vmCtx, vcVM, types.VirtualMachinePowerStatePoweredOff); err != nil {
-			return err
-		}
+		return err
 	}
 
 	t, err := vcVM.Destroy(vmCtx)

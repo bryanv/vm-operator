@@ -67,7 +67,7 @@ func vcSimPlacement() {
 
 	var (
 		initObjects []client.Object
-		ctx         *builder.TestContextForVCSimA2
+		ctx         *builder.TestContextForVCSim
 		nsInfo      builder.WorkloadNamespaceInfo
 		testConfig  builder.VCSimTestConfig
 
@@ -77,7 +77,7 @@ func vcSimPlacement() {
 	)
 
 	BeforeEach(func() {
-		testConfig = builder.VCSimTestConfig{}
+		testConfig = builder.VCSimTestConfig{WithV1A2: true}
 
 		vm = builder.DummyVirtualMachine()
 		vm.Name = "placement-test"
@@ -89,7 +89,7 @@ func vcSimPlacement() {
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(testConfig, initObjects...)
+		ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
 		nsInfo = ctx.CreateWorkloadNamespace()
 
 		vm.Namespace = nsInfo.Namespace
@@ -182,7 +182,7 @@ func vcSimPlacement() {
 
 		Context("VM is in child RP via ResourcePolicy", func() {
 			It("returns success", func() {
-				resourcePolicy, _ := ctx.CreateVirtualMachineSetResourcePolicy("my-child-rp", nsInfo)
+				resourcePolicy, _ := ctx.CreateVirtualMachineSetResourcePolicyA2("my-child-rp", nsInfo)
 				Expect(resourcePolicy).ToNot(BeNil())
 				childRPName := resourcePolicy.Spec.ResourcePool.Name
 				Expect(childRPName).ToNot(BeEmpty())
@@ -258,7 +258,7 @@ func vcSimPlacement() {
 
 			Context("VM is in child RP via ResourcePolicy", func() {
 				It("returns success", func() {
-					resourcePolicy, _ := ctx.CreateVirtualMachineSetResourcePolicy("my-child-rp", nsInfo)
+					resourcePolicy, _ := ctx.CreateVirtualMachineSetResourcePolicyA2("my-child-rp", nsInfo)
 					Expect(resourcePolicy).ToNot(BeNil())
 					childRPName := resourcePolicy.Spec.ResourcePool.Name
 					Expect(childRPName).ToNot(BeEmpty())

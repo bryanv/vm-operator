@@ -21,7 +21,7 @@ import (
 func publishTests() {
 
 	var (
-		ctx      *builder.TestContextForVCSimA2
+		ctx      *builder.TestContextForVCSim
 		vcVM     *object.VirtualMachine
 		vm       *vmopv1.VirtualMachine
 		cl       *imgregv1a1.ContentLibrary
@@ -31,7 +31,7 @@ func publishTests() {
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{WithContentLibrary: true})
+		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{WithV1A2: true, WithContentLibrary: true})
 
 		var err error
 		vcVM, err = ctx.Finder.VirtualMachine(ctx, "DC0_C0_RP0_VM0")

@@ -51,17 +51,17 @@ func vmTests() {
 	var (
 		initObjects []client.Object
 		testConfig  builder.VCSimTestConfig
-		ctx         *builder.TestContextForVCSimA2
+		ctx         *builder.TestContextForVCSim
 		vmProvider  vmprovider.VirtualMachineProviderInterfaceA2
 		nsInfo      builder.WorkloadNamespaceInfo
 	)
 
 	BeforeEach(func() {
-		testConfig = builder.VCSimTestConfig{}
+		testConfig = builder.VCSimTestConfig{WithV1A2: true}
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(testConfig, initObjects...)
+		ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
 		ctx.Context = goctx.WithValue(ctx.Context, context.MaxDeployThreadsContextKey, 1)
 		vmProvider = vsphere.NewVSphereVMProviderFromClient(ctx.Client, ctx.Recorder)
 		nsInfo = ctx.CreateWorkloadNamespace()
@@ -128,7 +128,7 @@ func vmTests() {
 		})
 
 		createOrUpdateAndGetVcVM := func(
-			ctx *builder.TestContextForVCSimA2,
+			ctx *builder.TestContextForVCSim,
 			vm *vmopv1.VirtualMachine) (*object.VirtualMachine, error) {
 
 			err := vmProvider.CreateOrUpdateVirtualMachine(ctx, vm)
@@ -151,6 +151,7 @@ func vmTests() {
 			)
 
 			BeforeEach(func() {
+				testConfig.WithNetworkEnv = builder.NetworkEnvNamed
 				testConfig.WithVMClassAsConfigDaynDate = true
 
 				ethCard = types.VirtualEthernetCard{
@@ -722,6 +723,231 @@ func vmTests() {
 					Expect(dev.Key).ToNot(Equal(int32(-42)))
 				})
 			})
+
+			Context("VM Class Config does not specify a hardware version", func() {
+
+				Context("VM Class has vGPU and/or DDPIO devices", func() {
+					BeforeEach(func() {
+						// Create the ConfigSpec with a GPU and a DDPIO device.
+						configSpec = &types.VirtualMachineConfigSpec{
+							Name: "dummy-VM",
+							DeviceChange: []types.BaseVirtualDeviceConfigSpec{
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualPCIPassthrough{
+										VirtualDevice: types.VirtualDevice{
+											Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
+												Vgpu: "profile-from-configspec",
+											},
+										},
+									},
+								},
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualPCIPassthrough{
+										VirtualDevice: types.VirtualDevice{
+											Backing: &types.VirtualPCIPassthroughDynamicBackingInfo{
+												AllowedDevice: []types.VirtualPCIPassthroughAllowedDevice{
+													{
+														VendorId: 52,
+														DeviceId: 53,
+													},
+												},
+												CustomLabel: "label-from-configspec",
+											},
+										},
+									},
+								},
+							},
+						}
+					})
+
+					It("creates a VM with a hardware version minimum supported for PCI devices", func() {
+						var o mo.VirtualMachine
+						Expect(vcVM.Properties(ctx, vcVM.Reference(), nil, &o)).To(Succeed())
+						Expect(o.Config.Version).To(Equal(fmt.Sprintf("vmx-%d", constants.MinSupportedHWVersionForPCIPassthruDevices)))
+					})
+				})
+
+				Context("VM Class has vGPU and/or DDPIO devices and VM spec has a PVC", func() {
+					BeforeEach(func() {
+						// Create the ConfigSpec with a GPU and a DDPIO device.
+						configSpec = &types.VirtualMachineConfigSpec{
+							Name: "dummy-VM",
+							DeviceChange: []types.BaseVirtualDeviceConfigSpec{
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualPCIPassthrough{
+										VirtualDevice: types.VirtualDevice{
+											Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
+												Vgpu: "profile-from-configspec",
+											},
+										},
+									},
+								},
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualPCIPassthrough{
+										VirtualDevice: types.VirtualDevice{
+											Backing: &types.VirtualPCIPassthroughDynamicBackingInfo{
+												AllowedDevice: []types.VirtualPCIPassthroughAllowedDevice{
+													{
+														VendorId: 52,
+														DeviceId: 53,
+													},
+												},
+												CustomLabel: "label-from-configspec",
+											},
+										},
+									},
+								},
+							},
+						}
+
+						vm.Spec.Volumes = []vmopv1.VirtualMachineVolume{
+							{
+								Name: "dummy-vol",
+								VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+									PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+										PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+											ClaimName: "pvc-claim-1",
+										},
+									},
+								},
+							},
+						}
+
+						vm.Status.Volumes = []vmopv1.VirtualMachineVolumeStatus{
+							{
+								Name:     "dummy-vol",
+								Attached: true,
+							},
+						}
+					})
+
+					It("creates a VM with a hardware version minimum supported for PCI devices", func() {
+						var o mo.VirtualMachine
+						Expect(vcVM.Properties(ctx, vcVM.Reference(), nil, &o)).To(Succeed())
+						Expect(o.Config.Version).To(Equal(fmt.Sprintf("vmx-%d", constants.MinSupportedHWVersionForPCIPassthruDevices)))
+					})
+				})
+
+				Context("VM spec has a PVC", func() {
+					BeforeEach(func() {
+						vm.Spec.Volumes = []vmopv1.VirtualMachineVolume{
+							{
+								Name: "dummy-vol",
+								VirtualMachineVolumeSource: vmopv1.VirtualMachineVolumeSource{
+									PersistentVolumeClaim: &vmopv1.PersistentVolumeClaimVolumeSource{
+										PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+											ClaimName: "pvc-claim-1",
+										},
+									},
+								},
+							},
+						}
+
+						vm.Status.Volumes = []vmopv1.VirtualMachineVolumeStatus{
+							{
+								Name:     "dummy-vol",
+								Attached: true,
+							},
+						}
+					})
+
+					It("creates a VM with a hardware version minimum supported for PVCs", func() {
+						var o mo.VirtualMachine
+						Expect(vcVM.Properties(ctx, vcVM.Reference(), nil, &o)).To(Succeed())
+						Expect(o.Config.Version).To(Equal(fmt.Sprintf("vmx-%d", constants.MinSupportedHWVersionForPVC)))
+					})
+				})
+			})
+
+			Context("VMClassAsConfig FSS is Enabled", func() {
+
+				BeforeEach(func() {
+					testConfig.WithVMClassAsConfig = true
+				})
+
+				When("configSpec has disk and disk controllers", func() {
+					BeforeEach(func() {
+						configSpec = &types.VirtualMachineConfigSpec{
+							Name: "dummy-VM",
+							DeviceChange: []types.BaseVirtualDeviceConfigSpec{
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualSATAController{
+										VirtualController: types.VirtualController{
+											VirtualDevice: types.VirtualDevice{
+												Key: 101,
+											},
+										},
+									},
+								},
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualSCSIController{
+										VirtualController: types.VirtualController{
+											VirtualDevice: types.VirtualDevice{
+												Key: 103,
+											},
+										},
+									},
+								},
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualNVMEController{
+										VirtualController: types.VirtualController{
+											VirtualDevice: types.VirtualDevice{
+												Key: 104,
+											},
+										},
+									},
+								},
+								&types.VirtualDeviceConfigSpec{
+									Operation: types.VirtualDeviceConfigSpecOperationAdd,
+									Device: &types.VirtualDisk{
+										CapacityInBytes: 1024,
+										VirtualDevice: types.VirtualDevice{
+											Key: -42,
+											Backing: &types.VirtualDiskFlatVer2BackingInfo{
+												ThinProvisioned: pointer.Bool(true),
+											},
+										},
+									},
+								},
+							},
+						}
+					})
+
+					It("creates a VM with disk controllers", func() {
+						var o mo.VirtualMachine
+						Expect(vcVM.Properties(ctx, vcVM.Reference(), nil, &o)).To(Succeed())
+
+						devList := object.VirtualDeviceList(o.Config.Hardware.Device)
+						satacont := devList.SelectByType(&types.VirtualSATAController{})
+						Expect(satacont).To(HaveLen(1))
+						dev := satacont[0].GetVirtualDevice()
+						Expect(dev.Key).To(Equal(int32(101)))
+
+						scsicont := devList.SelectByType(&types.VirtualSCSIController{})
+						Expect(scsicont).To(HaveLen(1))
+						dev = scsicont[0].GetVirtualDevice()
+						Expect(dev.Key).To(Equal(int32(103)))
+
+						nvmecont := devList.SelectByType(&types.VirtualNVMEController{})
+						Expect(nvmecont).To(HaveLen(1))
+						dev = nvmecont[0].GetVirtualDevice()
+						Expect(dev.Key).To(Equal(int32(104)))
+
+						// only preexisting disk should be present on VM -- len: 1
+						disks := devList.SelectByType(&types.VirtualDisk{})
+						Expect(disks).To(HaveLen(1))
+						dev1 := disks[0].GetVirtualDevice()
+						Expect(dev1.Key).ToNot(Equal(int32(-42)))
+					})
+				})
+			})
 		})
 
 		Context("CreateOrUpdate VM", func() {
@@ -743,7 +969,6 @@ func vmTests() {
 					Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionImageReady)).To(BeTrue())
 					Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionBootstrapReady)).To(BeTrue())
 					Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionStorageReady)).To(BeTrue())
-
 					Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionCreated)).To(BeTrue())
 				})
 
@@ -839,102 +1064,6 @@ func vmTests() {
 				})
 			})
 
-			/*
-				Context("Prereq args and Conditions", func() {
-					readyCondition := *conditions.TrueCondition(vmopv1.VirtualMachinePrereqReadyCondition)
-
-					Context("VM is poweredOn", func() {
-						It("Returns success even if the prereq args are missing", func() {
-							_, err := createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).ToNot(HaveOccurred())
-
-							c := conditions.Get(vm, vmopv1.VirtualMachinePrereqReadyCondition)
-							Expect(c).ToNot(BeNil())
-							Expect(*c).To(conditions.MatchCondition(readyCondition))
-
-							_, err = createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).NotTo(HaveOccurred())
-
-							c = conditions.Get(vm, vmopv1.VirtualMachinePrereqReadyCondition)
-							Expect(c).ToNot(BeNil())
-							Expect(*c).To(conditions.MatchCondition(readyCondition))
-						})
-					})
-
-					Context("VM is in poweredOff to poweredOn transition", func() {
-						It("Returns success if VM image is missing and this VM is not first boot", func() {
-							_, err := createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).ToNot(HaveOccurred())
-
-							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
-							_, err = createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).ToNot(HaveOccurred())
-
-							Expect(ctx.Client.DeleteAllOf(ctx, &vmopv1.VirtualMachineImage{})).To(Succeed())
-
-							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
-							_, err = createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).NotTo(HaveOccurred())
-
-							c := conditions.Get(vm, vmopv1.VirtualMachinePrereqReadyCondition)
-							Expect(c).ToNot(BeNil())
-							Expect(*c).To(conditions.MatchCondition(readyCondition))
-						})
-
-						It("Returns error if VM image is missing and this VM is first boot", func() {
-							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
-							_, err := createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).ToNot(HaveOccurred())
-
-							Expect(ctx.Client.DeleteAllOf(ctx, &vmopv1.VirtualMachineImage{})).To(Succeed())
-
-							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
-							_, err = createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).To(HaveOccurred())
-
-							c := conditions.Get(vm, vmopv1.VirtualMachinePrereqReadyCondition)
-							Expect(c).ToNot(BeNil())
-							Expect(c.Status).To(Equal(corev1.ConditionFalse))
-						})
-
-						It("Sets expected PrereqReady condition", func() {
-							_, err := createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).ToNot(HaveOccurred())
-
-							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
-							_, err = createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).ToNot(HaveOccurred())
-
-							c := conditions.Get(vm, vmopv1.VirtualMachinePrereqReadyCondition)
-							Expect(c).ToNot(BeNil())
-							Expect(*c).To(conditions.MatchCondition(readyCondition))
-
-							// Use the class binding removal to toggle the condition state.
-							Expect(ctx.Client.DeleteAllOf(ctx, &vmopv1.VirtualMachineClassBinding{})).To(Succeed())
-
-							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
-							_, err = createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).To(HaveOccurred())
-
-							c = conditions.Get(vm, vmopv1.VirtualMachinePrereqReadyCondition)
-							Expect(c).ToNot(BeNil())
-							Expect(c.Status).To(Equal(corev1.ConditionFalse))
-
-							// Recreate the class binding to put things back.
-							vmClassBinding := builder.DummyVirtualMachineClassBinding(vm.Spec.ClassName, vm.Namespace)
-							Expect(ctx.Client.Create(ctx, vmClassBinding)).To(Succeed())
-
-							_, err = createOrUpdateAndGetVcVM(ctx, vm)
-							Expect(err).ToNot(HaveOccurred())
-
-							c = conditions.Get(vm, vmopv1.VirtualMachinePrereqReadyCondition)
-							Expect(c).ToNot(BeNil())
-							Expect(*c).To(conditions.MatchCondition(readyCondition))
-						})
-					})
-				})
-			*/
-
 			Context("Without Storage Class", func() {
 				BeforeEach(func() {
 					testConfig.WithoutStorageClass = true
@@ -1003,10 +1132,11 @@ func vmTests() {
 					})
 
 					By("has expected hardware config", func() {
-						// TODO: NumCPU is correct "2" in the CloneSpec.Config but ends up with 1 CPU from source VM.
-						// Ditto for MemorySize.
-						// Expect(o.Summary.Config.NumCpu).To(BeEquivalentTo(vmClass.Spec.Hardware.Cpus))
-						// Expect(o.Summary.Config.MemorySizeMB).To(BeEquivalentTo(vmClass.Spec.Hardware.Memory.Value() / 1024 / 1024))
+						// TODO: Fix vcsim behavior: NumCPU is correct "2" in the CloneSpec.Config but ends up
+						// with 1 CPU from source VM. Ditto for MemorySize. These assertions are only working
+						// because the state is on so we reconfigure the VM after it is created.
+						Expect(o.Summary.Config.NumCpu).To(BeEquivalentTo(vmClass.Spec.Hardware.Cpus))
+						Expect(o.Summary.Config.MemorySizeMB).To(BeEquivalentTo(vmClass.Spec.Hardware.Memory.Value() / 1024 / 1024))
 					})
 
 					// TODO: More assertions!
@@ -1646,7 +1776,7 @@ func vmTests() {
 
 // getVMHomeDisk gets the VM's "home" disk. It makes some assumptions about the backing and disk name.
 func getVMHomeDisk(
-	ctx *builder.TestContextForVCSimA2,
+	ctx *builder.TestContextForVCSim,
 	vcVM *object.VirtualMachine,
 	o mo.VirtualMachine) (*types.VirtualDisk, *types.VirtualDiskFlatVer2BackingInfo) {
 
@@ -1671,7 +1801,7 @@ func getVMHomeDisk(
 
 //nolint:unparam
 func getDVPG(
-	ctx *builder.TestContextForVCSimA2,
+	ctx *builder.TestContextForVCSim,
 	path string) (object.NetworkReference, *object.DistributedVirtualPortgroup) {
 
 	network, err := ctx.Finder.Network(ctx, path)

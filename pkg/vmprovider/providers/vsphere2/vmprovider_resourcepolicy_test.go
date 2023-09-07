@@ -43,18 +43,18 @@ func resourcePolicyTests() {
 
 		var (
 			initObjects []client.Object
-			ctx         *builder.TestContextForVCSimA2
+			ctx         *builder.TestContextForVCSim
 			nsInfo      builder.WorkloadNamespaceInfo
 			testConfig  builder.VCSimTestConfig
 			vmProvider  vmprovider.VirtualMachineProviderInterfaceA2
 		)
 
 		BeforeEach(func() {
-			testConfig = builder.VCSimTestConfig{}
+			testConfig = builder.VCSimTestConfig{WithV1A2: true}
 		})
 
 		JustBeforeEach(func() {
-			ctx = suite.NewTestContextForVCSimA2(testConfig, initObjects...)
+			ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
 			vmProvider = vsphere.NewVSphereVMProviderFromClient(ctx.Client, ctx.Recorder)
 
 			nsInfo = ctx.CreateWorkloadNamespace()

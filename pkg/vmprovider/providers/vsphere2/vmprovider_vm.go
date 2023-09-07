@@ -500,13 +500,18 @@ func (vs *vSphereVMProvider) vmCreateFixupConfigSpec(
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
-	if createArgs.NetworkResults.NeedCCRBacking {
-		err := network.ResolveNCPBackingPostPlacement(vmCtx, vcClient.VimClient(), createArgs.ClusterMoRef, &createArgs.NetworkResults)
-		if err != nil {
-			return err
-		}
+	fixedUp, err := network.ResolveBackingPostPlacement(
+		vmCtx,
+		vcClient.VimClient(),
+		createArgs.ClusterMoRef,
+		&createArgs.NetworkResults)
+	if err != nil {
+		return err
+	}
 
-		// Now that we have the backing resolved, re-zip the interfaces to update the ConfigSpec. What a mess.
+	if fixedUp {
+		// Now that the backing is resolved for this CCR, re-zip to update the ConfigSpec.
+		// What a mess. Thanks NSX-T.
 		err = vs.vmCreateGenConfigSpecZipNetworkInterfaces(vmCtx, createArgs)
 		if err != nil {
 			return err
@@ -629,6 +634,8 @@ func (vs *vSphereVMProvider) vmCreateGetPrereqs(
 		return nil, k8serrors.NewAggregate(prereqErrs)
 	}
 
+	// Note that once the VM is created, it is hard for us to later resolve what image was used,
+	// since a NS or cluster scoped image could have been created or deleted.
 	vmCtx.VM.Status.Image = &common.LocalObjectRef{
 		APIVersion: createArgs.ImageObj.GetObjectKind().GroupVersionKind().Version,
 		Kind:       createArgs.ImageObj.GetObjectKind().GroupVersionKind().Kind,
@@ -827,8 +834,11 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 	vmCtx context.VirtualMachineContextA2,
 	createArgs *VMCreateArgs) error {
 
+	// TODO: This is a partial dupe of what's done in the update path in the remaining Session code. I got
+	// tired of trying to keep that in sync so we get to live with a frankenstein thing longer.
+
 	var vmClassConfigSpec *types.VirtualMachineConfigSpec
-	if rawConfigSpec := createArgs.VMClass.Spec.ConfigSpec; len(rawConfigSpec) > 0 {
+	if rawConfigSpec := createArgs.VMClass.Spec.ConfigSpec; lib.IsVMClassAsConfigFSSDaynDateEnabled() && len(rawConfigSpec) > 0 {
 		configSpec, err := GetVMClassConfigSpec(rawConfigSpec)
 		if err != nil {
 			return err
@@ -853,6 +863,19 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 		&createArgs.VMClass.Spec,
 		minCPUFreq,
 		createArgs.ImageStatus.Firmware)
+
+	// TODO: This should be in CreateConfigSpec()
+	if createArgs.ConfigSpec.Version == "" {
+		imageVer := int32(0)
+		if createArgs.ImageStatus.HardwareVersion != nil {
+			imageVer = *createArgs.ImageStatus.HardwareVersion
+		}
+
+		version := HardwareVersionForPVCandPCIDevices(imageVer, createArgs.ConfigSpec, HasPVC(vmCtx.VM.Spec))
+		if version != 0 {
+			createArgs.ConfigSpec.Version = fmt.Sprintf("vmx-%d", version)
+		}
+	}
 
 	err := vs.vmCreateGenConfigSpecExtraConfig(vmCtx, createArgs)
 	if err != nil {
@@ -880,6 +903,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecExtraConfig(
 
 	// The only use of this template is for the JSON_EXTRA_CONFIG that is set in gce2e env
 	// to populate {{.ImageName }} so vcsim will create a container for the VM.
+	// BMV: This should be removable now that vcsim gce2e is gone.
 	renderTemplateFn := func(name, text string) string {
 		t, err := template.New(name).Parse(text)
 		if err != nil {
@@ -924,11 +948,14 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecChangeBootDiskSize(
 	vmCtx context.VirtualMachineContextA2,
 	_ *VMCreateArgs) error {
 
-	if capacity := vmCtx.VM.Spec.Advanced.BootDiskCapacity; !capacity.IsZero() { //nolint
-		// TODO: How to we determine the DeviceKey for the DeviceChange entry? We probably have to
-		// crack the image/source, which is hard to do ATM. Otherwise, punt on this for a placement
-		// consideration and we'll resize the disk after VM create.
+	capacity := vmCtx.VM.Spec.Advanced.BootDiskCapacity
+	if capacity.IsZero() {
+		return nil
 	}
+
+	// TODO: How to we determine the DeviceKey for the DeviceChange entry? We probably have to
+	// crack the image/source, which is hard to do ATM. Punt on this for a placement consideration
+	// and we'll resize the boot (first) disk after VM create.
 
 	return nil
 }
@@ -962,11 +989,11 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 			resultsIdx++
 
 		} else {
-			// This ConfigSpec Ethernet device does not have a corresponding entry in the VM Spec, so
-			// we won't ever have a backing for it. Remove it from the ConfigSpec since that is the
-			// easiest thing to do, since extra NICs can cause later complications around GOSC and other
-			// customizations. The downside with this is that if a NIC is added to the VM Spec, it won't
-			// have this config but the default. Revisit this later if we don't like that behavior.
+			// This ConfigSpec Ethernet device does not have a corresponding entry in the VM Spec, so we
+			// won't ever have a backing for it. Remove it from the ConfigSpec since that is the easiest
+			// thing to do, since extra NICs can cause later complications around GOSC and other customizations.
+			// The downside with this is that if a NIC is added to the VM Spec, it won't necessarily have this
+			// config but the default. Revisit this later if we don't like that behavior.
 			unmatchedEthDevices = append(unmatchedEthDevices, idx-len(unmatchedEthDevices))
 		}
 	}
@@ -987,6 +1014,8 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 			return err
 		}
 
+		// May not have the backing yet (NSX-T). We come back through here after placement once we
+		// know the backing.
 		if ethCardDev != nil {
 			createArgs.ConfigSpec.DeviceChange = append(createArgs.ConfigSpec.DeviceChange, &types.VirtualDeviceConfigSpec{
 				Operation: types.VirtualDeviceConfigSpecOperationAdd,

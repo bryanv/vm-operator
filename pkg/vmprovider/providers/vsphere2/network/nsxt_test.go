@@ -11,24 +11,25 @@ import (
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
 
-var _ = Describe("ResolveNCPBackingPostPlacement", func() {
+var _ = Describe("ResolveBackingPostPlacement", func() {
 
 	var (
 		testConfig builder.VCSimTestConfig
-		ctx        *builder.TestContextForVCSimA2
+		ctx        *builder.TestContextForVCSim
 
 		results *network.NetworkInterfaceResults
+		fixedUp bool
 		err     error
 	)
 
 	BeforeEach(func() {
-		testConfig = builder.VCSimTestConfig{}
+		testConfig = builder.VCSimTestConfig{WithV1A2: true}
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(testConfig)
+		ctx = suite.NewTestContextForVCSim(testConfig)
 
-		err = network.ResolveNCPBackingPostPlacement(
+		fixedUp, err = network.ResolveBackingPostPlacement(
 			ctx,
 			ctx.VCClient.Client,
 			ctx.GetSingleClusterCompute().Reference(),
@@ -57,6 +58,7 @@ var _ = Describe("ResolveNCPBackingPostPlacement", func() {
 
 		It("returns success", func() {
 			Expect(err).ToNot(HaveOccurred())
+			Expect(fixedUp).To(BeTrue())
 
 			Expect(results.Results).To(HaveLen(1))
 			By("should populate the backing", func() {

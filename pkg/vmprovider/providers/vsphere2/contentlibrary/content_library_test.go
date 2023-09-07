@@ -22,19 +22,19 @@ func clTests() {
 
 		var (
 			initObjects []client.Object
-			ctx         *builder.TestContextForVCSimA2
+			ctx         *builder.TestContextForVCSim
 			testConfig  builder.VCSimTestConfig
 
 			clProvider contentlibrary.Provider
 		)
 
 		BeforeEach(func() {
-			testConfig = builder.VCSimTestConfig{}
+			testConfig = builder.VCSimTestConfig{WithV1A2: true}
 			testConfig.WithContentLibrary = true
 		})
 
 		JustBeforeEach(func() {
-			ctx = suite.NewTestContextForVCSimA2(testConfig, initObjects...)
+			ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
 			clProvider = contentlibrary.NewProvider(ctx.RestClient)
 		})
 

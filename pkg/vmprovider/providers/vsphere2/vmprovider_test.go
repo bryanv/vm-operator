@@ -20,16 +20,16 @@ func cpuFreqTests() {
 
 	var (
 		testConfig builder.VCSimTestConfig
-		ctx        *builder.TestContextForVCSimA2
+		ctx        *builder.TestContextForVCSim
 		vmProvider vmprovider.VirtualMachineProviderInterface
 	)
 
 	BeforeEach(func() {
-		testConfig = builder.VCSimTestConfig{}
+		testConfig = builder.VCSimTestConfig{WithV1A2: true}
 	})
 
 	JustBeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(testConfig)
+		ctx = suite.NewTestContextForVCSim(testConfig)
 		vmProvider = vsphere.NewVSphereVMProviderFromClient(ctx.Client, ctx.Recorder)
 	})
 

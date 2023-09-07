@@ -22,7 +22,7 @@ import (
 )
 
 // TODO: This mostly just a placeholder until we spend time on something better. Individual types
-// don't make much sense since we don't lump everything under a single prereq condition.
+// don't make much sense since we don't lump everything under a single prereq condition anymore.
 func errToConditionReasonAndMessage(err error) (string, string) {
 	switch {
 	case apierrors.IsNotFound(err):
@@ -170,9 +170,10 @@ func GetVirtualMachineBootstrap(
 
 	// vApp bootstrap can be used alongside LinuxPrep/Sysprep.
 	if vApp := bootstrapSpec.VAppConfig; vApp != nil {
-		var err error
 
 		if vApp.RawProperties != "" {
+			var err error
+
 			vAppData, err = getSecretData(vmCtx, vApp.RawProperties, true, k8sClient)
 			if err != nil {
 				reason, msg := errToConditionReasonAndMessage(err)
@@ -245,7 +246,7 @@ func GetVMSetResourcePolicy(
 }
 
 // AddInstanceStorageVolumes checks if VM class is configured with instance storage volumes and appends the
-// volumes to the VM's Spec if not already done. Return true if the VM had or now has instance volumes.
+// volumes to the VM's Spec if not already done. Return true if the VM had or now has instance storage volumes.
 func AddInstanceStorageVolumes(
 	vmCtx context.VirtualMachineContextA2,
 	vmClass *vmopv1.VirtualMachineClass) bool {

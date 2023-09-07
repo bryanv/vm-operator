@@ -25,14 +25,14 @@ func getVM() {
 	const vcVMName = "DC0_C0_RP0_VM0"
 
 	var (
-		ctx    *builder.TestContextForVCSimA2
+		ctx    *builder.TestContextForVCSim
 		nsInfo builder.WorkloadNamespaceInfo
 
 		vmCtx context.VirtualMachineContextA2
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{WithV1A2: true})
 		nsInfo = ctx.CreateWorkloadNamespace()
 
 		vm := builder.DummyVirtualMachineA2()
@@ -129,7 +129,7 @@ func getVM() {
 
 	Context("Gets VM with ResourcePolicy by inventory", func() {
 		BeforeEach(func() {
-			resourcePolicy, folder := ctx.CreateVirtualMachineSetResourcePolicy("getvm-test", nsInfo)
+			resourcePolicy, folder := ctx.CreateVirtualMachineSetResourcePolicyA2("getvm-test", nsInfo)
 			vmCtx.VM.Spec.Reserved.ResourcePolicyName = resourcePolicy.Name
 
 			vm, err := ctx.Finder.VirtualMachine(ctx, vcVMName)

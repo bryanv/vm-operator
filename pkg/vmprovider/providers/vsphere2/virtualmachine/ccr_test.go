@@ -16,12 +16,12 @@ import (
 func ccrTests() {
 
 	var (
-		ctx  *builder.TestContextForVCSimA2
+		ctx  *builder.TestContextForVCSim
 		vcVM *object.VirtualMachine
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{WithV1A2: true})
 
 		var err error
 		vcVM, err = ctx.Finder.VirtualMachine(ctx, "DC0_C0_RP0_VM0")

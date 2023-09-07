@@ -13,11 +13,11 @@ import (
 	"github.com/vmware/govmomi/vapi/vcenter"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 
-	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/contentlibrary"
-
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
+	"github.com/vmware-tanzu/vm-operator/pkg/lib"
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/contentlibrary"
 )
 
 func deployOVF(
@@ -38,7 +38,7 @@ func deployOVF(
 		deploymentSpec.DefaultDatastoreID = createArgs.DatastoreMoID
 	}
 
-	if createArgs.ConfigSpec != nil {
+	if lib.IsVMClassAsConfigFSSDaynDateEnabled() && createArgs.ConfigSpec != nil {
 		configSpecXML, err := util.MarshalConfigSpecToXML(createArgs.ConfigSpec)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal ConfigSpec to XML: %w", err)

@@ -296,13 +296,13 @@ func MarkVMToolsRunningStatusCondition(
 		conditions.MarkTrue(vm, vmopv1.VirtualMachineToolsCondition)
 	default:
 		msg := "Unexpected VMware Tools running status"
-		conditions.MarkUnknown(vm, vmopv1.VirtualMachineToolsCondition, "", msg)
+		conditions.MarkUnknown(vm, vmopv1.VirtualMachineToolsCondition, "Unknown", msg)
 	}
 }
 
 func MarkCustomizationInfoCondition(vm *vmopv1.VirtualMachine, guestInfo *types.GuestInfo) {
 	if guestInfo == nil || guestInfo.CustomizationInfo == nil {
-		conditions.MarkUnknown(vm, vmopv1.GuestCustomizationCondition, "", "")
+		conditions.MarkUnknown(vm, vmopv1.GuestCustomizationCondition, "NoGuestInfo", "")
 		return
 	}
 
@@ -326,6 +326,6 @@ func MarkCustomizationInfoCondition(vm *vmopv1.VirtualMachine, guestInfo *types.
 		if errorMsg == "" {
 			errorMsg = "Unexpected VM Customization status"
 		}
-		conditions.MarkFalse(vm, vmopv1.GuestCustomizationCondition, "", errorMsg)
+		conditions.MarkFalse(vm, vmopv1.GuestCustomizationCondition, "Unknown", errorMsg)
 	}
 }

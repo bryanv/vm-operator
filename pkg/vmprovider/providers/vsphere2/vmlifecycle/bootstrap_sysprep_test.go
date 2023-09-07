@@ -39,7 +39,7 @@ var _ = Describe("SysPrep Bootstrap", func() {
 		bsArgs = vmlifecycle.BootstrapArgs{}
 	})
 
-	FContext("BootStrapSysPrep", func() {
+	Context("BootStrapSysPrep", func() {
 		const unattendXML = "dummy-unattend-xml"
 
 		var (

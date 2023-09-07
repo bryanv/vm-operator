@@ -172,7 +172,7 @@ func vmUtilTests() {
 			When("VM image exists but the image is not ready", func() {
 
 				BeforeEach(func() {
-					conditions.MarkFalse(nsVMImage, vmopv1.VirtualMachineImageSyncedCondition, "", "") // XXX Until rollup condition
+					conditions.MarkFalse(nsVMImage, vmopv1.VirtualMachineImageSyncedCondition, "NotReady", "") // XXX Until rollup condition
 					initObjects = append(initObjects, nsVMImage)
 					vmCtx.VM.Spec.ImageName = nsVMImage.Name
 				})

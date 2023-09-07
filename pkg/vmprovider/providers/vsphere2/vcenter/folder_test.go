@@ -22,12 +22,12 @@ func folderTests() {
 func getFolderByMoID() {
 
 	var (
-		ctx    *builder.TestContextForVCSimA2
+		ctx    *builder.TestContextForVCSim
 		nsInfo builder.WorkloadNamespaceInfo
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{WithV1A2: true})
 		nsInfo = ctx.CreateWorkloadNamespace()
 	})
 
@@ -55,14 +55,14 @@ func getFolderByMoID() {
 func createDeleteExistsFolder() {
 
 	var (
-		ctx    *builder.TestContextForVCSimA2
+		ctx    *builder.TestContextForVCSim
 		nsInfo builder.WorkloadNamespaceInfo
 
 		parentFolderMoID string
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{WithV1A2: true})
 		nsInfo = ctx.CreateWorkloadNamespace()
 		parentFolderMoID = nsInfo.Folder.Reference().Value
 	})

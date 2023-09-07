@@ -109,6 +109,7 @@ func CreateConfigSpecForPlacement2(
 	baseConfigSpec *types.VirtualMachineConfigSpec,
 	storageClassesToIDs map[string]string) *types.VirtualMachineConfigSpec {
 
+	// TODO: If placement chokes on EthCards w/o a backing yet (NSX-T) remove those entries here.
 	deviceChangeCopy := make([]types.BaseVirtualDeviceConfigSpec, len(baseConfigSpec.DeviceChange))
 	copy(deviceChangeCopy, baseConfigSpec.DeviceChange)
 

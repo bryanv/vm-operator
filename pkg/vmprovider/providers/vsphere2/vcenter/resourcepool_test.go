@@ -22,13 +22,13 @@ func resourcePoolTests() {
 
 func getResourcePoolTests() {
 	var (
-		ctx    *builder.TestContextForVCSimA2
+		ctx    *builder.TestContextForVCSim
 		nsInfo builder.WorkloadNamespaceInfo
 		nsRP   *object.ResourcePool
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{WithV1A2: true})
 		nsInfo = ctx.CreateWorkloadNamespace()
 		nsRP = ctx.GetResourcePoolForNamespace(nsInfo.Namespace, "", "")
 	})
@@ -70,7 +70,7 @@ func getResourcePoolTests() {
 	Context("GetChildResourcePool", func() {
 		It("returns success", func() {
 			// Quick way for a child RP is to create a VMSetResourcePolicy.
-			resourcePolicy, _ := ctx.CreateVirtualMachineSetResourcePolicy("my-child-rp", nsInfo)
+			resourcePolicy, _ := ctx.CreateVirtualMachineSetResourcePolicyA2("my-child-rp", nsInfo)
 			Expect(resourcePolicy).ToNot(BeNil())
 			childRPName := resourcePolicy.Spec.ResourcePool.Name
 			Expect(childRPName).ToNot(BeEmpty())
@@ -98,7 +98,7 @@ func getResourcePoolTests() {
 func createDeleteExistResourcePoolChild() {
 
 	var (
-		ctx    *builder.TestContextForVCSimA2
+		ctx    *builder.TestContextForVCSim
 		nsInfo builder.WorkloadNamespaceInfo
 		nsRP   *object.ResourcePool
 
@@ -107,13 +107,13 @@ func createDeleteExistResourcePoolChild() {
 	)
 
 	BeforeEach(func() {
-		ctx = suite.NewTestContextForVCSimA2(builder.VCSimTestConfig{})
+		ctx = suite.NewTestContextForVCSim(builder.VCSimTestConfig{WithV1A2: true})
 		nsInfo = ctx.CreateWorkloadNamespace()
 		nsRP = ctx.GetResourcePoolForNamespace(nsInfo.Namespace, "", "")
 
 		parentRPMoID = nsRP.Reference().Value
 
-		resourcePolicy, _ = ctx.CreateVirtualMachineSetResourcePolicy("my-child-rp", nsInfo)
+		resourcePolicy, _ = ctx.CreateVirtualMachineSetResourcePolicyA2("my-child-rp", nsInfo)
 		Expect(resourcePolicy).ToNot(BeNil())
 	})
 

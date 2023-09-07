@@ -33,11 +33,6 @@ import (
 
 type NetworkInterfaceResults struct {
 	Results []NetworkInterfaceResult
-
-	// NeedCCRBacking denoted that the results has a nil backing because the CCR is required
-	// to resolve the correct backing. This applies to NSX-T, and ResolveNCPBackingPostPlacement()
-	// should be called once the CCR is known.
-	NeedCCRBacking bool
 }
 
 type NetworkInterfaceResult struct {
@@ -119,7 +114,6 @@ func CreateAndWaitForNetworkInterfaces(
 	}
 
 	results := make([]NetworkInterfaceResult, 0, len(interfaces))
-	needCCRBacking := false
 
 	for i := range interfaces {
 		interfaceSpec := &interfaces[i]
@@ -143,14 +137,16 @@ func CreateAndWaitForNetworkInterfaces(
 				fmt.Errorf("network interface %q error: %w", interfaceSpec.Name, err)
 		}
 
-		needCCRBacking = needCCRBacking || result.Backing == nil
 		applyInterfaceSpecToResult(interfaceSpec, result)
 		results = append(results, *result)
 	}
 
+	// TODO: Once we really support network changing on the fly, we need to keep track of now
+	// unused network interface CRDs so they can be deleted after they're removed from the VM
+	// via Reconfigure, instead of delaying that until the VM is deleted via GC.
+
 	return NetworkInterfaceResults{
-		Results:        results,
-		NeedCCRBacking: needCCRBacking,
+		Results: results,
 	}, nil
 }
 
@@ -402,7 +398,7 @@ func createNCPNetworkInterface(
 	clusterMoRef *vimtypes.ManagedObjectReference,
 	interfaceSpec *vmopv1.VirtualMachineNetworkInterfaceSpec) (*NetworkInterfaceResult, error) {
 
-	// TODO: Do we need to still support the odd-ball NetOP in NSX-T? Sigh
+	// TODO: Do we need to still support the odd-ball NetOP in NSX-T? Sigh. Do that check here if needed.
 	if kind := interfaceSpec.Network.Kind; kind != "" && kind != "VirtualNetwork" {
 		return nil, fmt.Errorf("network kind %q is not supported for NCP", kind)
 	}
@@ -617,8 +613,9 @@ func ApplyInterfaceResultToVirtualEthCard(
 		ethCard.MacAddress = result.MacAddress
 		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeManual)
 	} else { //nolint
-		// BMV: IMO this must be Generated/TypeAssigned to avoid foot gun, but we have tests assuming
-		// this is left as-is.
+		// BMV: IMO this must be Generated/TypeAssigned to avoid major foot gun, but we have tests assuming
+		// this is left as-is. We should have a MAC address field to the VM.Spec if we want this to be specified
+		// by the user.
 		// ethCard.MacAddress = ""
 		// ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeGenerated)
 	}

@@ -766,7 +766,6 @@ func Convert_v1alpha2_VirtualMachineStatus_To_v1alpha1_VirtualMachineStatus(
 	out.PowerState = convert_v1alpha2_VirtualMachinePowerState_To_v1alpha1_VirtualMachinePowerState(in.PowerState)
 	out.Phase = convert_v1alpha2_Conditions_To_v1alpha1_Phase(in.Conditions)
 	out.VmIp, out.NetworkInterfaces = convert_v1alpha2_NetworkStatus_To_v1alpha1_Network(in.Network)
-	out.LastRestartTime = in.LastRestartTime
 	out.Conditions = translate_v1alpha2_Conditions_To_v1alpha1_Conditions(out.Conditions)
 
 	// WARNING: in.Image requires manual conversion: does not exist in peer-type
@@ -879,12 +878,91 @@ func restore_v1alpha2_VirtualMachineReadinessProbeSpec(
 	}
 }
 
+func convert_v1alpha1_PreReqsReadyCondition_to_v1alpha2_Conditions(
+	dst *v1alpha2.VirtualMachine) []metav1.Condition {
+
+	var preReqCond, vmClassCond, vmImageCond, vmSetResourcePolicy, vmBootstrap *metav1.Condition
+	var preReqCondIdx int
+
+	for i := range dst.Status.Conditions {
+		c := &dst.Status.Conditions[i]
+
+		switch c.Type {
+		case string(VirtualMachinePrereqReadyCondition):
+			preReqCond = c
+			preReqCondIdx = i
+		case v1alpha2.VirtualMachineConditionClassReady:
+			vmClassCond = c
+		case v1alpha2.VirtualMachineConditionImageReady:
+			vmImageCond = c
+		case v1alpha2.VirtualMachineConditionVMSetResourcePolicyReady:
+			vmSetResourcePolicy = c
+		case v1alpha2.VirtualMachineConditionBootstrapReady:
+			vmBootstrap = c
+		}
+	}
+
+	// If we didn't find the v1a1 PrereqReady condition then there is nothing to do.
+	if preReqCond == nil {
+		return dst.Status.Conditions
+	}
+
+	// If we don't have any of the new v1a2 conditions, use the v1a1 PrereqReady condition to fill
+	// that in. This means that this was originally a v1a1 VM.
+	if preReqCond.Status == metav1.ConditionTrue &&
+		(vmClassCond == nil && vmImageCond == nil && vmSetResourcePolicy == nil && vmBootstrap == nil) {
+
+		var conditions []metav1.Condition
+
+		// The class and image are always required fields.
+		conditions = append(conditions, metav1.Condition{
+			Type:               v1alpha2.VirtualMachineConditionClassReady,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: preReqCond.LastTransitionTime,
+			Reason:             string(metav1.ConditionTrue),
+		})
+		conditions = append(conditions, metav1.Condition{
+			Type:               v1alpha2.VirtualMachineConditionImageReady,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: preReqCond.LastTransitionTime,
+			Reason:             string(metav1.ConditionTrue),
+		})
+
+		if dst.Spec.Reserved.ResourcePolicyName != "" {
+			conditions = append(conditions, metav1.Condition{
+				Type:               v1alpha2.VirtualMachineConditionVMSetResourcePolicyReady,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: preReqCond.LastTransitionTime,
+				Reason:             string(metav1.ConditionTrue),
+			})
+		}
+		if dst.Spec.Bootstrap != nil {
+			conditions = append(conditions, metav1.Condition{
+				Type:               v1alpha2.VirtualMachineConditionBootstrapReady,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: preReqCond.LastTransitionTime,
+				Reason:             string(metav1.ConditionTrue),
+			})
+		}
+
+		dst.Status.Conditions = append(dst.Status.Conditions, conditions...)
+	}
+
+	// TODO: If preReqCond.Status == false then infer what v1a2 conditions need to be true and false
+	// from reason (but I don't think we have a reason for SetPolicy or VMMetadata).
+
+	return append(dst.Status.Conditions[:preReqCondIdx], dst.Status.Conditions[preReqCondIdx+1:]...)
+}
+
 // ConvertTo converts this VirtualMachine to the Hub version.
 func (src *VirtualMachine) ConvertTo(dstRaw conversion.Hub) error {
 	dst := dstRaw.(*v1alpha2.VirtualMachine)
 	if err := Convert_v1alpha1_VirtualMachine_To_v1alpha2_VirtualMachine(src, dst, nil); err != nil {
 		return err
 	}
+
+	newConditions := convert_v1alpha1_PreReqsReadyCondition_to_v1alpha2_Conditions(dst)
+	dst.Status.Conditions = newConditions
 
 	// Manually restore data.
 	restored := &v1alpha2.VirtualMachine{}
@@ -897,6 +975,9 @@ func (src *VirtualMachine) ConvertTo(dstRaw conversion.Hub) error {
 	restore_v1alpha2_VirtualMachineReadinessProbeSpec(dst, restored)
 
 	dst.Status = restored.Status
+	// TODO: We might not need this here, 'cause we're suppose to ensure that we don't have the
+	// PrereqReady condition on the v1a2 VM so it couldn't have been saved.
+	dst.Status.Conditions = newConditions
 
 	return nil
 }

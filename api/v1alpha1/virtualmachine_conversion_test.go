@@ -541,6 +541,55 @@ func TestVirtualMachineConversion(t *testing.T) {
 			g.Expect(c.Reason).To(Equal("Reason"))
 			g.Expect(c.Message).To(Equal("Message"))
 		})
+
+		t.Run("Converts PrereqReady Condition", func(t *testing.T) {
+			g := NewWithT(t)
+
+			now := metav1.Now()
+			spoke := v1alpha1.VirtualMachine{
+				Spec: v1alpha1.VirtualMachineSpec{
+					VmMetadata: &v1alpha1.VirtualMachineMetadata{
+						Transport:  v1alpha1.VirtualMachineMetadataCloudInitTransport,
+						SecretName: "my-secret",
+					},
+					ResourcePolicyName: "my-policy",
+				},
+				Status: v1alpha1.VirtualMachineStatus{
+					Conditions: []v1alpha1.Condition{
+						{
+							Type:               v1alpha1.VirtualMachinePrereqReadyCondition,
+							Status:             corev1.ConditionTrue,
+							LastTransitionTime: now,
+						},
+					},
+				},
+			}
+
+			hub := &nextver.VirtualMachine{}
+			g.Expect(spoke.ConvertTo(hub)).To(Succeed())
+			g.Expect(hub.Status.Conditions).To(HaveLen(4))
+
+			c := hub.Status.Conditions[0]
+			g.Expect(c.Type).To(Equal(nextver.VirtualMachineConditionClassReady))
+			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(c.Reason).To(Equal(string(metav1.ConditionTrue)))
+			g.Expect(c.LastTransitionTime).To(Equal(now))
+			c = hub.Status.Conditions[1]
+			g.Expect(c.Type).To(Equal(nextver.VirtualMachineConditionImageReady))
+			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(c.Reason).To(Equal(string(metav1.ConditionTrue)))
+			g.Expect(c.LastTransitionTime).To(Equal(now))
+			c = hub.Status.Conditions[2]
+			g.Expect(c.Type).To(Equal(nextver.VirtualMachineConditionVMSetResourcePolicyReady))
+			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(c.Reason).To(Equal(string(metav1.ConditionTrue)))
+			g.Expect(c.LastTransitionTime).To(Equal(now))
+			c = hub.Status.Conditions[3]
+			g.Expect(c.Type).To(Equal(nextver.VirtualMachineConditionBootstrapReady))
+			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(c.Reason).To(Equal(string(metav1.ConditionTrue)))
+			g.Expect(c.LastTransitionTime).To(Equal(now))
+		})
 	})
 
 	t.Run("VirtualMachine spoke-hub-spoke with TKG CP", func(t *testing.T) {

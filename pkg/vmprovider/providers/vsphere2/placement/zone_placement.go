@@ -227,30 +227,32 @@ func getZonalPlacementRecommendations(
 
 	var recs []Recommendation
 
-	if len(candidateRPMoRefs) == 1 {
-		// If there is only one candidate, we might be able to skip some work.
+	/*
+		if len(candidateRPMoRefs) == 1 {
+			// If there is only one candidate, we might be able to skip some work.
 
-		if needsHost {
-			// This is a hack until PlaceVmsXCluster() supports instance storage disks.
-			vmCtx.Logger.Info("Falling back into non-zonal placement since the only candidate needs host selected",
-				"rpMoID", candidateRPMoRefs[0].Value)
-			return getPlacementRecommendations(vmCtx, vcClient, candidates, configSpec)
-		}
+			if needsHost {
+				// This is a hack until PlaceVmsXCluster() supports instance storage disks.
+				vmCtx.Logger.Info("Falling back into non-zonal placement since the only candidate needs host selected",
+					"rpMoID", candidateRPMoRefs[0].Value)
+				return getPlacementRecommendations(vmCtx, vcClient, candidates, configSpec)
+			}
 
-		recs = append(recs, Recommendation{
-			PoolMoRef: candidateRPMoRefs[0],
-		})
-		vmCtx.Logger.V(5).Info("Implied placement since there was only one candidate", "rec", recs[0])
+			recs = append(recs, Recommendation{
+				PoolMoRef: candidateRPMoRefs[0],
+			})
+			vmCtx.Logger.V(5).Info("Implied placement since there was only one candidate", "rec", recs[0])
 
-	} else {
-		var err error
+		} else {
+	*/
+	var err error
 
-		recs, err = ClusterPlaceVMForCreate(vmCtx, vcClient, candidateRPMoRefs, configSpec, needsHost)
-		if err != nil {
-			vmCtx.Logger.Error(err, "PlaceVmsXCluster failed")
-			return nil
-		}
+	recs, err = ClusterPlaceVMForCreate(vmCtx, vcClient, candidateRPMoRefs, configSpec, needsHost)
+	if err != nil {
+		vmCtx.Logger.Error(err, "PlaceVmsXCluster failed")
+		return nil
 	}
+	//}
 
 	recommendations := map[string][]Recommendation{}
 	for _, rec := range recs {

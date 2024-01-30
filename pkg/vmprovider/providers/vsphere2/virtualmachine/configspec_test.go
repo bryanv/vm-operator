@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/davecgh/go-spew/spew"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/pointer"
@@ -341,6 +342,30 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 			baseConfigSpec,
 			storageClassesToIDs)
 		Expect(configSpec).ToNot(BeNil())
+	})
+
+	FContext("Foo", func() {
+		BeforeEach(func() {
+			baseConfigSpec = &vimtypes.VirtualMachineConfigSpec{
+				Name:       "dummy-VM",
+				Annotation: "test-annotation",
+				NumCPUs:    42,
+				MemoryMB:   4096,
+				Firmware:   "secret-sauce",
+				DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+					&vimtypes.VirtualDeviceConfigSpec{
+						Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+						Device: &vimtypes.VirtualVmxnet3{
+							Uptv2Enabled: pointer.Bool(true),
+						},
+					},
+				},
+			}
+		})
+
+		It("DoIt", func() {
+			spew.Dump(configSpec.DeviceChange)
+		})
 	})
 
 	Context("Returns expected ConfigSpec", func() {

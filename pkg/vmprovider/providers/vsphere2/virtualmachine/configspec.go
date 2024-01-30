@@ -9,10 +9,11 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 	"k8s.io/utils/pointer"
 
+	"github.com/vmware-tanzu/vm-operator/pkg/util"
+
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	pkgconfig "github.com/vmware-tanzu/vm-operator/pkg/config"
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
-	"github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/instancestorage"
 )
@@ -166,8 +167,17 @@ func CreateConfigSpecForPlacement(
 	storageClassesToIDs map[string]string) *types.VirtualMachineConfigSpec {
 
 	// TODO: If placement chokes on EthCards w/o a backing yet (NSX-T) remove those entries here.
-	deviceChangeCopy := make([]types.BaseVirtualDeviceConfigSpec, len(baseConfigSpec.DeviceChange))
-	copy(deviceChangeCopy, baseConfigSpec.DeviceChange)
+	deviceChangeCopy := make([]types.BaseVirtualDeviceConfigSpec, 0, len(baseConfigSpec.DeviceChange))
+	// copy(deviceChangeCopy, baseConfigSpec.DeviceChange)
+
+	for _, devChange := range baseConfigSpec.DeviceChange {
+		if spec := devChange.GetVirtualDeviceConfigSpec(); spec != nil {
+			if util.IsEthernetCard(spec.Device) && spec.Device.GetVirtualDevice().Backing == nil {
+				continue
+			}
+		}
+		deviceChangeCopy = append(deviceChangeCopy, devChange)
+	}
 
 	configSpec := *baseConfigSpec
 	configSpec.DeviceChange = deviceChangeCopy

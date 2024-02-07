@@ -653,29 +653,113 @@ func (s *Session) ensureCNSVolumes(vmCtx context.VirtualMachineContextA2) error 
 	return nil
 }
 
+func (s *Session) fixupMacAddresses(
+	vmCtx context.VirtualMachineContextA2,
+	resVM *res.VirtualMachine,
+	updateArgs *VMUpdateArgs) error {
+
+	missingMAC := false
+	for i := range updateArgs.NetworkResults.Results {
+		if updateArgs.NetworkResults.Results[i].MacAddress == "" {
+			missingMAC = true
+			break
+		}
+	}
+	if !missingMAC {
+		// Expected path in NSX-T since it always provides the MAC address.
+		return nil
+	}
+
+	// Expected path in VDS since NetOP does not specify the MAC address. VC generates
+	// the MAC address when the device is instantiated try to find the matching device
+	// here.
+
+	networkDevices, err := resVM.GetNetworkDevices(vmCtx)
+	if err != nil {
+		return err
+	}
+
+	noMatchFound := false
+	for i := range updateArgs.NetworkResults.Results {
+		result := &updateArgs.NetworkResults.Results[i]
+		if result.MacAddress != "" {
+			continue
+		}
+
+		expectedBacking := result.Device.GetVirtualDevice().Backing
+		expectedBackingType := reflect.TypeOf(expectedBacking)
+
+		for _, dev := range networkDevices {
+			ethCard := dev.(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+
+			if ethCard.ExternalId == "" || ethCard.ExternalId != result.Name {
+				continue
+			}
+
+			db := ethCard.GetVirtualEthernetCard().Backing
+			if db == nil || reflect.TypeOf(db) != expectedBackingType {
+				continue
+			}
+
+			var backingMatch bool
+
+			// Cribbed from VirtualDeviceList.SelectByBackingInfo().
+			switch a := db.(type) {
+			case *vimTypes.VirtualEthernetCardNetworkBackingInfo:
+				// This backing is only used in testing.
+				b := expectedBacking.(*vimTypes.VirtualEthernetCardNetworkBackingInfo)
+				backingMatch = a.DeviceName == b.DeviceName
+			case *vimTypes.VirtualEthernetCardDistributedVirtualPortBackingInfo:
+				b := expectedBacking.(*vimTypes.VirtualEthernetCardDistributedVirtualPortBackingInfo)
+				backingMatch = a.Port.SwitchUuid == b.Port.SwitchUuid && a.Port.PortgroupKey == b.Port.PortgroupKey
+			case *vimTypes.VirtualEthernetCardOpaqueNetworkBackingInfo:
+				b := expectedBacking.(*vimTypes.VirtualEthernetCardOpaqueNetworkBackingInfo)
+				backingMatch = a.OpaqueNetworkId == b.OpaqueNetworkId
+				/*
+					case *vimTypes.VirtualEthernetCardLegacyNetworkBackingInfo:
+						b := expectedBacking.(*vimTypes.VirtualEthernetCardLegacyNetworkBackingInfo)
+						backingMatch = a.DeviceName == b.DeviceName
+					case *vimTypes.VirtualSriovEthernetCardSriovBackingInfo:
+						// TODO: What exactly should we compare for this backing type?
+						b := expectedBacking.(*vimTypes.VirtualSriovEthernetCardSriovBackingInfo)
+						if a.PhysicalFunctionBacking != nil && b.PhysicalFunctionBacking != nil {
+							backingMatch = a.PhysicalFunctionBacking.Id == b.PhysicalFunctionBacking.Id
+						}
+				*/
+			}
+
+			if backingMatch {
+				result.MacAddress = ethCard.MacAddress
+				break
+			}
+		}
+
+		if result.MacAddress == "" {
+			noMatchFound = true
+		}
+	}
+
+	if noMatchFound {
+		// This is just the old fallback we used to do to try to preserve prior behavior so this
+		// still just worry about the first interface. We'll hit this when existing VMs that do
+		// not have the ExternalID set. We can make this smarter and more complete later.
+		if len(updateArgs.NetworkResults.Results) > 0 && len(networkDevices) > 0 {
+			result := &updateArgs.NetworkResults.Results[0]
+			if result.MacAddress == "" {
+				ethCard := networkDevices[0].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+				result.MacAddress = ethCard.MacAddress
+			}
+		}
+	}
+
+	return nil
+}
+
 func (s *Session) customize(
 	vmCtx context.VirtualMachineContextA2,
 	resVM *res.VirtualMachine,
 	cfg *vimTypes.VirtualMachineConfigInfo,
 	updateArgs *VMUpdateArgs) error {
-
-	{
-		// Hack: the old code only populated the first nic address - getFirstNicMacAddr() - so just keep
-		// doing the same here. We need a generalized UpdateEthCardDeviceChanges() to match up the Spec
-		// with the actual devices. Old code also made this best effort so do that here too.
-		// I've got a larger change that removes the old session stuff, and improves on all this behavior
-		// but I didn't have the BW to sort out all the changes.
-		if len(updateArgs.NetworkResults.Results) > 0 {
-			mac := updateArgs.NetworkResults.Results[0].MacAddress
-			if mac == "" {
-				ethCards, _ := resVM.GetNetworkDevices(vmCtx)
-				if len(ethCards) > 0 {
-					curNic := ethCards[0].(vimTypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-					updateArgs.NetworkResults.Results[0].MacAddress = curNic.GetVirtualEthernetCard().MacAddress
-				}
-			}
-		}
-	}
 
 	err := vmlifecycle.DoBootstrap(vmCtx, resVM.VcVM(), cfg, s.K8sClient, updateArgs.NetworkResults, updateArgs.BootstrapData)
 	if err != nil {
@@ -699,6 +783,13 @@ func (s *Session) prepareVMForPowerOn(
 	updateArgs.NetworkResults = netIfList
 
 	err = s.prePowerOnVMReconfigure(vmCtx, resVM, cfg, updateArgs)
+	if err != nil {
+		return err
+	}
+
+	// TODO: We may want to refetch cfg here cause it could be stale now if a reconfigure was done.
+
+	err = s.fixupMacAddresses(vmCtx, resVM, updateArgs)
 	if err != nil {
 		return err
 	}

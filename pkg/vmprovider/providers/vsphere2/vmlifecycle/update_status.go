@@ -21,6 +21,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/topology"
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmprovider/providers/vsphere2/virtualmachine"
 )
 
@@ -30,6 +31,7 @@ var (
 	vmStatusPropertiesSelector = []string{
 		"config.changeTrackingEnabled",
 		"config.extraConfig",
+		"config.hardware.device",
 		"guest",
 		"summary",
 	}
@@ -86,12 +88,7 @@ func UpdateStatus(
 	vm.Status.BiosUUID = summary.Config.Uuid
 	vm.Status.InstanceUUID = summary.Config.InstanceUuid
 	vm.Status.HardwareVersion = util.ParseVirtualHardwareVersion(summary.Config.HwVersion)
-
-	var networkInterfaces []vmopv1.VirtualMachineNetworkInterfaceSpec
-	if vmCtx.VM.Spec.Network != nil {
-		networkInterfaces = vmCtx.VM.Spec.Network.Interfaces
-	}
-	vm.Status.Network = getGuestNetworkStatus(networkInterfaces, vmMO.Guest)
+	vm.Status.Network = getGuestNetworkStatus(vmCtx, k8sClient, vmMO.Guest, &vmMO.Config.Hardware)
 
 	vm.Status.Host, err = getRuntimeHostHostname(vmCtx, vcVM, summary.Runtime.Host)
 	if err != nil {
@@ -145,8 +142,10 @@ func getRuntimeHostHostname(
 }
 
 func getGuestNetworkStatus(
-	networkInterfaces []vmopv1.VirtualMachineNetworkInterfaceSpec,
+	vmCtx context.VirtualMachineContextA2,
+	k8sClient ctrlclient.Client,
 	guestInfo *types.GuestInfo,
+	hardware *types.VirtualHardware,
 ) *vmopv1.VirtualMachineNetworkStatus {
 
 	if guestInfo == nil {
@@ -164,19 +163,24 @@ func getGuestNetworkStatus(
 		}
 	}
 
-	for i := range guestInfo.Net {
-		// Skip pseudo devices.
-		if guestInfo.Net[i].DeviceConfigId != -1 {
-			status.Interfaces = append(status.Interfaces, guestNicInfoToInterfaceStatus(i, &guestInfo.Net[i]))
-		}
-	}
+	if len(guestInfo.Net) > 0 {
+		ethCards := object.VirtualDeviceList(hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
 
-	// Hack: the exceedingly common case is just one nic - our boostrap effectively only works with one -
-	// so do the best effort here and apply the name in that common case. We have a long ways to go until
-	// we can always line up interfaces in the Spec with what both is observed in the VM hardware config
-	// and what the GuestNicInfo provides.
-	if len(networkInterfaces) == 1 && len(status.Interfaces) == 1 {
-		status.Interfaces[0].Name = networkInterfaces[0].Name
+		for i := range guestInfo.Net {
+			deviceKey := guestInfo.Net[i].DeviceConfigId
+			if deviceKey < 0 {
+				// Skip pseudo devices.
+				continue
+			}
+
+			name := ""
+			for _, dev := range ethCards {
+				ethCard := dev.(types.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+				name = network.ReverseLookupInterfaceSpecName(vmCtx, k8sClient, ethCard.ExternalId)
+			}
+
+			status.Interfaces = append(status.Interfaces, guestNicInfoToInterfaceStatus(i, name, &guestInfo.Net[i]))
+		}
 	}
 
 	if len(guestInfo.IpStack) > 0 {
@@ -186,11 +190,14 @@ func getGuestNetworkStatus(
 	return status
 }
 
-func guestNicInfoToInterfaceStatus(idx int, guestNicInfo *types.GuestNicInfo) vmopv1.VirtualMachineNetworkInterfaceStatus {
+func guestNicInfoToInterfaceStatus(idx int, name string, guestNicInfo *types.GuestNicInfo) vmopv1.VirtualMachineNetworkInterfaceStatus {
 	status := vmopv1.VirtualMachineNetworkInterfaceStatus{}
 
-	// Try to provide some default, useful name that can otherwise help identify the interface.
-	status.Name = fmt.Sprintf("nic-%d-%d", idx, guestNicInfo.DeviceConfigId)
+	status.Name = name
+	if status.Name == "" {
+		// Provide a default name that can otherwise hopefully help identify the interface.
+		status.Name = fmt.Sprintf("nic-%d-%d", idx, guestNicInfo.DeviceConfigId)
+	}
 	status.IP.MACAddr = guestNicInfo.MacAddress
 
 	if guestIPConfig := guestNicInfo.IpConfig; guestIPConfig != nil {

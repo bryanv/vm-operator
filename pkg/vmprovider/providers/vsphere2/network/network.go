@@ -42,8 +42,6 @@ type NetworkInterfaceResult struct {
 	NetworkID  string
 	Backing    object.NetworkReference
 
-	Device vimtypes.BaseVirtualDevice
-
 	// Fields from the InterfaceSpec used later during customization.
 	Name          string
 	DHCP4         bool
@@ -52,6 +50,9 @@ type NetworkInterfaceResult struct {
 	Nameservers   []string
 	SearchDomains []string
 	Routes        []NetworkInterfaceRoute
+
+	// Hack field just used in the post-create update path.
+	Device vimtypes.BaseVirtualDevice
 }
 
 type NetworkInterfaceIPConfig struct {
@@ -150,6 +151,57 @@ func CreateAndWaitForNetworkInterfaces(
 	}, nil
 }
 
+// ReverseLookupInterfaceSpecName tries to
+func ReverseLookupInterfaceSpecName(
+	vmCtx context.VirtualMachineContextA2,
+	client ctrlruntime.Client,
+	externalID string) string {
+
+	network := vmCtx.VM.Spec.Network
+	if network == nil {
+		return ""
+	}
+
+	switch pkgconfig.FromContext(vmCtx).NetworkProviderType {
+	case pkgconfig.NetworkProviderTypeVDS, pkgconfig.NetworkProviderTypeNamed:
+		// Make sure than an interface with this name exists in the spec.
+		for i := range network.Interfaces {
+			if network.Interfaces[i].Name == externalID {
+				return externalID
+			}
+		}
+	case pkgconfig.NetworkProviderTypeNSXT:
+		// Try to find the NCP VirtualNetworkInterface with the provided ExternalID.
+		for i := range network.Interfaces {
+			interfaceSpec := &network.Interfaces[i]
+
+			vnetIf := &ncpv1alpha1.VirtualNetworkInterface{}
+			vnetIfKey := types.NamespacedName{
+				Namespace: vmCtx.VM.Namespace,
+				Name:      NCPCRName(vmCtx.VM.Name, interfaceSpec.Network.Name, interfaceSpec.Name, false),
+			}
+
+			err := client.Get(vmCtx, vnetIfKey, vnetIf)
+			if err != nil {
+				// Try again with the old v1a1 naming convention.
+				vnetIfKey = types.NamespacedName{
+					Name: NCPCRName(vmCtx.VM.Name, interfaceSpec.Network.Name, interfaceSpec.Name, true),
+				}
+
+				err = client.Get(vmCtx, vnetIfKey, vnetIf)
+			}
+
+			if err == nil {
+				if vnetIf.Status.InterfaceID == externalID {
+					return interfaceSpec.Name
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
 // applyInterfaceSpecToResult applies the InterfaceSpec to results. Much of the InterfaceSpec - like DHCP -
 // cannot be specified to the underlying network provider so apply those overrides to the results.
 func applyInterfaceSpecToResult(
@@ -223,8 +275,9 @@ func createNamedNetworkInterface(
 	}
 
 	return &NetworkInterfaceResult{
-		NetworkID: networkName,
-		Backing:   backing,
+		ExternalID: interfaceSpec.Name,
+		NetworkID:  networkName,
+		Backing:    backing,
 	}, nil
 }
 
@@ -302,11 +355,12 @@ func createNetOPNetworkInterface(
 		return nil, err
 	}
 
-	return netOpNetIfToResult(vimClient, netIf), nil
+	return netOpNetIfToResult(vimClient, interfaceSpec.Name, netIf), nil
 }
 
 func netOpNetIfToResult(
 	vimClient *vim25.Client,
+	interfaceSpecName string,
 	netIf *netopv1alpha1.NetworkInterface) *NetworkInterfaceResult {
 
 	ipConfigs := make([]NetworkInterfaceIPConfig, 0, len(netIf.Status.IPConfigs))
@@ -324,10 +378,14 @@ func netOpNetIfToResult(
 		Value: netIf.Status.NetworkID,
 	}
 
+	// NetOP doesn't populate the netIf.Status.ExternalID field so we use the interface
+	// spec name instead so we can later determine the spec entry and CR name from the device.
+	externalID := interfaceSpecName
+
 	return &NetworkInterfaceResult{
 		IPConfigs:  ipConfigs,
 		MacAddress: netIf.Status.MacAddress, // Not set by NetOP.
-		ExternalID: netIf.Status.ExternalID, // Ditto.
+		ExternalID: externalID,
 		NetworkID:  netIf.Status.NetworkID,
 		Backing:    object.NewDistributedVirtualPortgroup(vimClient, pgObjRef),
 	}

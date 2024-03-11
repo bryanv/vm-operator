@@ -164,6 +164,11 @@ spec:
                       description: |-
                         NetworkType describes the type of VirtualNetwork that is referenced by the NetworkName. Currently, the supported
                         NetworkTypes are "nsx-t", "nsx-t-subnet", "nsx-t-subnetset" and "vsphere-distributed".
+                      enum:
+                      - nsx-t
+                      - nsx-t-subnet
+                      - nsx-t-subnetset
+                      - vsphere-distributed
                       type: string
                     providerRef:
                       description: |-

@@ -148,6 +148,7 @@ type NetworkInterfaceProviderReference struct {
 type VirtualMachineNetworkInterface struct {
 	// NetworkType describes the type of VirtualNetwork that is referenced by the NetworkName. Currently, the supported
 	// NetworkTypes are "nsx-t", "nsx-t-subnet", "nsx-t-subnetset" and "vsphere-distributed".
+	// +kubebuilder:validation:Enum=nsx-t;nsx-t-subnet;nsx-t-subnetset;vsphere-distributed
 	// +optional
 	NetworkType string `json:"networkType,omitempty"`
 

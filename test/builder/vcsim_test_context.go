@@ -32,6 +32,7 @@ import (
 	"github.com/vmware/govmomi/vapi/vcenter"
 	"github.com/vmware/govmomi/vim25/soap"
 	"github.com/vmware/govmomi/vim25/types"
+	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -621,20 +622,15 @@ func (c *TestContextForVCSim) setupAZs() {
 }
 
 func (c *TestContextForVCSim) GetFirstZoneName() string {
-	Expect(len(c.azCCRs)).To(BeNumerically(">", 0))
-	azNames := make([]string, len(c.azCCRs))
-	i := 0
-	for k := range c.azCCRs {
-		azNames[i] = k
-		i++
-	}
+	Expect(c.azCCRs).ToNot(BeEmpty())
+	azNames := maps.Keys(c.azCCRs)
 	sort.Strings(azNames)
 	return azNames[0]
 }
 
 func (c *TestContextForVCSim) GetFirstClusterFromFirstZone() *object.ClusterComputeResource {
 	ccrs := c.GetAZClusterComputes(c.GetFirstZoneName())
-	Expect(len(ccrs)).To(BeNumerically(">", 0))
+	Expect(ccrs).ToNot(BeEmpty())
 	return ccrs[0]
 }
 
@@ -713,6 +709,7 @@ func (c *TestContextForVCSim) GetResourcePoolForNamespace(namespace, azName, chi
 	Expect(c.ClustersPerZone).To(Equal(1)) // TODO: Deal with Zones w/ multiple CCRs later
 
 	ccrs := c.GetAZClusterComputes(azName)
+	Expect(ccrs).ToNot(BeEmpty())
 	ccr = ccrs[0]
 
 	rp, err := ccr.ResourcePool(c)

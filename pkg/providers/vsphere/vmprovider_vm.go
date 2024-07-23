@@ -480,17 +480,17 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 
 	{
 		// Hack - create just enough of the Session that's needed for update
-
-		cluster, err := virtualmachine.GetVMClusterComputeResource(vmCtx, vcVM)
+		rp, cluster, err := virtualmachine.GetVMResourcePoolAndCCR(vmCtx, vcVM)
 		if err != nil {
 			return err
 		}
 
 		ses := &session.Session{
-			K8sClient: vs.k8sClient,
-			Client:    vcClient.Client,
-			Finder:    vcClient.Finder(),
-			Cluster:   cluster,
+			K8sClient:    vs.k8sClient,
+			Client:       vcClient.Client,
+			Finder:       vcClient.Finder(),
+			Cluster:      cluster,
+			ResourcePool: rp,
 		}
 
 		if err := vcVM.Properties(

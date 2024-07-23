@@ -906,6 +906,41 @@ func (s *Session) attachClusterModule(
 	return clusterModuleProvider.AddMoRefToModule(vmCtx, moduleUUID, resVM.MoRef())
 }
 
+func (s *Session) resizeCheckCompatCheck(
+	vmCtx pkgctx.VirtualMachineContext,
+	vcVM *object.VirtualMachine,
+	configSpec vimtypes.VirtualMachineConfigSpec) error {
+
+	vmMO := vcVM.Reference()
+	rpMO := s.ResourcePool.Reference()
+
+	checkResults, err := object.NewVmCompatibilityChecker(vcVM.Client()).CheckVmConfig(
+		vmCtx,
+		configSpec,
+		&vmMO,
+		nil,
+		&rpMO,
+		vimtypes.CheckTestTypeResourcePoolTests)
+	if err != nil {
+		return err
+	}
+
+	if len(checkResults) > 0 {
+		allErrors := true
+		for _, r := range checkResults {
+			if len(r.Error) == 0 {
+				allErrors = false
+				break
+			}
+		}
+		if allErrors {
+			return fmt.Errorf("bpp, bpp, bp,")
+		}
+	}
+
+	return nil
+}
+
 func (s *Session) resizeVMWhenPoweredStateOff(
 	vmCtx pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
@@ -941,6 +976,12 @@ func (s *Session) resizeVMWhenPoweredStateOff(
 	refetchProps := false
 	if !reflect.DeepEqual(configSpec, vimtypes.VirtualMachineConfigSpec{}) {
 		vmCtx.Logger.Info("Powered off resizing", "configSpec", configSpec)
+
+		if err := s.resizeCheckCompatCheck(vmCtx, vcVM, configSpec); err != nil {
+			vmCtx.Logger.Error(err, "powered off resize compat check failed")
+			return false, err
+		}
+
 		if _, err := res.NewVMFromObject(vcVM).Reconfigure(vmCtx, &configSpec); err != nil {
 			vmCtx.Logger.Error(err, "powered off resize reconfigure failed")
 			return false, err

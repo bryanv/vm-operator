@@ -20,7 +20,8 @@ type Session struct {
 	Finder    *find.Finder
 
 	// Fields only used during Update
-	Cluster *object.ClusterComputeResource
+	Cluster      *object.ClusterComputeResource
+	ResourcePool *object.ResourcePool
 }
 
 func (s *Session) invokeFsrVirtualMachine(vmCtx pkgctx.VirtualMachineContext, resVM *res.VirtualMachine) error {

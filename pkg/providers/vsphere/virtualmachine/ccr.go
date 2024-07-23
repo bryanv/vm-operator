@@ -10,25 +10,25 @@ import (
 	"github.com/vmware/govmomi/object"
 )
 
-// GetVMClusterComputeResource returns the VM's ClusterComputeResource.
-func GetVMClusterComputeResource(
+// GetVMResourcePoolAndCCR returns the VM's ResourcePool and ClusterComputeResource.
+func GetVMResourcePoolAndCCR(
 	ctx context.Context,
-	vcVM *object.VirtualMachine) (*object.ClusterComputeResource, error) {
+	vcVM *object.VirtualMachine) (*object.ResourcePool, *object.ClusterComputeResource, error) {
 
 	rp, err := vcVM.ResourcePool(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	ccrRef, err := rp.Owner(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	cluster, ok := ccrRef.(*object.ClusterComputeResource)
 	if !ok {
-		return nil, fmt.Errorf("VM Owner is not a ClusterComputeResource but %T", ccrRef)
+		return nil, nil, fmt.Errorf("VM Owner is not a ClusterComputeResource but %T", ccrRef)
 	}
 
-	return cluster, nil
+	return rp, cluster, nil
 }

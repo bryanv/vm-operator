@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/vim25/mo"
 
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
@@ -33,10 +34,17 @@ func ccrTests() {
 		ctx = nil
 	})
 
-	It("Returns VM ClusterComputeResource", func() {
-		ccr, err := virtualmachine.GetVMClusterComputeResource(ctx, vcVM)
+	It("Returns VM ResourcePool and ClusterComputeResource", func() {
+		var o mo.VirtualMachine
+		Expect(vcVM.Properties(ctx, vcVM.Reference(), nil, &o)).To(Succeed())
+
+		rp, ccr, err := virtualmachine.GetVMResourcePoolAndCCR(ctx, vcVM)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(rp).ToNot(BeNil())
+		Expect(rp.Reference()).To(Equal(o.ResourcePool))
+		compute, err := rp.Owner(ctx)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(ccr).ToNot(BeNil())
-		Expect(ccr.Reference()).To(Equal(ctx.GetFirstClusterFromFirstZone().Reference()))
+		Expect(ccr.Reference()).To(Equal(compute.Reference()))
 	})
 }

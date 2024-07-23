@@ -125,7 +125,7 @@ func UpdateStatus(
 
 	zoneName := vm.Labels[topology.KubernetesTopologyZoneLabelKey]
 	if zoneName == "" {
-		cluster, err := virtualmachine.GetVMClusterComputeResource(vmCtx, vcVM)
+		_, cluster, err := virtualmachine.GetVMResourcePoolAndCCR(vmCtx, vcVM)
 		if err != nil {
 			errs = append(errs, err)
 		} else {

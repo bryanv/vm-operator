@@ -6,13 +6,6 @@ package vsphere
 import (
 	"context"
 	"fmt"
-	"maps"
-	"math/rand"
-	"strings"
-	"sync"
-	"text/template"
-	"time"
-
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/pbm"
 	"github.com/vmware/govmomi/pbm/types"
@@ -21,7 +14,12 @@ import (
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apierrorsutil "k8s.io/apimachinery/pkg/util/errors"
+	"maps"
+	"math/rand"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"strings"
+	"sync"
+	"text/template"
 
 	imgregv1a1 "github.com/vmware-tanzu/image-registry-operator-api/api/v1alpha1"
 
@@ -42,8 +40,6 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/vmlifecycle"
 	"github.com/vmware-tanzu/vm-operator/pkg/topology"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
-	"github.com/vmware-tanzu/vm-operator/pkg/util/annotations"
-	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
 	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 )
 
@@ -530,37 +526,39 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 		}
 	}
 
-	// Back up the VM at the end after a successful update.  TKG nodes are skipped
-	// from backup unless they specify the annotation to opt into backup.
-	if !kubeutil.HasCAPILabels(vmCtx.VM.Labels) ||
-		annotations.HasForceEnableBackup(vmCtx.VM) {
-		vmCtx.Logger.V(4).Info("Backing up VM Service managed VM")
+	/*
+		// Back up the VM at the end after a successful update.  TKG nodes are skipped
+		// from backup unless they specify the annotation to opt into backup.
+		if !kubeutil.HasCAPILabels(vmCtx.VM.Labels) ||
+			annotations.HasForceEnableBackup(vmCtx.VM) {
+			vmCtx.Logger.V(4).Info("Backing up VM Service managed VM")
 
-		diskUUIDToPVC, err := GetAttachedDiskUUIDToPVC(vmCtx, vs.k8sClient)
-		if err != nil {
-			vmCtx.Logger.Error(err, "failed to get disk uuid to PVC mapping for backup")
-			return err
-		}
+			diskUUIDToPVC, err := GetAttachedDiskUUIDToPVC(vmCtx, vs.k8sClient)
+			if err != nil {
+				vmCtx.Logger.Error(err, "failed to get disk uuid to PVC mapping for backup")
+				return err
+			}
 
-		additionalResources, err := GetAdditionalResourcesForBackup(vmCtx, vs.k8sClient)
-		if err != nil {
-			vmCtx.Logger.Error(err, "failed to get additional resources for backup")
-			return err
-		}
+			additionalResources, err := GetAdditionalResourcesForBackup(vmCtx, vs.k8sClient)
+			if err != nil {
+				vmCtx.Logger.Error(err, "failed to get additional resources for backup")
+				return err
+			}
 
-		backupOpts := virtualmachine.BackupVirtualMachineOptions{
-			VMCtx:               vmCtx,
-			VcVM:                vcVM,
-			DiskUUIDToPVC:       diskUUIDToPVC,
-			AdditionalResources: additionalResources,
-			BackupVersion:       fmt.Sprint(time.Now().Unix()),
-			ClassicDiskUUIDs:    GetAttachedClassicDiskUUIDs(vmCtx),
+			backupOpts := virtualmachine.BackupVirtualMachineOptions{
+				VMCtx:               vmCtx,
+				VcVM:                vcVM,
+				DiskUUIDToPVC:       diskUUIDToPVC,
+				AdditionalResources: additionalResources,
+				BackupVersion:       fmt.Sprint(time.Now().Unix()),
+				ClassicDiskUUIDs:    GetAttachedClassicDiskUUIDs(vmCtx),
+			}
+			if err := virtualmachine.BackupVirtualMachine(backupOpts); err != nil {
+				vmCtx.Logger.Error(err, "failed to backup VM")
+				return err
+			}
 		}
-		if err := virtualmachine.BackupVirtualMachine(backupOpts); err != nil {
-			vmCtx.Logger.Error(err, "failed to backup VM")
-			return err
-		}
-	}
+	*/
 
 	return nil
 }

@@ -227,6 +227,7 @@ func EnsureDisksHaveControllers(
 
 		// Point the disk to the new controller.
 		disk.ControllerKey = newDeviceKey
+		disk.UnitNumber = ptr.To[int32](0)
 
 		// Add the controller key to the map that tracks how many disks are
 		// attached to a given controller.
@@ -326,7 +327,7 @@ func (d ensureDiskControllerData) numNVMEControllers() int {
 // keys from controllerKeysToAttachedDisks that do not also exist in
 // controllerKeys.
 func (d ensureDiskControllerData) validateAttachments() {
-	// Remove any invalid controllers from controllerKeyToNumDiskMap.
+	// Remove any invalid controllers from controllerKeysToAttachedDisks.
 	for key := range d.controllerKeysToAttachedDisks {
 		if _, ok := d.controllerKeys[key]; !ok {
 			delete(d.controllerKeysToAttachedDisks, key)
@@ -398,7 +399,7 @@ func (d *ensureDiskControllerData) attach(controllerKey int32) {
 // controller key has a free slot to attach a disk.
 //
 // TODO(akutz) Consider the hardware version when calculating these values.
-func (d *ensureDiskControllerData) hasFreeSlot(controllerKey int32) bool {
+func (d *ensureDiskControllerData) hasFreeSlot(controllerKey int32) (int, bool) {
 
 	var maxDisksForType int
 
@@ -432,7 +433,8 @@ func (d *ensureDiskControllerData) hasFreeSlot(controllerKey int32) bool {
 		maxDisksForType = maxDisksPerNVMEController
 	}
 
-	return d.controllerKeysToAttachedDisks[controllerKey] < maxDisksForType-1
+	unitNumber := d.controllerKeysToAttachedDisks[controllerKey]
+	return unitNumber, unitNumber < maxDisksForType-1
 }
 
 // ensureDiskControllerFind attempts to locate a controller for the provided
@@ -521,10 +523,11 @@ func ensureDiskControllerFindWith(
 
 	for i := range controllerKeys {
 		controllerKey := controllerKeys[i]
-		if diskControllers.hasFreeSlot(controllerKey) {
+		if slot, ok := diskControllers.hasFreeSlot(controllerKey); ok {
 			// If the controller has room for another disk, then use this
 			// controller for the current disk.
 			disk.ControllerKey = controllerKey
+			disk.UnitNumber = ptr.To(int32(slot))
 			diskControllers.attach(controllerKey)
 			return true
 		}

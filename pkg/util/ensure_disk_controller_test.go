@@ -44,7 +44,7 @@ var _ = DescribeTable(
 			Expect(err).To(HaveOccurred())
 			Expect(err).To(MatchError(expectedErr))
 		} else {
-			Expect(configSpec).To(Equal(expectedConfigSpec))
+			Expect(configSpec).To(BeComparableTo(expectedConfigSpec))
 		}
 	},
 
@@ -173,6 +173,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -227,6 +228,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -285,6 +287,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -343,6 +346,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -396,6 +400,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -449,6 +454,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -527,6 +533,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -609,6 +616,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -665,6 +673,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -709,6 +718,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -2,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -783,6 +793,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -51,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -835,6 +846,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -900,6 +912,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -946,6 +959,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -992,6 +1006,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1038,6 +1053,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1082,6 +1098,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1131,6 +1148,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 15000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1177,6 +1195,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 15000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1224,6 +1243,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 31000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1289,6 +1309,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1351,6 +1372,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1413,6 +1435,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1475,6 +1498,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1533,6 +1557,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1598,6 +1623,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1660,6 +1686,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1721,6 +1748,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -10,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1782,6 +1810,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1879,6 +1908,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -1996,6 +2026,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -2113,6 +2144,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -2241,6 +2273,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -2440,6 +2473,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: -1,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},
@@ -2710,6 +2744,7 @@ func generateVirtualDisks(numDisks int, controllerKey int32) []vimtypes.BaseVirt
 		devices[i] = &vimtypes.VirtualDisk{
 			VirtualDevice: vimtypes.VirtualDevice{
 				ControllerKey: controllerKey,
+				UnitNumber:    ptr.To(int32(i)),
 			},
 		}
 	}

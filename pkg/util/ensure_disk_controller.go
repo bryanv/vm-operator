@@ -5,8 +5,8 @@ package util
 
 import (
 	"fmt"
-
 	vimtypes "github.com/vmware/govmomi/vim25/types"
+	"golang.org/x/tools/container/intsets"
 
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 )
@@ -46,7 +46,7 @@ func EnsureDisksHaveControllers(
 		pciController   *vimtypes.VirtualPCIController
 		diskControllers = ensureDiskControllerData{
 			controllerKeys:                map[int32]vimtypes.BaseVirtualController{},
-			controllerKeysToAttachedDisks: map[int32]int{},
+			controllerKeysToAttachedDisks: map[int32]*ensureDiskControllerUnitNumbers{},
 		}
 	)
 
@@ -112,7 +112,7 @@ func EnsureDisksHaveControllers(
 				//
 				// Please note that at this point it is not yet known if the
 				// controller key is a *valid* controller.
-				diskControllers.attach(controllerKey)
+				diskControllers.attach(controllerKey, tvd.UnitNumber)
 			}
 		}
 
@@ -165,7 +165,7 @@ func EnsureDisksHaveControllers(
 			diskControllers.add(bvd)
 
 		case *vimtypes.VirtualDisk:
-			diskControllers.attach(tvd.ControllerKey)
+			diskControllers.attach(tvd.ControllerKey, tvd.UnitNumber)
 		}
 	}
 
@@ -198,14 +198,26 @@ func EnsureDisksHaveControllers(
 	// valid controller keys.
 	diskControllers.validateAttachments()
 
-	for i := range disks {
-		disk := disks[i]
-
-		// If the disk already points to a controller then skip to the next
-		// disk.
-		if diskControllers.exists(disk.ControllerKey) {
+	// For any disks that specified an existing controller but not a unit number,
+	// try to allocate a unit number now.
+	var disksWithoutController []*vimtypes.VirtualDisk
+	for _, disk := range disks {
+		if !diskControllers.exists(disk.ControllerKey) {
+			disksWithoutController = append(disksWithoutController, disk)
 			continue
 		}
+
+		if disk.UnitNumber == nil {
+			unitNumber, ok := diskControllers.getNextUnitNumber(disk.ControllerKey)
+			if !ok {
+				return fmt.Errorf("")
+			}
+			disk.UnitNumber = ptr.To(unitNumber)
+		}
+	}
+
+	for i := range disksWithoutController {
+		disk := disksWithoutController[i]
 
 		// The disk does not point to a controller, so try to locate one.
 		if ensureDiskControllerFind(disk, &diskControllers) {
@@ -227,11 +239,8 @@ func EnsureDisksHaveControllers(
 
 		// Point the disk to the new controller.
 		disk.ControllerKey = newDeviceKey
-		disk.UnitNumber = ptr.To[int32](0)
-
-		// Add the controller key to the map that tracks how many disks are
-		// attached to a given controller.
-		diskControllers.attach(newDeviceKey)
+		unitNumber := diskControllers.mustGetNextUnitNumber(disk.ControllerKey)
+		disk.UnitNumber = ptr.To(unitNumber)
 
 		// Decrement the newDeviceKey so the next device has a unique key.
 		newDeviceKey--
@@ -281,13 +290,44 @@ func (d *ensureDiskControllerBusNumbers) set(busNumber int32) {
 	}
 }
 
+type ensureDiskControllerUnitNumbers struct {
+	cur         int
+	unitNumbers intsets.Sparse
+}
+
+func (d *ensureDiskControllerUnitNumbers) reserveUnitNumber(unitNumber int32) {
+	d.unitNumbers.Insert(int(unitNumber))
+}
+
+func (d *ensureDiskControllerUnitNumbers) nextUnitNumber(max int) (int32, bool) {
+	if d.unitNumbers.IsEmpty() {
+		// Common case: no pre-allocated unit numbers so allocate sequentially.
+		un := d.cur
+		if un < max {
+			d.cur++
+			return int32(un), true
+		}
+		return -1, false
+	}
+
+	for c := d.cur; c < max; c++ {
+		if !d.unitNumbers.Has(c) {
+			d.cur = c + 1
+			d.unitNumbers.Insert(c)
+			return int32(c), true
+		}
+	}
+
+	return -1, false
+}
+
 type ensureDiskControllerData struct {
 	// TODO(akutz) Use the hardware version when calculating the max disks for
 	//             a given controller type.
 	// hardwareVersion int
 
 	controllerKeys                map[int32]vimtypes.BaseVirtualController
-	controllerKeysToAttachedDisks map[int32]int
+	controllerKeysToAttachedDisks map[int32]*ensureDiskControllerUnitNumbers
 
 	// SCSI
 	scsiBusNumbers             ensureDiskControllerBusNumbers
@@ -353,6 +393,10 @@ func (d *ensureDiskControllerData) add(controller vimtypes.BaseVirtualDevice) {
 	// Record the controller's device key in the controller key map.
 	d.controllerKeys[key] = bvc
 
+	if _, ok := d.controllerKeysToAttachedDisks[key]; !ok {
+		d.controllerKeysToAttachedDisks[key] = &ensureDiskControllerUnitNumbers{}
+	}
+
 	// Record the controller's device key in the list for that type of
 	// controller.
 	switch controller.(type) {
@@ -391,15 +435,23 @@ func (d *ensureDiskControllerData) add(controller vimtypes.BaseVirtualDevice) {
 
 // attach increments the number of disks attached to the controller identified
 // by the provided controller key.
-func (d *ensureDiskControllerData) attach(controllerKey int32) {
-	d.controllerKeysToAttachedDisks[controllerKey]++
+func (d *ensureDiskControllerData) attach(controllerKey int32, unitNumber *int32) {
+	e, ok := d.controllerKeysToAttachedDisks[controllerKey]
+	if !ok {
+		e = &ensureDiskControllerUnitNumbers{}
+		d.controllerKeysToAttachedDisks[controllerKey] = e
+	}
+
+	if unitNumber != nil {
+		e.reserveUnitNumber(*unitNumber)
+	}
 }
 
-// hasFreeSlot returns whether or not the controller identified by the provided
-// controller key has a free slot to attach a disk.
+// getNextUnitNumber returns whether or not the controller identified by the provided
+// controller key has a free unit number to attach a disk.
 //
 // TODO(akutz) Consider the hardware version when calculating these values.
-func (d *ensureDiskControllerData) hasFreeSlot(controllerKey int32) (int, bool) {
+func (d *ensureDiskControllerData) getNextUnitNumber(controllerKey int32) (int32, bool) {
 
 	var maxDisksForType int
 
@@ -433,8 +485,15 @@ func (d *ensureDiskControllerData) hasFreeSlot(controllerKey int32) (int, bool) 
 		maxDisksForType = maxDisksPerNVMEController
 	}
 
-	unitNumber := d.controllerKeysToAttachedDisks[controllerKey]
-	return unitNumber, unitNumber < maxDisksForType-1
+	return d.controllerKeysToAttachedDisks[controllerKey].nextUnitNumber(maxDisksForType)
+}
+
+func (d *ensureDiskControllerData) mustGetNextUnitNumber(controllerKey int32) int32 {
+	unitNumber, ok := d.getNextUnitNumber(controllerKey)
+	if !ok {
+		panic(fmt.Sprintf("failed to get unitNumber for controller key %d", controllerKey))
+	}
+	return unitNumber
 }
 
 // ensureDiskControllerFind attempts to locate a controller for the provided
@@ -523,12 +582,11 @@ func ensureDiskControllerFindWith(
 
 	for i := range controllerKeys {
 		controllerKey := controllerKeys[i]
-		if slot, ok := diskControllers.hasFreeSlot(controllerKey); ok {
-			// If the controller has room for another disk, then use this
-			// controller for the current disk.
+		// If the controller has room for another disk, then use this controller
+		// for the current disk.
+		if unitNumber, ok := diskControllers.getNextUnitNumber(controllerKey); ok {
 			disk.ControllerKey = controllerKey
-			disk.UnitNumber = ptr.To(int32(slot))
-			diskControllers.attach(controllerKey)
+			disk.UnitNumber = ptr.To(unitNumber)
 			return true
 		}
 	}

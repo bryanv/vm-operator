@@ -135,6 +135,7 @@ var _ = DescribeTable(
 					Device: &vimtypes.VirtualDisk{
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](0),
 						},
 					},
 				},

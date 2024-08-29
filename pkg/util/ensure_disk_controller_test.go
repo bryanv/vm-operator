@@ -199,6 +199,65 @@ var _ = DescribeTable(
 	),
 
 	Entry(
+		"attach disks to multiple new PVSCSI controllers when adding disk ConfigSpec and existing device includes only PCI controller",
+		&vimtypes.VirtualMachineConfigSpec{
+			Version:      vmx20,
+			DeviceChange: generateDevChangeDefaultDisk(17),
+		},
+		[]vimtypes.BaseVirtualDevice{
+			&vimtypes.VirtualPCIController{
+				VirtualController: vimtypes.VirtualController{
+					VirtualDevice: vimtypes.VirtualDevice{
+						Key: 100,
+					},
+				},
+			},
+		},
+		nil,
+		&vimtypes.VirtualMachineConfigSpec{
+			Version: vmx20,
+			DeviceChange: joinSlices(
+				generateDevChangeVirtualDisks(16, -1),
+				generateDevChangeVirtualDisks(1, -2),
+				[]vimtypes.BaseVirtualDeviceConfigSpec{
+					&vimtypes.VirtualDeviceConfigSpec{
+						Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+						Device: &vimtypes.ParaVirtualSCSIController{
+							VirtualSCSIController: vimtypes.VirtualSCSIController{
+								VirtualController: vimtypes.VirtualController{
+									VirtualDevice: vimtypes.VirtualDevice{
+										ControllerKey: 100,
+										Key:           -1,
+									},
+									BusNumber: 0,
+								},
+								HotAddRemove: ptr.To(true),
+								SharedBus:    vimtypes.VirtualSCSISharingNoSharing,
+							},
+						},
+					},
+					&vimtypes.VirtualDeviceConfigSpec{
+						Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+						Device: &vimtypes.ParaVirtualSCSIController{
+							VirtualSCSIController: vimtypes.VirtualSCSIController{
+								VirtualController: vimtypes.VirtualController{
+									VirtualDevice: vimtypes.VirtualDevice{
+										ControllerKey: 100,
+										Key:           -2,
+									},
+									BusNumber: 1,
+								},
+								HotAddRemove: ptr.To(true),
+								SharedBus:    vimtypes.VirtualSCSISharingNoSharing,
+							},
+						},
+					},
+				},
+			),
+		},
+	),
+
+	Entry(
 		"attach disk to new PVSCSI controller when adding disk and there is a nil device change in ConfigSpec and existing device includes only PCI controller",
 		&vimtypes.VirtualMachineConfigSpec{
 			Version: vmx20,
@@ -914,6 +973,138 @@ var _ = DescribeTable(
 						VirtualDevice: vimtypes.VirtualDevice{
 							ControllerKey: 1000,
 							UnitNumber:    ptr.To[int32](0),
+						},
+					},
+				},
+			},
+		},
+	),
+
+	Entry(
+		"attach disk that specifies unit and existing controller when adding disk and existing devices includes PCI and PVSCSI controllers",
+		&vimtypes.VirtualMachineConfigSpec{
+			Version: vmx20,
+			DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device: &vimtypes.VirtualDisk{
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](4),
+						},
+					},
+				},
+			},
+		},
+		[]vimtypes.BaseVirtualDevice{
+			&vimtypes.VirtualPCIController{
+				VirtualController: vimtypes.VirtualController{
+					VirtualDevice: vimtypes.VirtualDevice{
+						Key: 100,
+					},
+				},
+			},
+			&vimtypes.ParaVirtualSCSIController{
+				VirtualSCSIController: vimtypes.VirtualSCSIController{
+					VirtualController: vimtypes.VirtualController{
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 100,
+							Key:           1000,
+						},
+					},
+				},
+			},
+		},
+		nil,
+		&vimtypes.VirtualMachineConfigSpec{
+			Version: vmx20,
+			DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device: &vimtypes.VirtualDisk{
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](4),
+						},
+					},
+				},
+			},
+		},
+	),
+
+	Entry(
+		"attach multiple disks, with one disk specifying unit number and existing controller when adding disk and existing devices includes PCI and PVSCSI controllers",
+		&vimtypes.VirtualMachineConfigSpec{
+			Version: vmx20,
+			DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device:    &vimtypes.VirtualDisk{},
+				},
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device:    &vimtypes.VirtualDisk{},
+				},
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device: &vimtypes.VirtualDisk{
+						CapacityInBytes: 42, // Expected disk with this size should have reserved unit number.
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](1),
+						},
+					},
+				},
+			},
+		},
+		[]vimtypes.BaseVirtualDevice{
+			&vimtypes.VirtualPCIController{
+				VirtualController: vimtypes.VirtualController{
+					VirtualDevice: vimtypes.VirtualDevice{
+						Key: 100,
+					},
+				},
+			},
+			&vimtypes.ParaVirtualSCSIController{
+				VirtualSCSIController: vimtypes.VirtualSCSIController{
+					VirtualController: vimtypes.VirtualController{
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 100,
+							Key:           1000,
+						},
+					},
+				},
+			},
+		},
+		nil,
+		&vimtypes.VirtualMachineConfigSpec{
+			Version: vmx20,
+			DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device: &vimtypes.VirtualDisk{
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](0),
+						},
+					},
+				},
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device: &vimtypes.VirtualDisk{
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](2),
+						},
+					},
+				},
+				&vimtypes.VirtualDeviceConfigSpec{
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+					Device: &vimtypes.VirtualDisk{
+						CapacityInBytes: 42,
+						VirtualDevice: vimtypes.VirtualDevice{
+							ControllerKey: 1000,
+							UnitNumber:    ptr.To[int32](1),
 						},
 					},
 				},
@@ -2739,6 +2930,17 @@ func joinSlices[T any](a []T, b ...[]T) []T {
 	return a
 }
 
+func generateDevChangeDefaultDisk(numDisks int) []vimtypes.BaseVirtualDeviceConfigSpec {
+	devChanges := make([]vimtypes.BaseVirtualDeviceConfigSpec, numDisks)
+	for i := range numDisks {
+		devChanges[i] = &vimtypes.VirtualDeviceConfigSpec{
+			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+			Device:    &vimtypes.VirtualDisk{},
+		}
+	}
+	return devChanges
+}
+
 func generateVirtualDisks(numDisks int, controllerKey int32) []vimtypes.BaseVirtualDevice {
 	devices := make([]vimtypes.BaseVirtualDevice, numDisks)
 	for i := range devices {
@@ -2750,4 +2952,20 @@ func generateVirtualDisks(numDisks int, controllerKey int32) []vimtypes.BaseVirt
 		}
 	}
 	return devices
+}
+
+func generateDevChangeVirtualDisks(numDisks int, controllerKey int32) []vimtypes.BaseVirtualDeviceConfigSpec {
+	devChanges := make([]vimtypes.BaseVirtualDeviceConfigSpec, numDisks)
+	for i := range numDisks {
+		devChanges[i] = &vimtypes.VirtualDeviceConfigSpec{
+			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+			Device: &vimtypes.VirtualDisk{
+				VirtualDevice: vimtypes.VirtualDevice{
+					ControllerKey: controllerKey,
+					UnitNumber:    ptr.To(int32(i)),
+				},
+			},
+		}
+	}
+	return devChanges
 }

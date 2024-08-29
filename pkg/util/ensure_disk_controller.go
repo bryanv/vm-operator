@@ -14,8 +14,8 @@ import (
 )
 
 // EnsureDisksHaveControllers ensures that all disks in the provided
-// ConfigSpec point to a controller. If no controller exists, LSILogic SCSI
-// controllers are added to the ConfigSpec as necessary for the disks.
+// ConfigSpec point to a controller. If no controller exists, PVSCSI
+// controllers, are added to the ConfigSpec as necessary for the disks.
 //
 // Please note the following table for the number of controllers of each type
 // that are supported as well as how many disks (per controller) each supports:
@@ -467,6 +467,7 @@ func (d *ensureDiskControllerData) addDisk(controllerKey int32, unitNumber *int3
 func (d *ensureDiskControllerData) getNextUnitNumber(controllerKey int32) (int32, bool) {
 	dc, ok := d.keyToDiskControllers[controllerKey]
 	if !ok {
+		// We shouldn't have an invalid controller key at this point.
 		return -1, false
 	}
 

@@ -6,6 +6,12 @@ package vsphere
 import (
 	"context"
 	"fmt"
+	"maps"
+	"math/rand"
+	"strings"
+	"sync"
+	"text/template"
+
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/pbm"
 	"github.com/vmware/govmomi/pbm/types"
@@ -14,12 +20,7 @@ import (
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apierrorsutil "k8s.io/apimachinery/pkg/util/errors"
-	"maps"
-	"math/rand"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
-	"strings"
-	"sync"
-	"text/template"
 
 	imgregv1a1 "github.com/vmware-tanzu/image-registry-operator-api/api/v1alpha1"
 

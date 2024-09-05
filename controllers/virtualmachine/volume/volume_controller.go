@@ -950,34 +950,36 @@ func updateVolumeStatusWithLimit(
 	pvcSpec vmopv1.PersistentVolumeClaimVolumeSource,
 	status *vmopv1.VirtualMachineVolumeStatus) error {
 
-	// See if the volume is an instance storage volume.
-	if pvcSpec.InstanceVolumeClaim != nil {
-		// Short-cut the rest of the function since instance storage
-		// volumes already have the requested size and the PVC does
-		// not need to be fetched.
-		status.Limit = &pvcSpec.InstanceVolumeClaim.Size
-		return nil
-	}
-
-	var (
-		pvc    corev1.PersistentVolumeClaim
-		pvcKey = client.ObjectKey{
-			Namespace: ctx.VM.Namespace,
-			Name:      pvcSpec.ClaimName,
+	/*
+		// See if the volume is an instance storage volume.
+		if pvcSpec.InstanceVolumeClaim != nil {
+			// Short-cut the rest of the function since instance storage
+			// volumes already have the requested size and the PVC does
+			// not need to be fetched.
+			status.Limit = &pvcSpec.InstanceVolumeClaim.Size
+			return nil
 		}
-	)
 
-	if err := c.Get(ctx, pvcKey, &pvc); err != nil {
-		return err
-	}
+		var (
+			pvc    corev1.PersistentVolumeClaim
+			pvcKey = client.ObjectKey{
+				Namespace: ctx.VM.Namespace,
+				Name:      pvcSpec.ClaimName,
+			}
+		)
 
-	if v, ok := pvc.Spec.Resources.Limits[corev1.ResourceStorage]; ok {
-		// Use the limit if it exists.
-		status.Limit = &v
-	} else if v, ok := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
-		// Otherwise use the requested capacity.
-		status.Limit = &v
-	}
+		if err := c.Get(ctx, pvcKey, &pvc); err != nil {
+			return err
+		}
+
+		if v, ok := pvc.Spec.Resources.Limits[corev1.ResourceStorage]; ok {
+			// Use the limit if it exists.
+			status.Limit = &v
+		} else if v, ok := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
+			// Otherwise use the requested capacity.
+			status.Limit = &v
+		}
+	*/
 
 	return nil
 }

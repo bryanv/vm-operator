@@ -26,7 +26,7 @@ func ClusterMinCPUFreq(ctx context.Context, cluster *object.ClusterComputeResour
 
 	var hosts []mo.HostSystem
 	pc := property.DefaultCollector(cluster.Client())
-	if err := pc.Retrieve(ctx, cr.Host, []string{"summary"}, &hosts); err != nil {
+	if err := pc.Retrieve(ctx, cr.Host, []string{"summary.hardware"}, &hosts); err != nil {
 		return 0, err
 	}
 

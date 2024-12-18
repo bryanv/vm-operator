@@ -95,22 +95,21 @@ func (vs *vSphereVMProvider) CreateOrUpdateVirtualMachine(
 	ctx context.Context,
 	vm *vmopv1.VirtualMachine) error {
 
-	return vs.createOrUpdateVirtualMachine(ctx, vm, nil)
+	_, err := vs.createOrUpdateVirtualMachine(ctx, vm, false)
+	return err
 }
 
 func (vs *vSphereVMProvider) CreateOrUpdateVirtualMachineAsync(
 	ctx context.Context,
 	vm *vmopv1.VirtualMachine) (<-chan error, error) {
 
-	chanErr := make(chan error)
-	err := vs.createOrUpdateVirtualMachine(ctx, vm, chanErr)
-	return chanErr, err
+	return vs.createOrUpdateVirtualMachine(ctx, vm, true)
 }
 
 func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 	ctx context.Context,
 	vm *vmopv1.VirtualMachine,
-	chanErr chan error) error {
+	async bool) (<-chan error, error) {
 
 	vmCtx := pkgctx.VirtualMachineContext{
 		Context: context.WithValue(
@@ -124,7 +123,7 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 
 	client, err := vs.getVcClient(vmCtx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Set the VC UUID annotation on the VM before attempting creation or
@@ -139,17 +138,14 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 	// Check to see if the VM can be found on the underlying platform.
 	foundVM, err := vs.getVM(vmCtx, client, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if foundVM != nil {
 		// Mark that this is an update operation.
 		ctxop.MarkUpdate(vmCtx)
 
-		if chanErr != nil {
-			defer close(chanErr)
-		}
-		return vs.updateVirtualMachine(vmCtx, foundVM, client, nil)
+		return nil, vs.updateVirtualMachine(vmCtx, foundVM, client, nil)
 	}
 
 	// Mark that this is a create operation.
@@ -164,43 +160,37 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 	//   spawned to create VMs does not take up too much memory.
 	allowed, decrementConcurrentCreatesFn := vs.vmCreateConcurrentAllowed(vmCtx)
 	if !allowed {
-		return providers.ErrTooManyCreates
+		return nil, providers.ErrTooManyCreates
 	}
 
 	// cleanupFn tracks the function(s) that must be invoked upon leaving this
 	// function during a blocking create or after an async create.
 	cleanupFn := decrementConcurrentCreatesFn
 
-	if chanErr == nil {
+	if !async {
 		vmCtx.Logger.V(4).Info("Doing a blocking create")
 
 		defer cleanupFn()
 
 		createArgs, err := vs.getCreateArgs(vmCtx, client)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		newVM, err := vs.createVirtualMachine(vmCtx, client, createArgs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if newVM != nil {
 			// If the create actually occurred, fall-through to an update
 			// post-reconfigure.
-			return vs.createdVirtualMachineFallthroughUpdate(
+			return nil, vs.createdVirtualMachineFallthroughUpdate(
 				vmCtx,
 				newVM,
 				client,
 				createArgs)
 		}
-	}
-
-	// Update the cleanup function to include closing the error channel.
-	cleanupFn = func() {
-		close(chanErr)
-		decrementConcurrentCreatesFn()
 	}
 
 	if _, ok := currentlyCreating.LoadOrStore(
@@ -210,7 +200,7 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 		// If the VM is already being created in a goroutine, then there is no
 		// need to create it again.
 		cleanupFn()
-		return providers.ErrDuplicateCreate
+		return nil, providers.ErrDuplicateCreate
 	}
 
 	vmCtx.Logger.V(4).Info("Doing a non-blocking create")
@@ -219,7 +209,6 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 	// no longer occurring.
 	cleanupFn = func() {
 		currentlyCreating.Delete(vmCtx.VM.NamespacedName())
-		close(chanErr)
 		decrementConcurrentCreatesFn()
 	}
 
@@ -229,7 +218,15 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 	if err != nil {
 		// Before we return the error, we need to make sure we cleanup.
 		cleanupFn()
-		return err
+		return nil, err
+	}
+
+	chanErr := make(chan error)
+	// Update the cleanup function to include closing the error channel.
+	cleanupFn = func() {
+		currentlyCreating.Delete(vmCtx.VM.NamespacedName())
+		close(chanErr)
+		decrementConcurrentCreatesFn()
 	}
 
 	// Create a copy of the context and replace its VM with a copy to
@@ -248,7 +245,7 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 
 	// Return with no error. The VM will be re-enqueued once the create
 	// completes with success or failure.
-	return nil
+	return chanErr, nil
 }
 
 func (vs *vSphereVMProvider) DeleteVirtualMachine(

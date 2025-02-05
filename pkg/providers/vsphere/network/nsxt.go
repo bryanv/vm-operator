@@ -30,40 +30,38 @@ func ResolveBackingPostPlacement(
 		return false, nil
 	}
 
-	networkType := pkgcfg.FromContext(ctx).NetworkProviderType
-	if networkType == "" {
+	var typeStr string
+	switch pkgcfg.FromContext(ctx).NetworkProviderType {
+	case pkgcfg.NetworkProviderTypeNSXT:
+		typeStr = "NSX"
+	case pkgcfg.NetworkProviderTypeVPC:
+		typeStr = "NSX-VPC"
+	case "":
 		return false, fmt.Errorf("no network provider set")
+	default:
+		return false, fmt.Errorf("only NSX networks are expected to need post placement backing fixup")
 	}
 
 	ccr := object.NewClusterComputeResource(vimClient, clusterMoRef)
 	fixedUp := false
 
+	var dvpgs *[]mo.DistributedVirtualPortgroup
 	for idx := range results.Results {
 		if results.Results[idx].Backing != nil {
 			continue
 		}
 
-		var backing object.NetworkReference
-		var err error
-
-		switch networkType {
-		case pkgcfg.NetworkProviderTypeNSXT:
-			backing, err = searchNsxtNetworkReference(ctx, ccr, results.Results[idx].NetworkID)
+		if dvpgs == nil {
+			d, err := getDVGPs(ctx, ccr)
 			if err != nil {
-				err = fmt.Errorf("post placement NSX backing fixup failed: %w", err)
+				return false, err
 			}
-		// VPC is an NSX-T construct that is attached to an NSX-T Project.
-		case pkgcfg.NetworkProviderTypeVPC:
-			backing, err = searchNsxtNetworkReference(ctx, ccr, results.Results[idx].NetworkID)
-			if err != nil {
-				err = fmt.Errorf("post placement NSX-VPC backing fixup failed: %w", err)
-			}
-		default:
-			err = fmt.Errorf("only NSX networks are expected to need post placement backing fixup")
+			dvpgs = &d
 		}
 
+		backing, err := searchNsxtNetworkReference(*dvpgs, ccr.Client(), results.Results[idx].NetworkID)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("post placement %s backing fixup failed: %w", typeStr, err)
 		}
 
 		fixedUp = true
@@ -73,15 +71,11 @@ func ResolveBackingPostPlacement(
 	return fixedUp, nil
 }
 
-// searchNsxtNetworkReference takes in NSX-T LogicalSwitchUUID and returns the reference of the network.
-func searchNsxtNetworkReference(
+func getDVGPs(
 	ctx context.Context,
 	ccr *object.ClusterComputeResource,
-	networkID string) (object.NetworkReference, error) {
+) ([]mo.DistributedVirtualPortgroup, error) {
 
-	// This is more or less how the old code did it. We could save repeated work by moving this
-	// into the callers since it will always be for the same CCR, but the common case is one NIC,
-	// or at most a handful, so that's for later.
 	var obj mo.ClusterComputeResource
 	if err := ccr.Properties(ctx, ccr.Reference(), []string{"network"}, &obj); err != nil {
 		return nil, err
@@ -104,6 +98,15 @@ func searchNsxtNetworkReference(
 		return nil, err
 	}
 
+	return dvpgs, nil
+}
+
+// searchNsxtNetworkReference takes in NSX-T LogicalSwitchUUID and returns the reference of the network.
+func searchNsxtNetworkReference(
+	dvpgs []mo.DistributedVirtualPortgroup,
+	client *vim25.Client,
+	networkID string) (object.NetworkReference, error) {
+
 	var dvpgMoRefs []vimtypes.ManagedObjectReference
 	for _, dvpg := range dvpgs {
 		if dvpg.Config.LogicalSwitchUuid == networkID {
@@ -113,7 +116,7 @@ func searchNsxtNetworkReference(
 
 	switch len(dvpgMoRefs) {
 	case 1:
-		return object.NewDistributedVirtualPortgroup(ccr.Client(), dvpgMoRefs[0]), nil
+		return object.NewDistributedVirtualPortgroup(client, dvpgMoRefs[0]), nil
 	case 0:
 		return nil, fmt.Errorf("no DVPG with NSX network ID %q found", networkID)
 	default:

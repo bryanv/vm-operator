@@ -12,7 +12,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha4"
-	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
+	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
 )
 
@@ -23,13 +23,13 @@ type VMStorageData struct {
 }
 
 func getStorageClassAndPolicyID(
-	vmCtx pkgctx.VirtualMachineContext,
+	ctx context.Context,
 	client ctrlclient.Client,
 	storageClassName string) (*storagev1.StorageClass, string, error) {
 
 	sc := storagev1.StorageClass{}
-	if err := client.Get(vmCtx, ctrlclient.ObjectKey{Name: storageClassName}, &sc); err != nil {
-		vmCtx.Logger.Error(err, "Failed to get StorageClass", "storageClass", storageClassName)
+	if err := client.Get(ctx, ctrlclient.ObjectKey{Name: storageClassName}, &sc); err != nil {
+		pkgutil.FromContextOrDefault(ctx).Error(err, "Failed to get StorageClass", "storageClass", storageClassName)
 		return nil, "", err
 	}
 	policyID, err := kubeutil.GetStoragePolicyID(sc)
@@ -37,10 +37,11 @@ func getStorageClassAndPolicyID(
 }
 
 func GetVMStorageData(
-	vmCtx pkgctx.VirtualMachineContext,
+	ctx context.Context,
+	vm *vmopv1.VirtualMachine,
 	client ctrlclient.Client) (VMStorageData, error) {
 
-	storageClassNames, pvcs, err := getVMStorageClassNamesAndPVCs(vmCtx, vmCtx.VM, client)
+	storageClassNames, pvcs, err := getVMStorageClassNamesAndPVCs(ctx, vm, client)
 	if err != nil {
 		return VMStorageData{}, err
 	}
@@ -53,7 +54,7 @@ func GetVMStorageData(
 
 	for _, name := range storageClassNames {
 		if _, ok := data.StorageClassToPolicyID[name]; !ok {
-			storageClass, policyID, err := getStorageClassAndPolicyID(vmCtx, client, name)
+			storageClass, policyID, err := getStorageClassAndPolicyID(ctx, client, name)
 			if err != nil {
 				return VMStorageData{}, err
 			}

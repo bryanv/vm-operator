@@ -1566,6 +1566,7 @@ func (vs *vSphereVMProvider) vmCreateDoPlacement(
 
 	placementConfigSpec, err := virtualmachine.CreateConfigSpecForPlacement(
 		vmCtx,
+		vmCtx.VM,
 		createArgs.ConfigSpec,
 		createArgs.Storage.StorageClassToPolicyID)
 	if err != nil {
@@ -2223,7 +2224,7 @@ func (vs *vSphereVMProvider) vmCreateGetStoragePrereqs(
 		createArgs.DatastoreMoID = datastore.Reference().Value
 	}
 
-	vmStorage, err := storage.GetVMStorageData(vmCtx, vs.k8sClient)
+	vmStorage, err := storage.GetVMStorageData(vmCtx, vmCtx.VM, vs.k8sClient)
 	if err != nil {
 		reason, msg := errToConditionReasonAndMessage(err)
 		pkgcnd.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionStorageReady, reason, "%s", msg)
@@ -2312,6 +2313,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 
 	createArgs.ConfigSpec = virtualmachine.CreateConfigSpec(
 		vmCtx,
+		vmCtx.VM,
 		configSpec,
 		createArgs.VMClass.Spec,
 		createArgs.ImageStatus,
@@ -2660,6 +2662,7 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 
 	updateArgs.ConfigSpec = virtualmachine.CreateConfigSpec(
 		vmCtx,
+		vmCtx.VM,
 		configSpec,
 		updateArgs.VMClass.Spec,
 		vmopv1.VirtualMachineImageStatus{},
@@ -2726,6 +2729,7 @@ func (vs *vSphereVMProvider) vmResizeGetArgs(
 
 		resizeArgs.ConfigSpec = virtualmachine.CreateConfigSpec(
 			vmCtx,
+			vmCtx.VM,
 			configSpec,
 			resizeArgs.VMClass.Spec,
 			vmopv1.VirtualMachineImageStatus{},

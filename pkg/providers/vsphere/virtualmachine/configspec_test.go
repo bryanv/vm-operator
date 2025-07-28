@@ -74,6 +74,7 @@ var _ = Describe("CreateConfigSpec", func() {
 	JustBeforeEach(func() {
 		configSpec = virtualmachine.CreateConfigSpec(
 			vmCtx,
+			vmCtx.VM,
 			classConfigSpec,
 			vmClassSpec,
 			vmImageStatus,
@@ -486,6 +487,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 		var err error
 		configSpec, err = virtualmachine.CreateConfigSpecForPlacement(
 			vmCtx,
+			vmCtx.VM,
 			baseConfigSpec,
 			storageClassesToIDs)
 		Expect(err).ToNot(HaveOccurred())

@@ -7,7 +7,7 @@ package vsphere_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -16,6 +16,7 @@ import (
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere"
+	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
 
@@ -69,6 +70,71 @@ func vmGroupTests() {
 		vm1.Spec.GroupName = vmGroup.Name
 
 		vmGroup.Namespace = nsInfo.Namespace
+
+		{
+			// TODO: Put this test builder to reduce duplication.
+
+			vmic := vmopv1.VirtualMachineImageCache{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: pkgcfg.FromContext(ctx).PodNamespace,
+					Name:      pkgutil.VMIName(ctx.ContentLibraryItemID),
+				},
+			}
+			Expect(ctx.Client.Create(ctx, &vmic)).To(Succeed())
+
+			vmicm := corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: vmic.Namespace,
+					Name:      vmic.Name,
+				},
+				Data: map[string]string{
+					"value": ovfEnvelopeYAML,
+				},
+			}
+			Expect(ctx.Client.Create(ctx, &vmicm)).To(Succeed())
+
+			vmic.Status = vmopv1.VirtualMachineImageCacheStatus{
+				OVF: &vmopv1.VirtualMachineImageCacheOVFStatus{
+					ConfigMapName:   vmic.Name,
+					ProviderVersion: ctx.ContentLibraryItemVersion,
+				},
+				Conditions: []metav1.Condition{
+					{
+						Type:   vmopv1.VirtualMachineImageCacheConditionOVFReady,
+						Status: metav1.ConditionTrue,
+					},
+				},
+			}
+			Expect(ctx.Client.Status().Update(ctx, &vmic)).To(Succeed())
+
+			pkgcond.MarkTrue(
+				&vmic,
+				vmopv1.VirtualMachineImageCacheConditionFilesReady)
+			vmic.Status.Locations = []vmopv1.VirtualMachineImageCacheLocationStatus{
+				{
+					DatacenterID: ctx.Datacenter.Reference().Value,
+					DatastoreID:  ctx.Datastore.Reference().Value,
+					Files: []vmopv1.VirtualMachineImageCacheFileStatus{
+						{
+							ID:       ctx.ContentLibraryItemDiskPath,
+							Type:     vmopv1.VirtualMachineImageCacheFileTypeDisk,
+							DiskType: vmopv1.VirtualMachineStorageDiskTypeClassic,
+						},
+						{
+							ID:   ctx.ContentLibraryItemNVRAMPath,
+							Type: vmopv1.VirtualMachineImageCacheFileTypeOther,
+						},
+					},
+					Conditions: []metav1.Condition{
+						{
+							Type:   vmopv1.ReadyConditionType,
+							Status: metav1.ConditionTrue,
+						},
+					},
+				},
+			}
+			Expect(ctx.Client.Status().Update(ctx, &vmic)).To(Succeed())
+		}
 	})
 
 	AfterEach(func() {

@@ -9,31 +9,17 @@ import (
 	"fmt"
 
 	vimtypes "github.com/vmware/govmomi/vim25/types"
-	storagev1 "k8s.io/api/storage/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha4"
 	pkgcond "github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
+	vcclient "github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/client"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/placement"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine"
-	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
+	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 )
-
-type vmGroupPlacementArgs struct {
-	vmClasses          map[string]*vmopv1.VirtualMachineClass
-	vmImages           map[string]*vmopv1.VirtualMachineImage
-	cvmImages          map[string]*vmopv1.ClusterVirtualMachineImage
-	storageClasses     map[string]*storagev1.StorageClass
-	storageClassesToID map[string]string
-	minCPUFreq         uint64
-
-	vmSetResourcePolicyName *string
-	childRPName             string
-
-	vmConfigSpecs []vimtypes.VirtualMachineConfigSpec
-}
 
 func (vs *vSphereVMProvider) PlaceVirtualMachineGroup(
 	ctx context.Context,
@@ -42,291 +28,129 @@ func (vs *vSphereVMProvider) PlaceVirtualMachineGroup(
 
 	ctx = context.WithValue(ctx, vimtypes.ID{}, vs.getOpID(ctx, group, "groupPlacement"))
 
-	placementArgs, err := vs.vmGroupPlacementGetPrereqs(ctx, group.Namespace, groupPlacements)
+	vcClient, err := vs.getVcClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	if err := vs.vmGroupGenerateConfigSpecs(ctx, groupPlacements, &placementArgs); err != nil {
-		return err
-	}
-
-	results, err := vs.vmGroupDoPlacement(ctx, group.Namespace, &placementArgs)
+	configSpecs, err := vs.vmGroupGetVMPlacementConfigSpecs(ctx, vcClient, groupPlacements)
 	if err != nil {
 		return err
 	}
 
-	if err := applyPlacementResultsToGroups(groupPlacements, results); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (vs *vSphereVMProvider) vmGroupPlacementGetPrereqs(
-	ctx context.Context,
-	namespace string,
-	groupPlacements []providers.VMGroupPlacement) (vmGroupPlacementArgs, error) {
-
-	groupPlacementArgs := vmGroupPlacementArgs{
-		vmClasses:          make(map[string]*vmopv1.VirtualMachineClass),
-		vmImages:           make(map[string]*vmopv1.VirtualMachineImage),
-		cvmImages:          make(map[string]*vmopv1.ClusterVirtualMachineImage),
-		storageClasses:     make(map[string]*storagev1.StorageClass),
-		storageClassesToID: make(map[string]string),
-	}
-
-	for _, grpPlacement := range groupPlacements {
-		for _, vm := range grpPlacement.VMMembers {
-			if className := vm.Spec.ClassName; className != "" {
-				groupPlacementArgs.vmClasses[className] = nil
-			}
-
-			if scName := vm.Spec.StorageClass; scName != "" {
-				groupPlacementArgs.storageClasses[scName] = nil
-			}
-
-			if err := vmGroupResolveImagePrereq(vm, &groupPlacementArgs); err != nil {
-				return vmGroupPlacementArgs{}, err
-			}
-
-			if err := vmGroupResolveVMSetRPPrereq(vm, &groupPlacementArgs); err != nil {
-				return vmGroupPlacementArgs{}, err
-			}
-		}
-	}
-
-	if err := vs.vmGroupGetVMClasses(ctx, namespace, &groupPlacementArgs); err != nil {
-		return vmGroupPlacementArgs{}, err
-	}
-
-	if err := vs.vmGroupGetStorageClasses(ctx, &groupPlacementArgs); err != nil {
-		return vmGroupPlacementArgs{}, err
-	}
-
-	if err := vs.vmGroupGetImages(ctx, namespace, &groupPlacementArgs); err != nil {
-		return vmGroupPlacementArgs{}, err
-	}
-
-	if err := vs.vmGroupGetVMSetResourcePolicy(ctx, namespace, &groupPlacementArgs); err != nil {
-		return vmGroupPlacementArgs{}, err
-	}
-
-	return groupPlacementArgs, nil
-}
-
-func vmGroupResolveImagePrereq(
-	vm *vmopv1.VirtualMachine,
-	placementArgs *vmGroupPlacementArgs,
-) error {
-
-	// VM's Spec.Image should be set at this point. We really want the Kind to be
-	// set since it could resolve to a different image by the time we actually try
-	// to deploy the VM so kind of hard reuse GetVirtualMachineImageSpecAndStatus()
-	// or ResolveImageName() in the group placement context.
-	if vm.Spec.Image == nil {
-		return fmt.Errorf("VM Spec.Image is nil")
-	}
-
-	switch vm.Spec.Image.Kind {
-	case vmiKind:
-		placementArgs.vmImages[vm.Spec.Image.Name] = nil
-	case cvmiKind:
-		placementArgs.cvmImages[vm.Spec.Image.Name] = nil
-	default:
-		return fmt.Errorf("unknown image kind %s", vm.Spec.Image.Kind)
-	}
-
-	return nil
-}
-
-func vmGroupResolveVMSetRPPrereq(
-	vm *vmopv1.VirtualMachine,
-	placementArgs *vmGroupPlacementArgs) error {
-
-	// All VMs that we're going to place together must to either belong to the same
-	// VirtualMachineSetResourcePolicy or none at all since that determines the child
-	// ResourcePools but placement only takes a single list of candidates pools.
-
-	var rpName string
-	if rsv := vm.Spec.Reserved; rsv != nil {
-		rpName = rsv.ResourcePolicyName
-	}
-
-	if placementArgs.vmSetResourcePolicyName == nil {
-		placementArgs.vmSetResourcePolicyName = &rpName
-	} else if rpName != *placementArgs.vmSetResourcePolicyName {
-		return fmt.Errorf("all VirtualMachine members must belong to same VirtualMachineSetResourcePolicy")
-	}
-
-	return nil
-}
-
-func (vs *vSphereVMProvider) vmGroupGetVMClasses(
-	ctx context.Context,
-	namespace string,
-	placementArgs *vmGroupPlacementArgs,
-) error {
-
-	var needMinCPUFreq bool
-
-	for className := range placementArgs.vmClasses {
-		vmClass := &vmopv1.VirtualMachineClass{}
-		err := vs.k8sClient.Get(ctx, client.ObjectKey{Name: className, Namespace: namespace}, vmClass)
-		if err != nil {
-			return err
-		}
-		placementArgs.vmClasses[className] = vmClass
-
-		if !needMinCPUFreq {
-			res := vmClass.Spec.Policies.Resources
-			needMinCPUFreq = !res.Requests.Cpu.IsZero() || !res.Limits.Cpu.IsZero()
-		}
-	}
-
-	if needMinCPUFreq {
-		freq, err := vs.getOrComputeCPUMinFrequency(ctx)
-		if err != nil {
-			return err
-		}
-		placementArgs.minCPUFreq = freq
-	}
-
-	return nil
-}
-
-func (vs *vSphereVMProvider) vmGroupGetStorageClasses(
-	ctx context.Context,
-	placementArgs *vmGroupPlacementArgs) error {
-
-	for scName := range placementArgs.storageClasses {
-		sc := &storagev1.StorageClass{}
-		if err := vs.k8sClient.Get(ctx, client.ObjectKey{Name: scName}, sc); err != nil {
-			return err
-		}
-		placementArgs.storageClasses[scName] = sc
-
-		policyID, err := kubeutil.GetStoragePolicyID(*sc)
-		if err != nil {
-			return err
-		}
-		placementArgs.storageClassesToID[scName] = policyID
-	}
-
-	return nil
-}
-
-func (vs *vSphereVMProvider) vmGroupGetImages(
-	ctx context.Context,
-	namespace string,
-	placementArgs *vmGroupPlacementArgs) error {
-
-	for name := range placementArgs.vmImages {
-		vmi := &vmopv1.VirtualMachineImage{}
-		if err := vs.k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, vmi); err != nil {
-			return err
-		}
-		placementArgs.vmImages[name] = vmi
-	}
-
-	for name := range placementArgs.cvmImages {
-		cvmi := &vmopv1.ClusterVirtualMachineImage{}
-		if err := vs.k8sClient.Get(ctx, client.ObjectKey{Name: name}, cvmi); err != nil {
-			return err
-		}
-		placementArgs.cvmImages[name] = cvmi
-	}
-
-	return nil
-}
-
-func (vs *vSphereVMProvider) vmGroupGetVMSetResourcePolicy(
-	ctx context.Context,
-	namespace string,
-	placementArgs *vmGroupPlacementArgs) error {
-
-	name := placementArgs.vmSetResourcePolicyName
-	if name == nil || *name == "" {
+	if len(configSpecs) == 0 {
 		return nil
 	}
 
-	vmSetResourcePolicy := &vmopv1.VirtualMachineSetResourcePolicy{}
-	err := vs.k8sClient.Get(ctx, client.ObjectKey{Name: *name, Namespace: namespace}, vmSetResourcePolicy)
+	results, err := vs.vmGroupDoPlacement(ctx, vcClient, group.Namespace, configSpecs)
 	if err != nil {
 		return err
 	}
 
-	placementArgs.childRPName = vmSetResourcePolicy.Spec.ResourcePool.Name
-	return nil
-}
-
-func (vs *vSphereVMProvider) vmGroupGenerateConfigSpecs(
-	ctx context.Context,
-	groupPlacements []providers.VMGroupPlacement,
-	placementArgs *vmGroupPlacementArgs) error {
-
-	for _, grpPlacement := range groupPlacements {
-		for _, vm := range grpPlacement.VMMembers {
-			vmClass := placementArgs.vmClasses[vm.Spec.ClassName]
-
-			// TODO: Dedupe this more with vmCreateGenConfigSpec()
-
-			var classConfigSpec vimtypes.VirtualMachineConfigSpec
-			if rawConfigSpec := vmClass.Spec.ConfigSpec; len(rawConfigSpec) > 0 {
-				cs, err := GetVMClassConfigSpec(ctx, rawConfigSpec)
-				if err != nil {
-					return err
-				}
-				classConfigSpec = cs
-			} else {
-				classConfigSpec = virtualmachine.ConfigSpecFromVMClassDevices(&vmClass.Spec)
-			}
-
-			imageStatus := vmopv1.VirtualMachineImageStatus{}
-			if vm.Spec.Image != nil {
-				switch vm.Spec.Image.Kind {
-				case vmiKind:
-					i := placementArgs.vmImages[vm.Spec.Image.Name]
-					imageStatus = i.Status
-				case cvmiKind:
-					i := placementArgs.cvmImages[vm.Spec.Image.Name]
-					imageStatus = i.Status
-				}
-			}
-
-			configSpec := virtualmachine.CreateConfigSpec(
-				ctx,
-				vm,
-				classConfigSpec,
-				vmClass.Spec,
-				imageStatus,
-				placementArgs.minCPUFreq)
-
-			placementConfigSpec, err := virtualmachine.CreateConfigSpecForPlacement(
-				ctx,
-				vm,
-				configSpec,
-				placementArgs.storageClassesToID)
-			if err != nil {
-				return err
-			}
-
-			placementArgs.vmConfigSpecs = append(placementArgs.vmConfigSpecs, placementConfigSpec)
-		}
+	if err := applyPlacementResultsToGroups(results, groupPlacements); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpecs(
+	ctx context.Context,
+	vcClient *vcclient.Client,
+	groupPlacements []providers.VMGroupPlacement) ([]vimtypes.VirtualMachineConfigSpec, error) {
+
+	var configSpecs []vimtypes.VirtualMachineConfigSpec
+	// All VMs must all have the same child resource pool name or none at all since
+	// placement takes a single list of resource pool candidates.
+	var childResourcePoolName *string
+
+	for _, grpPlacement := range groupPlacements {
+		for _, vm := range grpPlacement.VMMembers {
+			logger := pkgutil.FromContextOrDefault(ctx).WithValues(
+				"childGroupName", grpPlacement.VMGroup.Name,
+				"vm", vm.Name,
+			)
+
+			vmCtx := pkgctx.VirtualMachineContext{
+				Context: ctx,
+				Logger:  logger,
+				VM:      vm,
+			}
+
+			configSpec, childRPName, err := vs.vmGroupGetVMPlacementConfigSpec(vmCtx, vcClient)
+			if err != nil {
+				return nil, err
+			}
+
+			if childResourcePoolName == nil {
+				childResourcePoolName = &childRPName
+			} else if childRPName != *childResourcePoolName {
+				return nil, fmt.Errorf("all VMs being placed as group must belong to same child ResourcePool")
+			}
+
+			configSpecs = append(configSpecs, *configSpec)
+		}
+	}
+
+	return configSpecs, nil
+}
+
+func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
+	vmCtx pkgctx.VirtualMachineContext,
+	vcClient *vcclient.Client) (*vimtypes.VirtualMachineConfigSpec, string, error) {
+
+	// This reuses parts of the VM controller driven create VM path to
+	// generate the VM's placement ConfigSpec. Later, we should work on
+	// reducing the duplication here.
+
+	createArgs := &VMCreateArgs{}
+
+	{
+		// Partial vmCreateGetPrereqs():
+
+		if err := vs.vmCreateGetVirtualMachineClass(vmCtx, createArgs); err != nil {
+			return nil, "", err
+		}
+
+		if err := vs.vmCreateGetVirtualMachineImage(vmCtx, createArgs); err != nil {
+			return nil, "", err
+		}
+
+		if err := vs.vmCreateGetSetResourcePolicy(vmCtx, createArgs); err != nil {
+			return nil, "", err
+		}
+
+		if err := vs.vmCreateGetStoragePrereqs(vmCtx, vcClient, createArgs); err != nil {
+			return nil, "", err
+		}
+	}
+
+	err := vs.vmCreateGenConfigSpec(vmCtx, createArgs)
+	if err != nil {
+		return nil, "", err
+	}
+
+	{
+		// Partial vmCreateDoPlacement():
+
+		placementConfigSpec, err := virtualmachine.CreateConfigSpecForPlacement(
+			vmCtx,
+			vmCtx.VM,
+			createArgs.ConfigSpec,
+			createArgs.Storage.StorageClassToPolicyID)
+		if err != nil {
+			return nil, "", err
+		}
+
+		return &placementConfigSpec, createArgs.ChildResourcePoolName, nil
+	}
 }
 
 func (vs *vSphereVMProvider) vmGroupDoPlacement(
 	ctx context.Context,
+	vcClient *vcclient.Client,
 	namespace string,
-	placementArgs *vmGroupPlacementArgs) (map[string]placement.Result, error) {
-
-	vcClient, err := vs.getVcClient(ctx)
-	if err != nil {
-		return nil, err
-	}
+	configSpecs []vimtypes.VirtualMachineConfigSpec) (map[string]placement.Result, error) {
 
 	return placement.GroupPlacement(
 		ctx,
@@ -334,14 +158,14 @@ func (vs *vSphereVMProvider) vmGroupDoPlacement(
 		vcClient.VimClient(),
 		vcClient.Finder(),
 		namespace,
-		placementArgs.childRPName,
-		placementArgs.vmConfigSpecs,
+		"",
+		configSpecs,
 	)
 }
 
 func applyPlacementResultsToGroups(
-	groupPlacements []providers.VMGroupPlacement,
-	results map[string]placement.Result) error {
+	results map[string]placement.Result,
+	groupPlacements []providers.VMGroupPlacement) error {
 
 	for _, grpPlacement := range groupPlacements {
 		vmGroup := grpPlacement.VMGroup

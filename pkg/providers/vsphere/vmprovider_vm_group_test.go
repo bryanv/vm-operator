@@ -7,6 +7,7 @@ package vsphere_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -157,11 +158,18 @@ func vmGroupTests() {
 		ExpectWithOffset(1, ms.Placement.Name).ToNot(BeEmpty(), "Missing Placement Name")
 		ExpectWithOffset(1, ms.Placement.Zone).ToNot(BeEmpty(), "Missing Placement Zone")
 		ExpectWithOffset(1, ms.Placement.Pool).ToNot(BeEmpty(), "Missing Placement Pool")
-		// TODO: Node, Datastores
+		ExpectWithOffset(1, ms.Placement.Node).To(BeEmpty(), "Has Placement Node")
+		if pkgcfg.FromContext(ctx).Features.FastDeploy {
+			ExpectWithOffset(1, ms.Placement.Datastores).ToNot(BeEmpty(), "Missing Placement Datastores")
+			// Verify against VirtualMachineImageCache.Status
+		} else {
+			ExpectWithOffset(1, ms.Placement.Datastores).To(BeEmpty(), "Has Placement Datastores")
+		}
 	}
 
 	Context("Group Placement", func() {
 
+		// vcsim PlaceVmsXCluster() only allows one ConfigSpec at the moment.
 		It("VM Group with one VM member", func() {
 			groupPlacements := []providers.VMGroupPlacement{
 				{

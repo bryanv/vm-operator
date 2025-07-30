@@ -5,12 +5,11 @@
 package virtualmachine
 
 import (
-	"context"
-
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha4"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
@@ -23,14 +22,13 @@ import (
 // in the "update" pre-power on path. That operates on a ConfigInfo so we'd need to populate that from
 // the config we build here.
 func CreateConfigSpec(
-	_ context.Context,
-	vm *vmopv1.VirtualMachine,
+	vmCtx pkgctx.VirtualMachineContext,
 	configSpec vimtypes.VirtualMachineConfigSpec,
 	vmClassSpec vmopv1.VirtualMachineClassSpec,
 	vmImageStatus vmopv1.VirtualMachineImageStatus,
 	minFreq uint64) vimtypes.VirtualMachineConfigSpec {
 
-	configSpec.Name = vm.Name
+	configSpec.Name = vmCtx.VM.Name
 	if configSpec.Annotation == "" {
 		// If the class ConfigSpec doesn't specify any annotations, set the default one.
 		configSpec.Annotation = constants.VCVMAnnotation
@@ -49,7 +47,7 @@ func CreateConfigSpec(
 	configSpec.ExtraConfig = util.OptionValues(configSpec.ExtraConfig).Merge(
 		&vimtypes.OptionValue{
 			Key:   constants.ExtraConfigVMServiceNamespacedName,
-			Value: vm.NamespacedName(),
+			Value: vmCtx.VM.NamespacedName(),
 		},
 	)
 
@@ -65,29 +63,29 @@ func CreateConfigSpec(
 
 	// spec.biosUUID is only set when creating a VM and is immutable.
 	// This field should not be updated for existing VMs.
-	if id := vm.Spec.BiosUUID; id != "" {
+	if id := vmCtx.VM.Spec.BiosUUID; id != "" {
 		configSpec.Uuid = id
 	}
 	// spec.instanceUUID is only set when creating a VM and is immutable.
 	// This field should not be updated for existing VMs.
-	if id := vm.Spec.InstanceUUID; id != "" {
+	if id := vmCtx.VM.Spec.InstanceUUID; id != "" {
 		configSpec.InstanceUuid = id
 	}
 
 	// If VM Spec guestID is specified, initially set the guest ID in ConfigSpec to ensure VM is
 	// created with the expected guest ID. Afterwards, only update it if the VM spec guest ID
 	// differs from the VM's existing ConfigInfo.
-	if guestID := vm.Spec.GuestID; guestID != "" {
+	if guestID := vmCtx.VM.Spec.GuestID; guestID != "" {
 		configSpec.GuestId = guestID
 	}
 
 	hardwareVersion := vmopv1util.DetermineHardwareVersion(
-		*vm, configSpec, vmImageStatus)
+		*vmCtx.VM, configSpec, vmImageStatus)
 	if hardwareVersion.IsValid() {
 		configSpec.Version = hardwareVersion.String()
 	}
 
-	if firmware := vm.Annotations[constants.FirmwareOverrideAnnotation]; firmware == "efi" || firmware == "bios" {
+	if firmware := vmCtx.VM.Annotations[constants.FirmwareOverrideAnnotation]; firmware == "efi" || firmware == "bios" {
 		configSpec.Firmware = firmware
 	} else if vmImageStatus.Firmware != "" {
 		// Use the image's firmware type if present.
@@ -98,7 +96,7 @@ func CreateConfigSpec(
 		configSpec.Firmware = vmImageStatus.Firmware
 	}
 
-	if advanced := vm.Spec.Advanced; advanced != nil && advanced.ChangeBlockTracking != nil {
+	if advanced := vmCtx.VM.Spec.Advanced; advanced != nil && advanced.ChangeBlockTracking != nil {
 		configSpec.ChangeTrackingEnabled = advanced.ChangeBlockTracking
 	}
 
@@ -158,8 +156,7 @@ func CreateConfigSpec(
 // Placement. configSpec will likely be - or at least derived from - the
 // ConfigSpec returned by CreateConfigSpec above.
 func CreateConfigSpecForPlacement(
-	ctx context.Context,
-	vm *vmopv1.VirtualMachine,
+	vmCtx pkgctx.VirtualMachineContext,
 	configSpec vimtypes.VirtualMachineConfigSpec,
 	storageClassesToIDs map[string]string) (vimtypes.VirtualMachineConfigSpec, error) {
 
@@ -210,14 +207,14 @@ func CreateConfigSpecForPlacement(
 			},
 			Profile: []vimtypes.BaseVirtualMachineProfileSpec{
 				&vimtypes.VirtualMachineDefinedProfileSpec{
-					ProfileId: storageClassesToIDs[vm.Spec.StorageClass],
+					ProfileId: storageClassesToIDs[vmCtx.VM.Spec.StorageClass],
 				},
 			},
 		})
 	}
 
-	if pkgcfg.FromContext(ctx).Features.InstanceStorage {
-		isVolumes := vmopv1util.FilterInstanceStorageVolumes(vm)
+	if pkgcfg.FromContext(vmCtx).Features.InstanceStorage {
+		isVolumes := vmopv1util.FilterInstanceStorageVolumes(vmCtx.VM)
 
 		for idx, dev := range CreateInstanceStorageDiskDevices(isVolumes) {
 			configSpec.DeviceChange = append(configSpec.DeviceChange, &vimtypes.VirtualDeviceConfigSpec{

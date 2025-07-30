@@ -85,7 +85,7 @@ var _ = Describe("GetVMStorageData", func() {
 		})
 
 		It("returns success", func() {
-			data, err := storage.GetVMStorageData(vmCtx, vmCtx.VM, client)
+			data, err := storage.GetVMStorageData(vmCtx, client)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(data).ToNot(BeNil())
 			Expect(data.StorageClasses).To(HaveLen(1))

@@ -21,6 +21,11 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 )
 
+type vmGroupPlacementArgs struct {
+	configSpecs           []vimtypes.VirtualMachineConfigSpec
+	childResourcePoolName string
+}
+
 func (vs *vSphereVMProvider) PlaceVirtualMachineGroup(
 	ctx context.Context,
 	group *vmopv1.VirtualMachineGroup,
@@ -33,16 +38,16 @@ func (vs *vSphereVMProvider) PlaceVirtualMachineGroup(
 		return err
 	}
 
-	configSpecs, err := vs.vmGroupGetVMPlacementConfigSpecs(ctx, vcClient, groupPlacements)
+	placementArgs, err := vs.vmGroupGetVMPlacementArgs(ctx, vcClient, groupPlacements)
 	if err != nil {
 		return err
 	}
 
-	if len(configSpecs) == 0 {
+	if len(placementArgs.configSpecs) == 0 {
 		return nil
 	}
 
-	results, err := vs.vmGroupDoPlacement(ctx, vcClient, group.Namespace, configSpecs)
+	results, err := vs.vmGroupDoPlacement(ctx, vcClient, group.Namespace, placementArgs)
 	if err != nil {
 		return err
 	}
@@ -54,15 +59,13 @@ func (vs *vSphereVMProvider) PlaceVirtualMachineGroup(
 	return nil
 }
 
-func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpecs(
+func (vs *vSphereVMProvider) vmGroupGetVMPlacementArgs(
 	ctx context.Context,
 	vcClient *vcclient.Client,
-	groupPlacements []providers.VMGroupPlacement) ([]vimtypes.VirtualMachineConfigSpec, error) {
+	groupPlacements []providers.VMGroupPlacement) (*vmGroupPlacementArgs, error) {
 
-	var configSpecs []vimtypes.VirtualMachineConfigSpec
-	// All VMs must all have the same child resource pool name or none at all since
-	// placement takes a single list of resource pool candidates.
-	var childResourcePoolName *string
+	placementArgs := &vmGroupPlacementArgs{}
+	firstVM := true
 
 	for _, grpPlacement := range groupPlacements {
 		for _, vm := range grpPlacement.VMMembers {
@@ -77,27 +80,33 @@ func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpecs(
 				VM:      vm,
 			}
 
-			configSpec, childRPName, err := vs.vmGroupGetVMPlacementConfigSpec(vmCtx, vcClient)
+			createArgs, err := vs.vmGroupGetVMCreatePrereqs(vmCtx, vcClient)
 			if err != nil {
 				return nil, err
 			}
 
-			if childResourcePoolName == nil {
-				childResourcePoolName = &childRPName
-			} else if childRPName != *childResourcePoolName {
+			if firstVM {
+				placementArgs.childResourcePoolName = createArgs.ChildResourcePoolName
+				firstVM = false
+			} else if placementArgs.childResourcePoolName != createArgs.ChildResourcePoolName {
 				return nil, fmt.Errorf("all VMs being placed as group must belong to same child ResourcePool")
 			}
 
-			configSpecs = append(configSpecs, *configSpec)
+			configSpec, err := vs.vmGroupGetVMPlacementConfigSpec(vmCtx, createArgs)
+			if err != nil {
+				return nil, err
+			}
+
+			placementArgs.configSpecs = append(placementArgs.configSpecs, *configSpec)
 		}
 	}
 
-	return configSpecs, nil
+	return placementArgs, nil
 }
 
-func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
+func (vs *vSphereVMProvider) vmGroupGetVMCreatePrereqs(
 	vmCtx pkgctx.VirtualMachineContext,
-	vcClient *vcclient.Client) (*vimtypes.VirtualMachineConfigSpec, string, error) {
+	vcClient *vcclient.Client) (*VMCreateArgs, error) {
 
 	// This reuses parts of the VM controller driven create VM path to
 	// generate the VM's placement ConfigSpec. Later, we should work on
@@ -109,25 +118,33 @@ func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
 		// Partial vmCreateGetPrereqs():
 
 		if err := vs.vmCreateGetVirtualMachineClass(vmCtx, createArgs); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 
 		if err := vs.vmCreateGetVirtualMachineImage(vmCtx, createArgs); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 
 		if err := vs.vmCreateGetSetResourcePolicy(vmCtx, createArgs); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 
 		if err := vs.vmCreateGetStoragePrereqs(vmCtx, vcClient, createArgs); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	}
 
-	err := vs.vmCreateGenConfigSpec(vmCtx, createArgs)
-	if err != nil {
-		return nil, "", err
+	// TODO: Networking, what else?
+
+	return createArgs, nil
+}
+
+func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
+	vmCtx pkgctx.VirtualMachineContext,
+	createArgs *VMCreateArgs) (*vimtypes.VirtualMachineConfigSpec, error) {
+
+	if err := vs.vmCreateGenConfigSpec(vmCtx, createArgs); err != nil {
+		return nil, err
 	}
 
 	{
@@ -135,14 +152,13 @@ func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
 
 		placementConfigSpec, err := virtualmachine.CreateConfigSpecForPlacement(
 			vmCtx,
-			vmCtx.VM,
 			createArgs.ConfigSpec,
 			createArgs.Storage.StorageClassToPolicyID)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 
-		return &placementConfigSpec, createArgs.ChildResourcePoolName, nil
+		return &placementConfigSpec, nil
 	}
 }
 
@@ -150,7 +166,7 @@ func (vs *vSphereVMProvider) vmGroupDoPlacement(
 	ctx context.Context,
 	vcClient *vcclient.Client,
 	namespace string,
-	configSpecs []vimtypes.VirtualMachineConfigSpec) (map[string]placement.Result, error) {
+	placementArgs *vmGroupPlacementArgs) (map[string]placement.Result, error) {
 
 	return placement.GroupPlacement(
 		ctx,
@@ -158,8 +174,8 @@ func (vs *vSphereVMProvider) vmGroupDoPlacement(
 		vcClient.VimClient(),
 		vcClient.Finder(),
 		namespace,
-		"",
-		configSpecs,
+		placementArgs.childResourcePoolName,
+		placementArgs.configSpecs,
 	)
 }
 

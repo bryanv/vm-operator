@@ -31,11 +31,6 @@ import (
 	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 )
 
-const (
-	vmiKind  = "VirtualMachineImage"
-	cvmiKind = "ClusterVirtualMachineImage"
-)
-
 // TODO: This mostly just a placeholder until we spend time on something better. Individual types
 // don't make much sense since we don't lump everything under a single prereq condition anymore.
 func errToConditionReasonAndMessage(err error) (string, string) {
@@ -67,7 +62,7 @@ func GetVirtualMachineClass(
 		return getVirtualMachineClassFromVM(vmCtx)
 	}
 
-	obj, err := getVirtualMachineClassFromClassName(vmCtx, vmCtx.VM, k8sClient)
+	obj, err := getVirtualMachineClassFromClassName(vmCtx, k8sClient)
 	if err != nil {
 		reason, msg := errToConditionReasonAndMessage(err)
 		conditions.MarkFalse(
@@ -112,19 +107,18 @@ func getVirtualMachineClassFromVM(
 }
 
 func getVirtualMachineClassFromClassName(
-	ctx context.Context,
-	vm *vmopv1.VirtualMachine,
+	vmCtx pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) (vmopv1.VirtualMachineClass, error) {
 
 	var (
 		obj vmopv1.VirtualMachineClass
 		key = ctrlclient.ObjectKey{
-			Name:      vm.Spec.ClassName,
-			Namespace: vm.Namespace,
+			Name:      vmCtx.VM.Spec.ClassName,
+			Namespace: vmCtx.VM.Namespace,
 		}
 	)
 
-	if err := k8sClient.Get(ctx, key, &obj); err != nil {
+	if err := k8sClient.Get(vmCtx, key, &obj); err != nil {
 		return vmopv1.VirtualMachineClass{}, err
 	}
 
@@ -169,13 +163,13 @@ func GetVirtualMachineImageSpecAndStatus(
 	)
 
 	switch vmCtx.VM.Spec.Image.Kind {
-	case vmiKind:
+	case "VirtualMachineImage":
 		var img vmopv1.VirtualMachineImage
 		if objErr = k8sClient.Get(vmCtx, key, &img); objErr == nil {
 			obj, spec, status = &img, img.Spec, img.Status
 		}
 
-	case cvmiKind:
+	case "ClusterVirtualMachineImage":
 		key.Namespace = ""
 		var img vmopv1.ClusterVirtualMachineImage
 		if objErr = k8sClient.Get(vmCtx, key, &img); objErr == nil {
@@ -200,13 +194,13 @@ func GetVirtualMachineImageSpecAndStatus(
 			switch timg := img.(type) {
 			case *vmopv1.VirtualMachineImage:
 				vmCtx.VM.Spec.Image = &vmopv1.VirtualMachineImageRef{
-					Kind: vmiKind,
+					Kind: "VirtualMachineImage",
 					Name: timg.Name,
 				}
 				obj, spec, status = timg, timg.Spec, timg.Status
 			case *vmopv1.ClusterVirtualMachineImage:
 				vmCtx.VM.Spec.Image = &vmopv1.VirtualMachineImageRef{
-					Kind: cvmiKind,
+					Kind: "ClusterVirtualMachineImage",
 					Name: timg.Name,
 				}
 				obj, spec, status = timg, timg.Spec, timg.Status

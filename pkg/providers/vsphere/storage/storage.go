@@ -12,6 +12,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha4"
+	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
 )
@@ -37,11 +38,10 @@ func getStorageClassAndPolicyID(
 }
 
 func GetVMStorageData(
-	ctx context.Context,
-	vm *vmopv1.VirtualMachine,
+	vmCtx pkgctx.VirtualMachineContext,
 	client ctrlclient.Client) (VMStorageData, error) {
 
-	storageClassNames, pvcs, err := getVMStorageClassNamesAndPVCs(ctx, vm, client)
+	storageClassNames, pvcs, err := getVMStorageClassNamesAndPVCs(vmCtx, vmCtx.VM, client)
 	if err != nil {
 		return VMStorageData{}, err
 	}
@@ -54,7 +54,7 @@ func GetVMStorageData(
 
 	for _, name := range storageClassNames {
 		if _, ok := data.StorageClassToPolicyID[name]; !ok {
-			storageClass, policyID, err := getStorageClassAndPolicyID(ctx, client, name)
+			storageClass, policyID, err := getStorageClassAndPolicyID(vmCtx, client, name)
 			if err != nil {
 				return VMStorageData{}, err
 			}

@@ -92,7 +92,7 @@ func (vs *vSphereVMProvider) vmGroupGetVMPlacementArgs(
 				return nil, fmt.Errorf("all VMs being placed as group must belong to same child ResourcePool")
 			}
 
-			configSpec, err := vs.vmGroupGetVMPlacementConfigSpec(vmCtx, createArgs)
+			configSpec, err := vs.vmGroupGetVMPlacementConfigSpec(vmCtx, vcClient, createArgs)
 			if err != nil {
 				return nil, err
 			}
@@ -134,17 +134,25 @@ func (vs *vSphereVMProvider) vmGroupGetVMCreatePrereqs(
 		}
 	}
 
-	// TODO: Networking, what else?
-
 	return createArgs, nil
 }
 
 func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
 	vmCtx pkgctx.VirtualMachineContext,
+	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) (*vimtypes.VirtualMachineConfigSpec, error) {
 
-	if err := vs.vmCreateGenConfigSpec(vmCtx, createArgs); err != nil {
-		return nil, err
+	{
+		// Partial vmCreateGetArgs():
+
+		// NOTE: This is only strictly required for SRIOV.
+		if err := vs.vmCreateDoNetworking(vmCtx, vcClient, createArgs); err != nil {
+			return nil, err
+		}
+
+		if err := vs.vmCreateGenConfigSpec(vmCtx, createArgs); err != nil {
+			return nil, err
+		}
 	}
 
 	{

@@ -5,6 +5,8 @@
 package vsphere_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -13,10 +15,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
+	"github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
 	pkgcond "github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
@@ -249,6 +253,56 @@ func vmGroupTests() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(vmGroup.Status.Members).To(HaveLen(1))
 			assertMemberStatusForVM(vm1, vmGroup.Status.Members[0])
+		})
+
+		Context("VM has a network interface", func() {
+			var np fakeNetworkProvider
+
+			BeforeEach(func() {
+				// Speed up tests until we Watch the network interface types. Sigh.
+				network.RetryTimeout = 1 * time.Millisecond
+
+				testConfig.WithNetworkEnv = builder.NetworkEnvVPC
+				np = &vpcNetworkProvider{}
+
+				vm1.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+					Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{
+							Name: "eth0",
+							Network: &common.PartialObjectRef{
+								TypeMeta: metav1.TypeMeta{
+									Kind:       "Subnet",
+									APIVersion: "crd.nsx.vmware.com/v1alpha1",
+								},
+								Name: "my-network",
+							},
+						},
+					},
+				}
+			})
+
+			It("DoIt", func() {
+				groupPlacements := []providers.VMGroupPlacement{
+					{
+						VMGroup: vmGroup,
+						VMMembers: []*vmopv1.VirtualMachine{
+							vm1,
+						},
+					},
+				}
+
+				err := vmProvider.PlaceVirtualMachineGroup(ctx, vmGroup, groupPlacements)
+				Expect(err).To(HaveOccurred())
+
+				By("simulate successful network provider reconcile", func() {
+					np.simulateInterfaceReconcile(ctx, vm1, vm1.Spec.Network.Interfaces[0], 0)
+				})
+
+				err = vmProvider.PlaceVirtualMachineGroup(ctx, vmGroup, groupPlacements)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(vmGroup.Status.Members).To(HaveLen(1))
+				assertMemberStatusForVM(vm1, vmGroup.Status.Members[0])
+			})
 		})
 	})
 }

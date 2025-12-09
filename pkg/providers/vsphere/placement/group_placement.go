@@ -32,14 +32,21 @@ func GroupPlacement(
 		return nil, ErrNoPlacementCandidates
 	}
 
-	recommendations, err := getGroupPlacementRecommendations(ctx, vcClient, finder, candidates, configSpecs)
+	needDatastorePlacement := pkgcfg.FromContext(ctx).Features.FastDeploy
+	recommendations, err := getGroupPlacementRecommendations(
+		ctx,
+		vcClient,
+		finder,
+		candidates,
+		configSpecs,
+		needDatastorePlacement)
 	if err != nil {
 		return nil, err
 	}
 
 	results := map[string]Result{}
 	for vmName, recommendation := range recommendations {
-		if pkgcfg.FromContext(ctx).Features.FastDeploy {
+		if needDatastorePlacement {
 			// Get the name and type of the datastores.
 			if err := getDatastoreProperties(ctx, vcClient, &recommendation); err != nil {
 				return nil, err
@@ -66,7 +73,8 @@ func getGroupPlacementRecommendations(
 	vcClient *vim25.Client,
 	finder *find.Finder,
 	candidates map[string][]string,
-	configSpecs []vimtypes.VirtualMachineConfigSpec) (map[string]Recommendation, error) {
+	configSpecs []vimtypes.VirtualMachineConfigSpec,
+	needDatastorePlacement bool) (map[string]Recommendation, error) {
 
 	var candidateRPMoRefs []vimtypes.ManagedObjectReference
 
@@ -80,12 +88,11 @@ func getGroupPlacementRecommendations(
 		}
 	}
 
-	return ClusterPlaceVMForCreate(
+	return getClusterPlacementRecommendations(
 		ctx,
 		vcClient,
 		finder,
 		candidateRPMoRefs,
 		configSpecs,
-		false,
-		true)
+		needDatastorePlacement)
 }

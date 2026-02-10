@@ -22,6 +22,8 @@ import (
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
 	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/paused"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
+	pkgvol "github.com/vmware-tanzu/vm-operator/pkg/util/volumes"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig/crypto/internal"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
@@ -121,11 +123,7 @@ func (r reconciler) Reconcile(
 		args.useDefaultKeyProvider = true
 	} else {
 		args.encryptionClassName = c.EncryptionClassName
-		if c.UseDefaultKeyProvider == nil {
-			args.useDefaultKeyProvider = true
-		} else {
-			args.useDefaultKeyProvider = *c.UseDefaultKeyProvider
-		}
+		args.useDefaultKeyProvider = ptr.DerefWithDefault(c.UseDefaultKeyProvider, true)
 	}
 
 	// Check to if the VM is currently encrypted and record the current provider
@@ -235,25 +233,30 @@ func (r reconciler) reconcileUpdate(
 	args reconcileArgs) error {
 
 	var (
-		err     error
-		changed bool
+		err       error
+		vmChanged bool
 	)
 
 	if args.encryptionClassName != "" {
 		// The existing VM specifies an EncryptionClass.
-		changed, err = r.reconcileUpdateEncryptionClass(ctx, args)
+		vmChanged, err = r.reconcileUpdateEncryptionClass(ctx, args)
 
 	} else if args.useDefaultKeyProvider {
 		// The existing VM indicates the default key provider should be used in
 		// absence of the EncryptionClass.
-		changed, err = r.reconcileUpdateDefaultKeyProvider(ctx, args)
+		vmChanged, err = r.reconcileUpdateDefaultKeyProvider(ctx, args)
 	}
 
 	if err != nil {
 		return err
 	}
 
-	if changed {
+	fcdChanged, err := r.reconcileUpdateFCDs(ctx, args)
+	if err != nil {
+		return err
+	}
+
+	if vmChanged || fcdChanged {
 		// A change was made to the existing VM to update its encryption state.
 		return nil
 	}
@@ -390,6 +393,51 @@ func (r reconciler) reconcileUpdateDefaultKeyProvider(
 
 			// Recrypt the existing VM.
 			return true, doOp(ctx, args, doRecrypt)
+		}
+	}
+
+	return false, nil
+}
+
+func (r reconciler) reconcileUpdateFCDs(
+	ctx context.Context,
+	args reconcileArgs) (bool, error) {
+
+	info, ok := pkgvol.FromContext(ctx)
+	if !ok {
+		info = pkgvol.GetVolumeInfoFromVM(args.vm, args.moVM)
+	}
+	_ = info
+
+	for _, baseDev := range args.moVM.Config.Hardware.Device {
+		if disk, ok := baseDev.(*vimtypes.VirtualDisk); ok {
+			if disk.VDiskId == nil {
+				// Only FCDs.
+				continue
+			}
+
+			// TODO: Need to get VolumeInfo for this disk
+
+			switch tBack := disk.Backing.(type) {
+			case *vimtypes.VirtualDiskFlatVer2BackingInfo:
+				if tBack.KeyId != nil {
+					if updateDiskBackingForRecrypt(args, disk) {
+						fileNames = append(fileNames, tBack.FileName)
+					}
+				}
+			case *vimtypes.VirtualDiskSeSparseBackingInfo:
+				if tBack.KeyId != nil {
+					if updateDiskBackingForRecrypt(args, disk) {
+						fileNames = append(fileNames, tBack.FileName)
+					}
+				}
+			case *vimtypes.VirtualDiskSparseVer2BackingInfo:
+				if tBack.KeyId != nil {
+					if updateDiskBackingForRecrypt(args, disk) {
+						fileNames = append(fileNames, tBack.FileName)
+					}
+				}
+			}
 		}
 	}
 
@@ -556,7 +604,6 @@ func getCryptoKeyFromEncryptionClass(
 
 	if err := args.k8sClient.Get(ctx, objKey, &obj); err != nil {
 		return cryptoKey{}, err
-
 	}
 
 	m := crypto.NewManagerKmip(args.vimClient)
@@ -1073,7 +1120,7 @@ func isAddEditDeviceSpecEncryptedSansPolicy(
 						}
 					}
 
-					// encrypt/deepRecrypt with policy
+					// encrypt/deepRecrypt without policy
 					return true, nil
 				}
 			}

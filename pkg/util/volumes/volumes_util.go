@@ -30,14 +30,15 @@ type ControllerSpec struct {
 // VirtualDiskInfo is information about a volume.
 type VirtualDiskInfo struct {
 	pkgutil.VirtualDiskInfo
-	ProfileIDs         []string
-	StorageClass       string
-	StoragePolicyID    string
-	Target             vmopv1util.TargetID
-	NewCapacityInBytes int64
-	Snapshot           bool
-	LinkedClone        bool
-	FCD                bool
+	ProfileIDs          []string
+	StorageClass        string
+	StoragePolicyID     string
+	Target              vmopv1util.TargetID
+	NewCapacityInBytes  int64
+	Snapshot            bool
+	LinkedClone         bool
+	FCD                 bool
+	EncryptionClassName string
 }
 
 // VolumeInfo is information about a VM's volumes.
@@ -170,8 +171,6 @@ func GetVolumeInfo(
 	// Get the virtual disk and controller information.
 	for i, device := range devices {
 
-		var spec ControllerSpec
-
 		switch d := device.(type) {
 		case *vimtypes.VirtualDisk:
 			di := pkgutil.GetVirtualDiskInfo(d)
@@ -197,6 +196,7 @@ func GetVolumeInfo(
 		case vimtypes.BaseVirtualController:
 			bd := d.GetVirtualController()
 
+			var spec ControllerSpec
 			spec.Key = bd.Key
 			spec.Bus = bd.BusNumber
 

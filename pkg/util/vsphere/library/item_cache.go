@@ -191,17 +191,20 @@ func copyFile(
 		}
 
 		if cs := srcFile.CryptoSpec; cs != nil {
-			if id := cs.CryptoKeyId.ProviderId; id != nil && id.Id != "" {
-				ds.Crypto = cs
-			} else {
-				// TODO: The storage profile is encrypted but there is no
-				// default key provider configured. CopyVirtualDisk used
-				// to just ignore the Profile and Crypto fields, but now it
-				// actually honors them, an encrypted profile needs crypto.
-				// For now, effectively revert to that prior behavior by not
-				// specifying the profile.
-				ds.Profile = nil
-			}
+			ds.Profile = nil
+			/*
+				if id := cs.CryptoKeyId.ProviderId; id != nil && id.Id != "" {
+					ds.Crypto = cs
+				} else {
+					// TODO: The storage profile is encrypted but there is no
+					// default key provider configured. CopyVirtualDisk used
+					// to just ignore the Profile and Crypto fields, but now it
+					// actually honors them, an encrypted profile needs crypto.
+					// For now, effectively revert to that prior behavior by not
+					// specifying the profile.
+					ds.Profile = nil
+				}
+			*/
 		}
 
 		copyTask, err = client.CopyVirtualDisk(

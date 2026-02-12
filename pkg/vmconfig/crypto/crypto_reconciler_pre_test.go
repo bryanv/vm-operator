@@ -29,6 +29,7 @@ import (
 	byokv1 "github.com/vmware-tanzu/vm-operator/external/byok/api/v1alpha1"
 	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	ctxop "github.com/vmware-tanzu/vm-operator/pkg/context/operation"
@@ -1504,7 +1505,7 @@ var _ = Describe("Reconcile", Label(testlabels.Crypto), func() {
 				When("FCD has encryption class annotation", func() {
 					BeforeEach(func() {
 						pvc.Annotations = map[string]string{
-							"encryption.vmware.com/encryption-class-name": fcdEncClass.Name,
+							pkgconst.PVCEncryptionClassNameAnnotation: fcdEncClass.Name,
 						}
 					})
 

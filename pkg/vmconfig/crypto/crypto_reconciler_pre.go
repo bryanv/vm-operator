@@ -20,6 +20,7 @@ import (
 	byokv1 "github.com/vmware-tanzu/vm-operator/external/byok/api/v1alpha1"
 	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
 	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
@@ -82,6 +83,9 @@ var (
 	// ErrInvalidKeyID is returned if the key id specified by an
 	// EncryptionClass is invalid.
 	ErrInvalidKeyID = errors.New("invalid key id")
+
+	// ErrPVCNotFound is returned if the PVC is not found.
+	ErrPVCNotFound = errors.New("PVC not found")
 )
 
 func (r reconciler) Reconcile(
@@ -409,51 +413,73 @@ func (r reconciler) reconcileUpdateFCDs(
 	ctx context.Context,
 	args reconcileArgs) (bool, error) {
 
-	// If there are no volumes in the VM spec, there's nothing to do.
+	// TODO: This isn't necessarily wrong - no disks so nothing to do - but it really
+	// here to limit having to update all the existing tests, so GetVolumeInfoFromVM()
+	// won't panic. In real situations, this won't hardly be empty.
 	if len(args.vm.Spec.Volumes) == 0 {
 		return false, nil
 	}
-
-	logger := pkglog.FromContextOrDefault(ctx)
 
 	info, ok := pkgvol.FromContext(ctx)
 	if !ok {
 		info = pkgvol.GetVolumeInfoFromVM(args.vm, args.moVM)
 	}
 
+	// This is very much a bolted on change but it is mostly self-contained
+	// so it is easier to crossport and less likely to cause any other issues
+	// elsewhere. There are many improvements possible, both in this code and
+	// within the larger reconcile like not repeatability looking up the same
+	// storage class and key provider, and not fetching the PVCs multiple times.
+	// We should also better report errors here on the individual volumes via
+	// its conditions.
+
+	logger := pkglog.FromContextOrDefault(ctx)
 	var changed bool
+
 	for _, diskInfo := range info.Disks {
 		if !diskInfo.FCD {
 			// Any non-FCDs are handled earlier in onRecryptDisks().
 			continue
 		}
 
-		// Step 1: Look up the volume for this disk
 		volume := info.Volumes[diskInfo.Target.String()]
 		if volume == nil || volume.PersistentVolumeClaim == nil {
 			continue
 		}
 
-		// Step 2: Fetch the PVC
+		logger := logger.WithValues("volName", volume.Name,
+			"pvcName", volume.PersistentVolumeClaim.ClaimName,
+			"diskUUID", diskInfo.UUID)
+
 		pvc := &corev1.PersistentVolumeClaim{}
 		pvcKey := ctrlclient.ObjectKey{
 			Namespace: args.vm.Namespace,
 			Name:      volume.PersistentVolumeClaim.ClaimName,
 		}
 		if err := args.k8sClient.Get(ctx, pvcKey, pvc); err != nil {
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			return false, err
+			// NOTE: I don't think we'll even get here if PVC is missing.
+			return false, setConditionAndReturnErr(
+				args,
+				ErrPVCNotFound,
+				ReasonInternalError) // TODO: better reason if reachable.
 		}
 
-		// TODO: Need to verify that this volume spec entry/PVC is for this
-		// VirtualDisk!?! This just seems generally racy, no?
+		// TODO: We're using the target ID to match disks/volumes between the VM Spec and
+		// the VM's current HW config. I think this gives us a possible race: if the PVC
+		// at a target ID is changed, the detach of old, attach of new happens async from
+		// us via CNS. I think this may just be a general issue of how we're using this
+		// even elsewhere, but the effects may be limited because we're generally read-only
+		// only so things will clear up on a later reconcile. Here that is different because
+		// we're doing a reconfigure.
+		// This might not be a huge issue in practice, because once the old PVC stops being
+		// reference in a VM Spec, CSI will take over the encryption of the PVC.
+		// If we need to handle that here, I think what we'll have to do is to check the VM
+		// status and match the disk UUID and target ID here with the diskInfo.UUID.
 
-		// Step 3: Check if storage class supports encryption
 		storageClassName := ptr.Deref(pvc.Spec.StorageClassName)
 		if storageClassName == "" {
-			logger.V(4).Info("PVC has no storage class name, skipping", "pvcName", pvc.Name)
+			// NB: Elsewhere we don't support the k8s default StorageClass label.
+			logger.V(4).Info("PVC has no storage class name, skipping")
 			continue
 		}
 
@@ -462,23 +488,24 @@ func (r reconciler) reconcileUpdateFCDs(
 			args.k8sClient,
 			storageClassName)
 		if err != nil {
-			logger.V(4).Error(err, "Failed to get encrypted storage class", "storageClassName", storageClassName)
+			logger.Error(err, "Failed to get encrypted storage class", "storageClassName", storageClassName)
 			return false, err
 		}
 		if !isEncStorClass {
-			logger.Info("Storage class is not encrypted, skipping", "storageClassName", storageClassName)
+			logger.V(4).Info("Storage class is not encrypted, skipping", "storageClassName", storageClassName)
 			continue
 		}
 
-		// Step 4: Get desired crypto key
-		// If PVC has encryption class annotation, use it; otherwise use default provider
+		// If PVC has encryption class annotation, use it; otherwise use default provider.
 		var desiredKey cryptoKey
-		desiredEncClassName := pvc.Annotations["csi.vsphere.encryption-class"]
+		desiredEncClassName := pvc.Annotations[pkgconst.PVCEncryptionClassNameAnnotation]
 		if desiredEncClassName != "" {
-			// Use the specified encryption class
+			// Use the specified encryption class.
 			desiredKey, err = getCryptoKeyFromEncryptionClass(ctx, args, desiredEncClassName)
 			if err != nil {
-				return false, err
+				logger.Error(err, "Failed to get crypto key from encryption class",
+					"encryptionClassName", desiredEncClassName)
+				return false, setConditionAndReturnErr(args, err, ReasonInternalError)
 			}
 		} else {
 			desiredKey = getCryptoKeyFromDefaultProvider(ctx, args)
@@ -491,21 +518,21 @@ func (r reconciler) reconcileUpdateFCDs(
 			}
 		}
 
-		// Step 5: Compare current vs desired encryption state
 		currentKey := diskInfo.CryptoKey
 		disk := diskInfo.Device
 
 		logger.Info("PVC encrypted",
-			"pvcName", pvc.Name, "currentKey", currentKey, "desiredKey", fmt.Sprintf("%+v", desiredKey))
+			"pvcName", pvc.Name, "currentKey", currentKey,
+			"desiredKey", fmt.Sprintf("%+v", desiredKey)) // NB: Keep diff small - fields aren't public.
 
 		if currentKey == nil {
-			// BMV: PVC StorageClass is immutable, so this should not happen.
+			// BMV: PVC StorageClass is immutable so I don't think this should happen.
+			// Note though there is similar code for encrypting an existing VM.
 
-			// FCD is not encrypted but should be -> encrypt
+			// FCD is not encrypted but should be -> encrypt.
 			if updateFCDBackingForEncrypt(args, disk, desiredKey, profileID) {
 				logger.Info(
 					"Encrypt FCD",
-					"pvc", pvcKey,
 					"disk", diskInfo.FileName,
 					"providerID", desiredKey.provider,
 					"keyID", desiredKey.id,
@@ -532,7 +559,6 @@ func (r reconciler) reconcileUpdateFCDs(
 				if updateFCDBackingForRecrypt(args, disk, desiredKey) {
 					logger.Info(
 						"Recrypt FCD",
-						"pvc", pvcKey,
 						"disk", diskInfo.FileName,
 						"currentProviderID", currentKey.ProviderId.Id,
 						"currentKeyID", currentKey.KeyId,

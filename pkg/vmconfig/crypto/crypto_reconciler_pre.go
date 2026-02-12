@@ -7,6 +7,7 @@ package crypto
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/vmware/govmomi/crypto"
 	"github.com/vmware/govmomi/vim25"
@@ -21,7 +22,6 @@ import (
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
-	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
 	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/paused"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
@@ -108,6 +108,8 @@ func (r reconciler) Reconcile(
 		panic("configSpec is nil")
 	}
 
+	pkglog.FromContextOrDefault(ctx).Info("### Crypto Enter")
+
 	var (
 		err  error
 		args = reconcileArgs{
@@ -166,6 +168,8 @@ func (r reconciler) reconcileCreate(
 	args reconcileArgs) error {
 
 	var err error
+
+	pkglog.FromContextOrDefault(ctx).Info("### Crypto Create Enter")
 
 	if args.encryptionClassName != "" {
 
@@ -420,7 +424,8 @@ func (r reconciler) reconcileUpdateFCDs(
 	var changed bool
 	for _, diskInfo := range info.Disks {
 		if !diskInfo.FCD {
-			continue // Only process FCDs
+			// Any non-FCDs are handled earlier in onRecryptDisks().
+			continue
 		}
 
 		// Step 1: Look up the volume for this disk
@@ -468,7 +473,7 @@ func (r reconciler) reconcileUpdateFCDs(
 		// Step 4: Get desired crypto key
 		// If PVC has encryption class annotation, use it; otherwise use default provider
 		var desiredKey cryptoKey
-		desiredEncClassName := pvc.Annotations[constants.EncryptionClassNameAnnotation]
+		desiredEncClassName := pvc.Annotations["csi.vsphere.encryption-class"]
 		if desiredEncClassName != "" {
 			// Use the specified encryption class
 			desiredKey, err = getCryptoKeyFromEncryptionClass(ctx, args, desiredEncClassName)
@@ -491,7 +496,7 @@ func (r reconciler) reconcileUpdateFCDs(
 		disk := diskInfo.Device
 
 		logger.Info("PVC encrypted",
-			"pvcName", pvc.Name, "currentKey", currentKey, "desiredKey", desiredKey)
+			"pvcName", pvc.Name, "currentKey", currentKey, "desiredKey", fmt.Sprintf("%+v", desiredKey))
 
 		if currentKey == nil {
 			// BMV: PVC StorageClass is immutable, so this should not happen.

@@ -52,6 +52,7 @@ linters:
   - nilnil            # 3
   - nlreturn          # 9
   - noctx             # 4
+  - noinlineerr
   - nolintlint        # 5
   - nonamedreturns    # 23
   - nosprintfhostport # 3
@@ -67,6 +68,7 @@ linters:
   - whitespace        # 6
   - wrapcheck         # 50
   - wsl               # 50
+  - wsl_v5            # 50
 
   settings:
 

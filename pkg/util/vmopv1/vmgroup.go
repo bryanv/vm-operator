@@ -47,12 +47,11 @@ type VirtualMachineOrGroup interface {
 func GroupToMembersMapperFn(
 	_ context.Context,
 	client ctrlclient.Client,
-	memberKind string) handler.MapFunc {
+	memberKind string) handler.TypedMapFunc[*vmopv1.VirtualMachineGroup, reconcile.Request] {
 
-	return func(ctx context.Context, o ctrlclient.Object) []reconcile.Request {
+	return func(ctx context.Context, group *vmopv1.VirtualMachineGroup) []reconcile.Request {
 
 		var (
-			group     = o.(*vmopv1.VirtualMachineGroup)
 			namespace = group.Namespace
 			requests  = make([]reconcile.Request, 0, len(group.Status.Members))
 		)
@@ -140,60 +139,63 @@ func GroupToMembersMapperFn(
 	}
 }
 
-// MemberToGroupMapperFn returns a MapFunc that reconciles a VirtualMachineGroup
-// when a linked member (VM or VMGroup) changes. This ensures the group's status
-// is updated in time to reflect the current member latest state (e.g. ready
-// condition for VMGroup kind members or power state for VM kind members).
-func MemberToGroupMapperFn(_ context.Context) handler.MapFunc {
+// memberToGroupMapper is the shared implementation for VMToGroupMapperFn and
+// VMGroupToGroupMapperFn. It enqueues a reconcile request for the group that
+// the given member belongs to, when the member is linked to the group.
+func memberToGroupMapper(ctx context.Context, memberObj VirtualMachineOrGroup) []reconcile.Request {
+	var requests []reconcile.Request
 
-	return func(ctx context.Context, o ctrlclient.Object) []reconcile.Request {
-		memberObj, ok := o.(VirtualMachineOrGroup)
-		if !ok {
-			panic(fmt.Sprintf("Expected VirtualMachineOrGroup, but got %T", o))
-		}
+	if memberObj.GetGroupName() != "" && conditions.IsTrue(
+		memberObj,
+		vmopv1.VirtualMachineGroupMemberConditionGroupLinked,
+	) {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: ctrlclient.ObjectKey{
+				Namespace: memberObj.GetNamespace(),
+				Name:      memberObj.GetGroupName(),
+			},
+		})
+	}
 
-		var requests []reconcile.Request
+	if len(requests) > 0 {
+		pkglog.FromContextOrDefault(ctx).WithValues(
+			"memberName", memberObj.GetName(),
+			"memberNamespace", memberObj.GetNamespace(),
+		).V(4).Info(
+			"Reconciling VirtualMachineGroup due to its member watch",
+			"requests", requests,
+		)
+	}
 
-		if memberObj.GetGroupName() != "" && conditions.IsTrue(
-			memberObj,
-			vmopv1.VirtualMachineGroupMemberConditionGroupLinked,
-		) {
-			requests = append(requests, reconcile.Request{
-				NamespacedName: ctrlclient.ObjectKey{
-					Namespace: memberObj.GetNamespace(),
-					Name:      memberObj.GetGroupName(),
-				},
-			})
-		}
+	return requests
+}
 
-		if len(requests) > 0 {
-			pkglog.FromContextOrDefault(ctx).WithValues(
-				"memberName", memberObj.GetName(),
-				"memberNamespace", memberObj.GetNamespace(),
-			).V(4).Info(
-				"Reconciling VirtualMachineGroup due to its member watch",
-				"requests", requests,
-			)
-		}
-
-		return requests
+// VMToGroupMapperFn returns a TypedMapFunc that reconciles a VirtualMachineGroup
+// when a linked VirtualMachine member changes.
+func VMToGroupMapperFn(_ context.Context) handler.TypedMapFunc[*vmopv1.VirtualMachine, reconcile.Request] {
+	return func(ctx context.Context, vm *vmopv1.VirtualMachine) []reconcile.Request {
+		return memberToGroupMapper(ctx, vm)
 	}
 }
 
-// PolicyEvalToVMToVMGroupMapperFunc returns a MapFunc that reconciles a VirtualMachineGroup
-// when the PolicyEval for a VM that linked to the group but not yet placed changes. This is
-// needed so that during VM Group placement the policy is ready, group placement is done.
+// VMGroupToGroupMapperFn returns a TypedMapFunc that reconciles a
+// VirtualMachineGroup when a linked VirtualMachineGroup member changes.
+func VMGroupToGroupMapperFn(_ context.Context) handler.TypedMapFunc[*vmopv1.VirtualMachineGroup, reconcile.Request] {
+	return func(ctx context.Context, vmg *vmopv1.VirtualMachineGroup) []reconcile.Request {
+		return memberToGroupMapper(ctx, vmg)
+	}
+}
+
+// PolicyEvalToVMToVMGroupMapperFunc returns a TypedMapFunc that reconciles a
+// VirtualMachineGroup when the PolicyEval for a VM that linked to the group
+// but not yet placed changes. This is needed so that during VM Group placement
+// the policy is ready, group placement is done.
 func PolicyEvalToVMToVMGroupMapperFunc(
 	_ context.Context,
 	client ctrlclient.Client,
-) handler.MapFunc {
+) handler.TypedMapFunc[*vspherepolv1.PolicyEvaluation, reconcile.Request] {
 
-	return func(ctx context.Context, o ctrlclient.Object) []reconcile.Request {
-		policyEval, ok := o.(*vspherepolv1.PolicyEvaluation)
-		if !ok {
-			panic(fmt.Sprintf("Expected PolicyEvaluation, but got %T", o))
-		}
-
+	return func(ctx context.Context, policyEval *vspherepolv1.PolicyEvaluation) []reconcile.Request {
 		if policyEval.Generation != policyEval.Status.ObservedGeneration {
 			return nil
 		}

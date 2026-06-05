@@ -637,10 +637,10 @@ var _ = Describe("EncryptionClassToVirtualMachineMapper", func() {
 		k8sClient ctrlclient.Client
 		withObjs  []ctrlclient.Object
 		withFuncs interceptor.Funcs
-		obj       ctrlclient.Object
-		mapFn     handler.MapFunc
+		obj       *byokv1.EncryptionClass
+		mapFn     handler.TypedMapFunc[*byokv1.EncryptionClass, reconcile.Request]
 		mapFnCtx  context.Context
-		mapFnObj  ctrlclient.Object
+		mapFnObj  *byokv1.EncryptionClass
 		reqs      []reconcile.Request
 	)
 	BeforeEach(func() {
@@ -708,26 +708,6 @@ var _ = Describe("EncryptionClassToVirtualMachineMapper", func() {
 					Expect(func() {
 						_ = mapFn(mapFnCtx, mapFnObj)
 					}).To(PanicWith("context is nil"))
-				})
-			})
-			When("object is nil", func() {
-				BeforeEach(func() {
-					mapFnObj = nil
-				})
-				It("should panic", func() {
-					Expect(func() {
-						_ = mapFn(mapFnCtx, mapFnObj)
-					}).To(PanicWith("object is nil"))
-				})
-			})
-			When("object is invalid", func() {
-				BeforeEach(func() {
-					mapFnObj = &vmopv1.VirtualMachine{}
-				})
-				It("should panic", func() {
-					Expect(func() {
-						_ = mapFn(mapFnCtx, mapFnObj)
-					}).To(PanicWith(fmt.Sprintf("object is %T", mapFnObj)))
 				})
 			})
 		})
@@ -1038,7 +1018,7 @@ var _ = Describe("CnsRegisterVolumeToVirtualMachineMapper", func() {
 		ctx        context.Context
 		k8sClient  ctrlclient.Client
 		vm         *vmopv1.VirtualMachine
-		mapperFunc func(context.Context, ctrlclient.Object) []reconcile.Request
+		mapperFunc handler.TypedMapFunc[*cnsv1alpha1.CnsRegisterVolume, reconcile.Request]
 	)
 
 	BeforeEach(func() {
@@ -1128,14 +1108,6 @@ var _ = Describe("CnsRegisterVolumeToVirtualMachineMapper", func() {
 			}).To(Panic())
 		})
 	})
-
-	Context("when mapper function is called with nil object", func() {
-		It("should panic", func() {
-			Expect(func() {
-				mapperFunc(ctx, nil)
-			}).To(Panic())
-		})
-	})
 })
 
 var _ = Describe("CnsNodeVMBatchAttachmentToVirtualMachineMapper", func() {
@@ -1147,7 +1119,7 @@ var _ = Describe("CnsNodeVMBatchAttachmentToVirtualMachineMapper", func() {
 	var (
 		ctx        context.Context
 		vm         *vmopv1.VirtualMachine
-		mapperFunc func(context.Context, ctrlclient.Object) []reconcile.Request
+		mapperFunc handler.TypedMapFunc[*cnsv1alpha1.CnsNodeVMBatchAttachment, reconcile.Request]
 
 		newBA = func(
 			ownerKind string,
@@ -1214,14 +1186,6 @@ var _ = Describe("CnsNodeVMBatchAttachmentToVirtualMachineMapper", func() {
 		It("should panic", func() {
 			Expect(func() {
 				mapperFunc(nil, newBA("VirtualMachine", nil, nil))
-			}).To(Panic())
-		})
-	})
-
-	Context("when the inner mapper function is called with nil object", func() {
-		It("should panic", func() {
-			Expect(func() {
-				mapperFunc(ctx, nil)
 			}).To(Panic())
 		})
 	})

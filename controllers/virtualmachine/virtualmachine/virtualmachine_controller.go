@@ -102,15 +102,20 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 			GetPriority: kubeutil.GetVirtualMachineReconcilePriority,
 		})
 
-	builder = builder.Watches(&vmopv1.VirtualMachineClass{},
-		handler.EnqueueRequestsFromMapFunc(classToVMMapperFn(ctx, r.Client)))
+	builder = builder.WatchesRawSource(source.Kind(
+		mgr.GetCache(),
+		&vmopv1.VirtualMachineClass{},
+		handler.TypedEnqueueRequestsFromMapFunc(classToVMMapperFn(ctx, r.Client)),
+	))
 
 	if pkgcfg.FromContext(ctx).Features.BringYourOwnEncryptionKey {
-		builder = builder.Watches(
+		builder = builder.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
 			&byokv1.EncryptionClass{},
-			handler.EnqueueRequestsFromMapFunc(
+			handler.TypedEnqueueRequestsFromMapFunc(
 				vmopv1util.EncryptionClassToVirtualMachineMapper(ctx, r.Client),
-			))
+			),
+		))
 	}
 
 	if pkgcfg.FromContext(ctx).AsyncSignalEnabled {
@@ -123,9 +128,10 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 	}
 
 	if pkgcfg.FromContext(ctx).Features.FastDeploy {
-		builder = builder.Watches(
+		builder = builder.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
 			&vmopv1.VirtualMachineImageCache{},
-			handler.EnqueueRequestsFromMapFunc(
+			handler.TypedEnqueueRequestsFromMapFunc(
 				vmopv1util.VirtualMachineImageCacheToItemMapper(
 					ctx,
 					r.Logger.WithName("VirtualMachineImageCacheToItemMapper"),
@@ -134,17 +140,19 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 					controlledTypeName,
 				),
 			),
-		)
+		))
 	}
 
 	// Watch CnsRegisterVolume resources to trigger VM reconciliation
 	// when all unmanaged disks are being converted to PVCs.
 	if pkgcfg.FromContext(ctx).Features.AllDisksArePVCs {
-		builder = builder.Watches(
+		builder = builder.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
 			&cnsv1alpha1.CnsRegisterVolume{},
-			handler.EnqueueRequestsFromMapFunc(
+			handler.TypedEnqueueRequestsFromMapFunc(
 				vmopv1util.CnsRegisterVolumeToVirtualMachineMapper(ctx, r.Client),
-			))
+			),
+		))
 	}
 
 	// Watch VirtualMachineSnapshot resources to trigger VM reconciliation
@@ -152,28 +160,30 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 	// We could also use the owner reference to queue the request, but on
 	// the off chance that the owner ref has not been set, use a custom mapper.
 	if pkgcfg.FromContext(ctx).Features.VMSnapshots {
-		builder = builder.Watches(
+		builder = builder.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
 			&vmopv1.VirtualMachineSnapshot{},
-			handler.EnqueueRequestsFromMapFunc(
+			handler.TypedEnqueueRequestsFromMapFunc(
 				vmopv1util.SnapshotToVMMapperFn(
 					ctx,
 					r.Logger.WithName("SnapshotToVMMapper"),
 				),
 			),
-		)
+		))
 	}
 
 	// Watch VirtualMachineGroup resources to trigger VMs reconciliation when
 	// their groups are created or updated (e.g. placement results).
 	if pkgcfg.FromContext(ctx).Features.VMGroups {
-		builder = builder.Watches(
+		builder = builder.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
 			&vmopv1.VirtualMachineGroup{},
-			handler.EnqueueRequestsFromMapFunc(
+			handler.TypedEnqueueRequestsFromMapFunc(
 				vmopv1util.GroupToMembersMapperFn(
 					ctx, r.Client, "VirtualMachine",
 				),
 			),
-		)
+		))
 	}
 
 	if pkgcfg.FromContext(ctx).Features.VSpherePolicies {
@@ -218,12 +228,13 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 	// Watch CnsNodeVMBatchAttachment in order to account for the volume
 	// registration race outlined/fixed in
 	// https://github.com/vmware-tanzu/vm-operator/pull/1572.
-	builder = builder.Watches(
+	builder = builder.WatchesRawSource(source.Kind(
+		mgr.GetCache(),
 		&cnsv1alpha1.CnsNodeVMBatchAttachment{},
-		handler.EnqueueRequestsFromMapFunc(
+		handler.TypedEnqueueRequestsFromMapFunc(
 			vmopv1util.CnsNodeVMBatchAttachmentToVirtualMachineMapper(ctx),
 		),
-	)
+	))
 
 	return builder.Complete(r)
 }
@@ -233,12 +244,11 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 // WCP_Namespaced_VM_Class FSS is enabled.
 func classToVMMapperFn(
 	ctx *pkgctx.ControllerManagerContext,
-	c client.Client) func(_ context.Context, o client.Object) []reconcile.Request {
+	c client.Client) handler.TypedMapFunc[*vmopv1.VirtualMachineClass, reconcile.Request] {
 
 	// For a given VirtualMachineClass, return reconcile requests
 	// for those VirtualMachines with corresponding VirtualMachinesClasses referenced
-	return func(_ context.Context, o client.Object) []reconcile.Request {
-		class := o.(*vmopv1.VirtualMachineClass)
+	return func(_ context.Context, class *vmopv1.VirtualMachineClass) []reconcile.Request {
 		logger := ctx.Logger.WithValues("name", class.Name, "namespace", class.Namespace)
 
 		logger.V(4).Info("Reconciling all VMs referencing a VM class because of a VirtualMachineClass watch")

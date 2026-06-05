@@ -919,9 +919,9 @@ var _ = Describe("VirtualMachineImageCacheToItemMapper", func() {
 		withObjs     []ctrlclient.Object
 		withFuncs    interceptor.Funcs
 		obj          *vmopv1.VirtualMachineImageCache
-		mapFn        handler.MapFunc
+		mapFn        handler.TypedMapFunc[*vmopv1.VirtualMachineImageCache, reconcile.Request]
 		mapFnCtx     context.Context
-		mapFnObj     ctrlclient.Object
+		mapFnObj     *vmopv1.VirtualMachineImageCache
 		reqs         []reconcile.Request
 	)
 	BeforeEach(func() {
@@ -1038,26 +1038,6 @@ var _ = Describe("VirtualMachineImageCacheToItemMapper", func() {
 					Expect(func() {
 						_ = mapFn(mapFnCtx, mapFnObj)
 					}).To(PanicWith("context is nil"))
-				})
-			})
-			When("object is nil", func() {
-				BeforeEach(func() {
-					mapFnObj = nil
-				})
-				It("should panic", func() {
-					Expect(func() {
-						_ = mapFn(mapFnCtx, mapFnObj)
-					}).To(PanicWith("object is nil"))
-				})
-			})
-			When("object is invalid", func() {
-				BeforeEach(func() {
-					mapFnObj = &vmopv1.VirtualMachine{}
-				})
-				It("should panic", func() {
-					Expect(func() {
-						_ = mapFn(mapFnCtx, mapFnObj)
-					}).To(PanicWith(fmt.Sprintf("object is %T", mapFnObj)))
 				})
 			})
 		})

@@ -284,10 +284,9 @@ func SyncStorageUsageForNamespace(
 func SnapshotToVMMapperFn(
 	ctx context.Context,
 	logger logr.Logger,
-) func(_ context.Context, o client.Object) []reconcile.Request {
+) handler.TypedMapFunc[*vmopv1.VirtualMachineSnapshot, reconcile.Request] {
 
-	return func(_ context.Context, o client.Object) []reconcile.Request {
-		snapshot := o.(*vmopv1.VirtualMachineSnapshot)
+	return func(_ context.Context, snapshot *vmopv1.VirtualMachineSnapshot) []reconcile.Request {
 		logger := logger.WithValues("snapshotName", snapshot.Name, "namespace", snapshot.Namespace)
 
 		// Only process snapshots that reference a VM
@@ -321,7 +320,7 @@ func SnapshotToVMMapperFn(
 // EncryptionClass resource.
 func EncryptionClassToVirtualMachineMapper(
 	ctx context.Context,
-	k8sClient client.Client) handler.MapFunc {
+	k8sClient client.Client) handler.TypedMapFunc[*byokv1.EncryptionClass, reconcile.Request] {
 
 	if ctx == nil {
 		panic("context is nil")
@@ -332,20 +331,13 @@ func EncryptionClassToVirtualMachineMapper(
 
 	// For a given EncryptionClass, return reconcile requests for VMs that
 	// specify the same EncryptionClass.
-	return func(ctx context.Context, o client.Object) []reconcile.Request {
+	return func(ctx context.Context, obj *byokv1.EncryptionClass) []reconcile.Request {
 		if ctx == nil {
 			panic("context is nil")
 		}
-		if o == nil {
-			panic("object is nil")
-		}
-		obj, ok := o.(*byokv1.EncryptionClass)
-		if !ok {
-			panic(fmt.Sprintf("object is %T", o))
-		}
 
 		logger := pkglog.FromContextOrDefault(ctx).
-			WithValues("name", o.GetName(), "namespace", o.GetNamespace())
+			WithValues("name", obj.GetName(), "namespace", obj.GetNamespace())
 		logger.V(4).Info("Reconciling all VMs referencing an EncryptionClass")
 
 		// Find all VM resources that reference this EncryptionClass.
@@ -399,7 +391,7 @@ func EncryptionClassToVirtualMachineMapper(
 // CnsRegisterVolume resource.
 func CnsRegisterVolumeToVirtualMachineMapper(
 	ctx context.Context,
-	k8sClient client.Client) handler.MapFunc {
+	k8sClient client.Client) handler.TypedMapFunc[*cnsv1alpha1.CnsRegisterVolume, reconcile.Request] {
 
 	if ctx == nil {
 		panic("context is nil")
@@ -410,25 +402,22 @@ func CnsRegisterVolumeToVirtualMachineMapper(
 
 	// For a given CnsRegisterVolume, return reconcile requests for the VM
 	// that owns it.
-	return func(ctx context.Context, o client.Object) []reconcile.Request {
+	return func(ctx context.Context, crv *cnsv1alpha1.CnsRegisterVolume) []reconcile.Request {
 		if ctx == nil {
 			panic("context is nil")
 		}
-		if o == nil {
-			panic("object is nil")
-		}
 
 		logger := pkglog.FromContextOrDefault(ctx).
-			WithValues("name", o.GetName(), "namespace", o.GetNamespace())
+			WithValues("name", crv.GetName(), "namespace", crv.GetNamespace())
 		logger.V(4).Info("Reconciling VMs due to CnsRegisterVolume event")
 
 		var requests []reconcile.Request
 
-		for _, ownerRef := range o.GetOwnerReferences() {
+		for _, ownerRef := range crv.GetOwnerReferences() {
 			if ownerRef.Kind == vmKind {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: client.ObjectKey{
-						Namespace: o.GetNamespace(),
+						Namespace: crv.GetNamespace(),
 						Name:      ownerRef.Name,
 					},
 				})
@@ -455,27 +444,19 @@ func CnsRegisterVolumeToVirtualMachineMapper(
 //   - CnsNodeVMBatchAttachmentReportsCacheMiss returns true for the object.
 func CnsNodeVMBatchAttachmentToVirtualMachineMapper(
 	ctx context.Context,
-) handler.MapFunc {
+) handler.TypedMapFunc[*cnsv1alpha1.CnsNodeVMBatchAttachment, reconcile.Request] {
 
 	if ctx == nil {
 		panic("context is nil")
 	}
 
-	return func(ctx context.Context, o client.Object) []reconcile.Request {
+	return func(ctx context.Context, ba *cnsv1alpha1.CnsNodeVMBatchAttachment) []reconcile.Request {
 		if ctx == nil {
 			panic("context is nil")
 		}
-		if o == nil {
-			panic("object is nil")
-		}
-
-		ba, ok := o.(*cnsv1alpha1.CnsNodeVMBatchAttachment)
-		if !ok {
-			panic(fmt.Sprintf("object is %T", o))
-		}
 
 		logger := pkglog.FromContextOrDefault(ctx).
-			WithValues("name", o.GetName(), "namespace", o.GetNamespace())
+			WithValues("name", ba.GetName(), "namespace", ba.GetNamespace())
 
 		// Only enqueue for batch attachments that report a PVC volume-ID
 		// cache miss; this is the signal that CSI has not yet resolved the
@@ -488,11 +469,11 @@ func CnsNodeVMBatchAttachmentToVirtualMachineMapper(
 
 		var requests []reconcile.Request
 
-		for _, ownerRef := range o.GetOwnerReferences() {
+		for _, ownerRef := range ba.GetOwnerReferences() {
 			if ownerRef.Kind == vmKind {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: client.ObjectKey{
-						Namespace: o.GetNamespace(),
+						Namespace: ba.GetNamespace(),
 						Name:      ownerRef.Name,
 					},
 				})

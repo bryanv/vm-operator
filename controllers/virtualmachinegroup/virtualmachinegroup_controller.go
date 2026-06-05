@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	vspherepolv1 "github.com/vmware-tanzu/vm-operator/external/vsphere-policy/api/v1alpha1"
@@ -65,16 +66,28 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 
 	c := ctrl.NewControllerManagedBy(mgr).
 		For(controlledType).
-		Watches(&vmopv1.VirtualMachineGroup{},
-			handler.EnqueueRequestsFromMapFunc(vmopv1util.GroupToMembersMapperFn(ctx, r.Client, vmgKind))).
-		Watches(&vmopv1.VirtualMachineGroup{},
-			handler.EnqueueRequestsFromMapFunc(vmopv1util.MemberToGroupMapperFn(ctx))).
-		Watches(&vmopv1.VirtualMachine{},
-			handler.EnqueueRequestsFromMapFunc(vmopv1util.MemberToGroupMapperFn(ctx)))
+		WatchesRawSource(source.Kind(
+			mgr.GetCache(),
+			&vmopv1.VirtualMachineGroup{},
+			handler.TypedEnqueueRequestsFromMapFunc(vmopv1util.GroupToMembersMapperFn(ctx, r.Client, vmgKind)),
+		)).
+		WatchesRawSource(source.Kind(
+			mgr.GetCache(),
+			&vmopv1.VirtualMachineGroup{},
+			handler.TypedEnqueueRequestsFromMapFunc(vmopv1util.VMGroupToGroupMapperFn(ctx)),
+		)).
+		WatchesRawSource(source.Kind(
+			mgr.GetCache(),
+			&vmopv1.VirtualMachine{},
+			handler.TypedEnqueueRequestsFromMapFunc(vmopv1util.VMToGroupMapperFn(ctx)),
+		))
 
 	if pkgcfg.FromContext(ctx).Features.VSpherePolicies {
-		c.Watches(&vspherepolv1.PolicyEvaluation{},
-			handler.EnqueueRequestsFromMapFunc(vmopv1util.PolicyEvalToVMToVMGroupMapperFunc(ctx, r.Client)))
+		c.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
+			&vspherepolv1.PolicyEvaluation{},
+			handler.TypedEnqueueRequestsFromMapFunc(vmopv1util.PolicyEvalToVMToVMGroupMapperFunc(ctx, r.Client)),
+		))
 	}
 
 	c.WithOptions(controller.Options{

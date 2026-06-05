@@ -789,12 +789,11 @@ var _ = Describe("GroupToMembersMapperFn", func() {
 	})
 })
 
-var _ = Describe("MemberToGroupMapperFn", func() {
+var _ = Describe("VMToGroupMapperFn", func() {
 	var (
 		ctx      context.Context
 		groupKey types.NamespacedName
 		vmKey    types.NamespacedName
-		vmgKey   types.NamespacedName
 	)
 	BeforeEach(func() {
 		ctx = context.Background()
@@ -807,10 +806,6 @@ var _ = Describe("MemberToGroupMapperFn", func() {
 			Namespace: nsName,
 			Name:      "vm-name",
 		}
-		vmgKey = types.NamespacedName{
-			Namespace: nsName,
-			Name:      "vmg-name",
-		}
 	})
 
 	It("should enqueue a reconcile from a linked VM kind member to its group", func() {
@@ -820,11 +815,11 @@ var _ = Describe("MemberToGroupMapperFn", func() {
 				Name:      vmKey.Name,
 			},
 		}
-		reqs := vmopv1util.MemberToGroupMapperFn(ctx)(ctx, vm)
+		reqs := vmopv1util.VMToGroupMapperFn(ctx)(ctx, vm)
 		Expect(reqs).To(BeEmpty())
 
 		vm.Spec.GroupName = groupKey.Name
-		reqs = vmopv1util.MemberToGroupMapperFn(ctx)(ctx, vm)
+		reqs = vmopv1util.VMToGroupMapperFn(ctx)(ctx, vm)
 		Expect(reqs).To(BeEmpty())
 
 		vm.Status.Conditions = []metav1.Condition{
@@ -833,9 +828,29 @@ var _ = Describe("MemberToGroupMapperFn", func() {
 				Status: metav1.ConditionTrue,
 			},
 		}
-		reqs = vmopv1util.MemberToGroupMapperFn(ctx)(ctx, vm)
+		reqs = vmopv1util.VMToGroupMapperFn(ctx)(ctx, vm)
 		Expect(reqs).To(HaveLen(1))
 		Expect(reqs[0].NamespacedName).To(Equal(groupKey))
+	})
+})
+
+var _ = Describe("VMGroupToGroupMapperFn", func() {
+	var (
+		ctx      context.Context
+		groupKey types.NamespacedName
+		vmgKey   types.NamespacedName
+	)
+	BeforeEach(func() {
+		ctx = context.Background()
+		nsName := "fake-namespace"
+		groupKey = types.NamespacedName{
+			Namespace: nsName,
+			Name:      "group-name",
+		}
+		vmgKey = types.NamespacedName{
+			Namespace: nsName,
+			Name:      "vmg-name",
+		}
 	})
 
 	It("should enqueue a reconcile from a linked VMGroup kind member to its group", func() {
@@ -845,11 +860,11 @@ var _ = Describe("MemberToGroupMapperFn", func() {
 				Name:      vmgKey.Name,
 			},
 		}
-		reqs := vmopv1util.MemberToGroupMapperFn(ctx)(ctx, vmg)
+		reqs := vmopv1util.VMGroupToGroupMapperFn(ctx)(ctx, vmg)
 		Expect(reqs).To(BeEmpty())
 
 		vmg.Spec.GroupName = groupKey.Name
-		reqs = vmopv1util.MemberToGroupMapperFn(ctx)(ctx, vmg)
+		reqs = vmopv1util.VMGroupToGroupMapperFn(ctx)(ctx, vmg)
 		Expect(reqs).To(BeEmpty())
 
 		vmg.Status.Conditions = []metav1.Condition{
@@ -858,7 +873,7 @@ var _ = Describe("MemberToGroupMapperFn", func() {
 				Status: metav1.ConditionTrue,
 			},
 		}
-		reqs = vmopv1util.MemberToGroupMapperFn(ctx)(ctx, vmg)
+		reqs = vmopv1util.VMGroupToGroupMapperFn(ctx)(ctx, vmg)
 		Expect(reqs).To(HaveLen(1))
 		Expect(reqs[0].NamespacedName).To(Equal(groupKey))
 	})
@@ -1235,19 +1250,4 @@ var _ = Describe("PolicyEvalToVMToVMGroupMapperFunc", func() {
 		})
 	})
 
-	When("PolicyEvaluation panics with wrong object type", func() {
-		It("should panic when not passed a PolicyEvaluation", func() {
-			wrongObj := &vmopv1.VirtualMachine{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: namespaceName,
-					Name:      vmName,
-				},
-			}
-			k8sClient := builder.NewFakeClient()
-			mapperFunc := vmopv1util.PolicyEvalToVMToVMGroupMapperFunc(ctx, k8sClient)
-			Expect(func() {
-				mapperFunc(ctx, wrongObj)
-			}).To(PanicWith("Expected PolicyEvaluation, but got *v1alpha6.VirtualMachine"))
-		})
-	})
 })

@@ -267,7 +267,7 @@ func VirtualMachineImageCacheToItemMapper(
 	logger logr.Logger,
 	k8sClient ctrlclient.Client,
 	groupVersion schema.GroupVersion,
-	kind string) handler.MapFunc {
+	kind string) handler.TypedMapFunc[*vmopv1.VirtualMachineImageCache, reconcile.Request] {
 
 	if ctx == nil {
 		panic("context is nil")
@@ -288,16 +288,9 @@ func VirtualMachineImageCacheToItemMapper(
 	// For a given VirtualMachineImageCache, return reconcile requests for
 	// resources that have the label pkgconst.VMICacheLabelKey with a value set
 	// to the name of a VMI cache resource.
-	return func(ctx context.Context, o ctrlclient.Object) []reconcile.Request {
+	return func(ctx context.Context, obj *vmopv1.VirtualMachineImageCache) []reconcile.Request {
 		if ctx == nil {
 			panic("context is nil")
-		}
-		if o == nil {
-			panic("object is nil")
-		}
-		obj, ok := o.(*vmopv1.VirtualMachineImageCache)
-		if !ok {
-			panic(fmt.Sprintf("object is %T", o))
 		}
 
 		// Do not reconcile anything if the referred object is being deleted.
@@ -312,8 +305,8 @@ func VirtualMachineImageCacheToItemMapper(
 		}
 
 		logger := logger.WithValues(
-			"name", o.GetName(),
-			"namespace", o.GetNamespace())
+			"name", obj.GetName(),
+			"namespace", obj.GetNamespace())
 		logger.V(4).Info(
 			"Reconciling all resources referencing an VirtualMachineImageCache",
 			"resourceGVK", gvkString)

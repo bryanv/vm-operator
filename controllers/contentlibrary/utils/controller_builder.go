@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	imgregv1a1 "github.com/vmware-tanzu/image-registry-operator-api/api/v1alpha1"
 
@@ -74,16 +75,18 @@ func AddToManager(
 		})
 
 	if pkgcfg.FromContext(ctx).Features.FastDeploy {
-		builder = builder.Watches(
+		builder = builder.WatchesRawSource(source.Kind(
+			mgr.GetCache(),
 			&vmopv1.VirtualMachineImageCache{},
-			handler.EnqueueRequestsFromMapFunc(
+			handler.TypedEnqueueRequestsFromMapFunc(
 				vmopv1util.VirtualMachineImageCacheToItemMapper(
 					ctx,
 					r.Logger.WithName("VirtualMachineImageCacheToItemMapper"),
 					r.Client,
 					imgregv1a1.GroupVersion,
 					controlledItemTypeName),
-			))
+			),
+		))
 	}
 
 	return builder.Complete(r)

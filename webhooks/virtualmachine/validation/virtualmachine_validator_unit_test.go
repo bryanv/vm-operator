@@ -87,6 +87,22 @@ type testParams struct {
 	skipSetControllerForPVC bool
 }
 
+// setAdminAnnotations sets the admin-only annotations on a VM with values
+// optionally suffixed by suffix. These are the annotations that are
+// restricted to privileged users on both create and update.
+func setAdminAnnotations(vm *vmopv1.VirtualMachine, suffix string) {
+	if vm.Annotations == nil {
+		vm.Annotations = make(map[string]string)
+	}
+	vm.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal + suffix
+	vm.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal + suffix
+	vm.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal + suffix
+	vm.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal + suffix
+	vm.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal + suffix
+	vm.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName + suffix
+	vm.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName + suffix
+}
+
 func bypassUpgradeCheck(ctx *context.Context, objects ...metav1.Object) {
 	pkgcfg.SetContext(*ctx, func(config *pkgcfg.Config) {
 		config.BuildVersion = fake
@@ -1376,66 +1392,47 @@ func unitTestsValidateCreate() {
 		annotationPath := field.NewPath("metadata", "annotations")
 
 		DescribeTable("create", doTest,
-			Entry("should disallow creating VM with admin-only annotations set by SSO user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						ctx.vm.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.vm.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.vm.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.vm.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.vm.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
-					},
-					validate: doValidateWithMsg(
-						field.Forbidden(annotationPath.Key(vmopv1.RestoredVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.ImportedVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.FailedOverVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.InstanceIDAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.FirstBootDoneAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyAllowListAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyWatermarkAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-					),
+		Entry("should disallow creating VM with admin-only annotations set by SSO user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					setAdminAnnotations(ctx.vm, "")
 				},
-			),
-			Entry("should allow creating VM with admin-only annotations set by service user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						ctx.IsPrivilegedAccount = true
-
-						ctx.vm.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.vm.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.vm.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.vm.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.vm.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
-					},
-					expectAllowed: true,
+				validate: doValidateWithMsg(
+					field.Forbidden(annotationPath.Key(vmopv1.RestoredVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.ImportedVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.FailedOverVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.InstanceIDAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.FirstBootDoneAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyAllowListAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyWatermarkAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+				),
+			},
+		),
+		Entry("should allow creating VM with admin-only annotations set by service user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					ctx.IsPrivilegedAccount = true
+					setAdminAnnotations(ctx.vm, "")
 				},
-			),
-			Entry("should allow creating VM with admin-only annotations set by WCP user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						fakeWCPUser := "sso:wcp-12345-fake-machineid-67890@vsphere.local"
-						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
-							config.PrivilegedUsers = fakeWCPUser
-						})
+				expectAllowed: true,
+			},
+		),
+		Entry("should allow creating VM with admin-only annotations set by WCP user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					fakeWCPUser := "sso:wcp-12345-fake-machineid-67890@vsphere.local"
+					pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+						config.PrivilegedUsers = fakeWCPUser
+					})
 
-						ctx.UserInfo.Username = fakeWCPUser
-						ctx.IsPrivilegedAccount = pkgbuilder.IsPrivilegedAccount(ctx.WebhookContext, ctx.UserInfo)
+					ctx.UserInfo.Username = fakeWCPUser
+					ctx.IsPrivilegedAccount = pkgbuilder.IsPrivilegedAccount(ctx.WebhookContext, ctx.UserInfo)
 
-						ctx.vm.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.vm.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.vm.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.vm.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.vm.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
-					},
-					expectAllowed: true,
+					setAdminAnnotations(ctx.vm, "")
 				},
-			),
+				expectAllowed: true,
+			},
+		),
 			Entry("should allow creating VM with cluster module",
 				testParams{
 					setup: func(ctx *unitValidatingWebhookContext) {
@@ -5587,180 +5584,125 @@ func unitTestsValidateUpdate() { //nolint:gocyclo
 		annotationPath := field.NewPath("metadata", "annotations")
 
 		DescribeTable("update", doTest,
-			Entry("should disallow updating admin-only annotations by SSO user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						bypassUpgradeCheck(&ctx.Context, ctx.vm, ctx.oldVM)
+		Entry("should disallow updating admin-only annotations by SSO user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					bypassUpgradeCheck(&ctx.Context, ctx.vm, ctx.oldVM)
 
-						ctx.oldVM.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.oldVM.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
-						ctx.oldVM.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.oldVM.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.oldVM.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
+					setAdminAnnotations(ctx.oldVM, "")
+					ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
+					ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
 
-						ctx.vm.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal + updateSuffix
-						ctx.vm.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal + updateSuffix
-						ctx.vm.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal + updateSuffix
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName + updateSuffix
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName + updateSuffix
-
-					},
-					validate: doValidateWithMsg(
-						field.Forbidden(annotationPath.Key(vmopv1.InstanceIDAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.FirstBootDoneAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(pkgconst.CreatedAtBuildVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(pkgconst.CreatedAtSchemaVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.RestoredVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.ImportedVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.FailedOverVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyAllowListAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyWatermarkAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-					),
+					setAdminAnnotations(ctx.vm, updateSuffix)
+					ctx.vm.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal + updateSuffix
+					ctx.vm.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal + updateSuffix
 				},
-			),
-			Entry("should disallow removing admin-only annotations by SSO user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						ctx.oldVM.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.oldVM.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
-						ctx.oldVM.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.oldVM.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.oldVM.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
-					},
-					validate: doValidateWithMsg(
-						field.Forbidden(annotationPath.Key(vmopv1.InstanceIDAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.FirstBootDoneAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(pkgconst.CreatedAtBuildVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(pkgconst.CreatedAtSchemaVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.RestoredVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.ImportedVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(vmopv1.FailedOverVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyAllowListAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-						field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyWatermarkAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
-					),
+				validate: doValidateWithMsg(
+					field.Forbidden(annotationPath.Key(vmopv1.InstanceIDAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.FirstBootDoneAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(pkgconst.CreatedAtBuildVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(pkgconst.CreatedAtSchemaVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.RestoredVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.ImportedVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.FailedOverVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyAllowListAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyWatermarkAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+				),
+			},
+		),
+		Entry("should disallow removing admin-only annotations by SSO user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					setAdminAnnotations(ctx.oldVM, "")
+					ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
+					ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
 				},
-			),
-			Entry("should allow updating admin-only annotations by service user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						ctx.IsPrivilegedAccount = true
+				validate: doValidateWithMsg(
+					field.Forbidden(annotationPath.Key(vmopv1.InstanceIDAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.FirstBootDoneAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(pkgconst.CreatedAtBuildVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(pkgconst.CreatedAtSchemaVersionAnnotationKey), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.RestoredVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.ImportedVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(vmopv1.FailedOverVMAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyAllowListAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+					field.Forbidden(annotationPath.Key(anno2extraconfig.ManagementProxyWatermarkAnnotation), "modifying this annotation is not allowed for non-admin users").Error(),
+				),
+			},
+		),
+		Entry("should allow updating admin-only annotations by service user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					ctx.IsPrivilegedAccount = true
 
-						ctx.oldVM.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.oldVM.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
-						ctx.oldVM.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.oldVM.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.oldVM.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
+					setAdminAnnotations(ctx.oldVM, "")
+					ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
+					ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
 
-						ctx.vm.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal + updateSuffix
-						ctx.vm.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal + updateSuffix
-						ctx.vm.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal + updateSuffix
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName + updateSuffix
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName + updateSuffix
-					},
-					expectAllowed: true,
+					setAdminAnnotations(ctx.vm, updateSuffix)
+					ctx.vm.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal + updateSuffix
+					ctx.vm.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal + updateSuffix
 				},
-			),
-			Entry("should allow removing admin-only annotations by service user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						ctx.IsPrivilegedAccount = true
+				expectAllowed: true,
+			},
+		),
+		Entry("should allow removing admin-only annotations by service user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					ctx.IsPrivilegedAccount = true
 
-						ctx.oldVM.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.oldVM.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
-						ctx.oldVM.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.oldVM.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.oldVM.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.oldVM.Annotations[pkgconst.ClusterModuleNameAnnotationKey] = dummyClusterModuleAnnVal
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
-					},
-					expectAllowed: true,
+					setAdminAnnotations(ctx.oldVM, "")
+					ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
+					ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
+					ctx.oldVM.Annotations[pkgconst.ClusterModuleNameAnnotationKey] = dummyClusterModuleAnnVal
 				},
-			),
-			Entry("should allow updating admin-only annotations by privileged user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						privilegedUsersEnvList := "  , foo ,bar , test,  "
-						privilegedUser := "bar"
+				expectAllowed: true,
+			},
+		),
+		Entry("should allow updating admin-only annotations by privileged user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					privilegedUsersEnvList := "  , foo ,bar , test,  "
+					privilegedUser := "bar"
 
-						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
-							config.PrivilegedUsers = privilegedUsersEnvList
-						})
+					pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+						config.PrivilegedUsers = privilegedUsersEnvList
+					})
 
-						ctx.UserInfo.Username = privilegedUser
-						ctx.IsPrivilegedAccount = pkgbuilder.IsPrivilegedAccount(ctx.WebhookContext, ctx.UserInfo)
+					ctx.UserInfo.Username = privilegedUser
+					ctx.IsPrivilegedAccount = pkgbuilder.IsPrivilegedAccount(ctx.WebhookContext, ctx.UserInfo)
 
-						ctx.oldVM.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.oldVM.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
-						ctx.oldVM.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.oldVM.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.oldVM.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
+					setAdminAnnotations(ctx.oldVM, "")
+					ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
+					ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
 
-						ctx.vm.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal + updateSuffix
-						ctx.vm.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal + updateSuffix
-						ctx.vm.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal + updateSuffix
-						ctx.vm.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal + updateSuffix
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName + updateSuffix
-						ctx.vm.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName + updateSuffix
-					},
-					expectAllowed: true,
+					setAdminAnnotations(ctx.vm, updateSuffix)
+					ctx.vm.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal + updateSuffix
+					ctx.vm.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal + updateSuffix
 				},
-			),
-			Entry("should allow removing admin-only annotations by privileged user",
-				testParams{
-					setup: func(ctx *unitValidatingWebhookContext) {
-						privilegedUsersEnvList := "  , foo ,bar , test,  "
-						privilegedUser := "bar"
+				expectAllowed: true,
+			},
+		),
+		Entry("should allow removing admin-only annotations by privileged user",
+			testParams{
+				setup: func(ctx *unitValidatingWebhookContext) {
+					privilegedUsersEnvList := "  , foo ,bar , test,  "
+					privilegedUser := "bar"
 
-						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
-							config.PrivilegedUsers = privilegedUsersEnvList
-						})
+					pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+						config.PrivilegedUsers = privilegedUsersEnvList
+					})
 
-						ctx.UserInfo.Username = privilegedUser
-						ctx.IsPrivilegedAccount = pkgbuilder.IsPrivilegedAccount(ctx.WebhookContext, ctx.UserInfo)
+					ctx.UserInfo.Username = privilegedUser
+					ctx.IsPrivilegedAccount = pkgbuilder.IsPrivilegedAccount(ctx.WebhookContext, ctx.UserInfo)
 
-						ctx.oldVM.Annotations[vmopv1.InstanceIDAnnotation] = dummyInstanceIDVal
-						ctx.oldVM.Annotations[vmopv1.FirstBootDoneAnnotation] = dummyFirstBootDoneVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
-						ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
-						ctx.oldVM.Annotations[vmopv1.RestoredVMAnnotation] = dummyRegisteredAnnVal
-						ctx.oldVM.Annotations[vmopv1.ImportedVMAnnotation] = dummyImportedAnnVal
-						ctx.oldVM.Annotations[vmopv1.FailedOverVMAnnotation] = dummyFailedOverAnnVal
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyAllowListAnnotation] = dummyVmiName
-						ctx.oldVM.Annotations[anno2extraconfig.ManagementProxyWatermarkAnnotation] = dummyVmiName
-					},
-					expectAllowed: true,
+					setAdminAnnotations(ctx.oldVM, "")
+					ctx.oldVM.Annotations[pkgconst.CreatedAtBuildVersionAnnotationKey] = dummyCreatedAtBuildVersionVal
+					ctx.oldVM.Annotations[pkgconst.CreatedAtSchemaVersionAnnotationKey] = dummyCreatedAtSchemaVersionVal
 				},
-			),
+				expectAllowed: true,
+			},
+		),
 			Entry("should disallow changing cluster module annotation by SSO user",
 				testParams{
 					setup: func(ctx *unitValidatingWebhookContext) {

@@ -37,8 +37,23 @@ Findings:
 
 - `VirtualMachineNetworkRoutingPolicySpec` = `{From, To, Table, Priority}` only. `mark` and `type-of-service` are **not** exposed.
 - `VirtualMachineNetworkRouteSpec` gains **`Table` only** (no `from` on routes).
-- Feature gate reuses the existing `PerNamespaceNetworkProvider` capability (no new flag).
+- Feature gate is a **new** VM-Service-specific capability, `supports_vm_service_routing_policies`, mapped to a new `Features.VMRoutingPolicies` — it denotes that these fields are supported. It follows the `supports_vm_service_vlan_subinterface` / `VMVlanSubinterface` precedent: declared in `pkg/config/capabilities/capabilities.go`, handled in `updateCapabilitiesFeaturesFromCRD` (capabilities-CRD-driven only; no ConfigMap or FSS env-var path), with the feature bool in `pkg/config/config.go` `FeatureStates`.
+- The webhook gate applies on create **and** update — `validateNetwork` runs from both `ValidateCreate` and `ValidateUpdate`, and the existing gates (VLAN sub-interface, WorkloadIPv6) behave the same way. Deactivating the capability therefore rejects later spec updates of VMs already using the fields; this is the accepted, precedented behavior.
 - Per-interface DNS is already shipped and out of scope.
+
+## Conversion requirements (repo convention for new hub fields)
+
+`v1alpha6` is the conversion hub with spokes `v1alpha1`–`v1alpha5`, so additive hub fields always carry conversion work:
+
+- Spoke `virtualmachine_conversion.go` files already define manual `Convert_v1alpha6_VirtualMachineNetworkInterfaceSpec_To_v1alphaN_...` wrappers (e.g. `api/v1alpha5/virtualmachine_conversion.go`), so `RoutingPolicies` is absorbed by regenerating with `make generate-go-conversions`. The route-spec conversion is currently fully generated (`AddGeneratedConversionFunc` in each spoke's `zz_generated.conversion.go`); adding `Table` forces a manual wrapper per spoke.
+- Hub-only interface data is restored on up-conversion by `restore_v1alpha6_VirtualMachineNetworkInterfaces` (annotation `MarshalData` / `UnmarshalData`), matching interfaces by `Name` — the new fields must be added there or a spoke round-trip wipes them.
+- Round-trip tests live in the `api/test` module (`api/test/v1alphaN/virtualmachine_conversion_test.go`), not next to the API types.
+
+## E2E approach
+
+- **No new subnet or network is provisioned.** The test attaches **two interfaces on the same network** to a CloudInit VM. `ip rule` entries and per-table routes are installed by the kernel regardless of the L3 topology, so rule/table presence (`ip rule show`, `ip route show table N`) is fully observable without a second subnet; actual cross-subnet traffic steering is not asserted.
+- Extend the existing networking suite at `test/e2e/vmservice/vmservice/virtualmachine/vm_networking.go` (per `e2e-sync-with-changes.md`, prefer extending existing suites) using its existing guest-exec helpers.
+- The spec is skipped/gated when the `supports_vm_service_routing_policies` capability is not activated on the testbed.
 
 ## References
 

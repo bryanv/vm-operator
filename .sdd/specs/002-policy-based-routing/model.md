@@ -3,7 +3,7 @@
 - **Spec**: [`spec.md`](./spec.md)
 - **API version**: `v1alpha6` (`api/v1alpha6/virtualmachine_network_types.go`)
 
-All additions are additive to the current active alpha (`v1alpha6`). No field is removed, renamed, or retyped, so no conversion webhook is required. Values are only meaningful with the CloudInit bootstrap provider and the `PerNamespaceNetworkProvider` capability; the webhook enforces both.
+All additions are additive to the current active alpha (`v1alpha6`). No field is removed, renamed, or retyped. The existing conversion webhook must drop the new fields on down-conversion and restore them via the `MarshalData` annotation on up-conversion (see § Conversion below). Values are only meaningful with the CloudInit bootstrap provider and the `supports_vm_service_routing_policies` capability (`Features.VMRoutingPolicies`); the webhook enforces both.
 
 ---
 
@@ -94,9 +94,21 @@ Structural range checks are handled by the kubebuilder markers above; the webhoo
 | single IP family per rule | webhook | When both `from` and `to` are set, reject mixed families (mirrors the existing route family check). |
 | `from`/`to` parse as IP or CIDR | webhook | Reject malformed values. |
 | CloudInit-only | webhook | Reject `routingPolicies` or any route `table` for non-CloudInit bootstrap. |
-| `PerNamespaceNetworkProvider` gate | webhook | Reject `routingPolicies` or any route `table` when the capability is disabled (`field.Forbidden`, `featureNotEnabled`). |
+| `VMRoutingPolicies` gate | webhook | Reject `routingPolicies` or any route `table` when the `supports_vm_service_routing_policies` capability is deactivated (`field.Forbidden`, `featureNotEnabled`). Applies on create and update, like the existing VLAN and WorkloadIPv6 gates. |
 
 Reserved table numbers (0/253/254/255) are **not** blocked — Netplan itself accepts them (`schema.json` `minimum: 0`, `uint16`), and this feature does not enforce restrictions stricter than Netplan's.
+
+---
+
+## Conversion (v1alpha1–v1alpha5)
+
+The hub is `v1alpha6`; every older version converts through it, so both new fields participate in spoke round-trips:
+
+- **Down-conversion (hub → spoke)** drops the fields. `Convert_v1alpha6_VirtualMachineNetworkInterfaceSpec_To_v1alphaN_...` wrappers already exist in every spoke (added for earlier hub-only interface fields), so `RoutingPolicies` needs only `make generate-go-conversions`. `VirtualMachineNetworkRouteSpec` is today a purely generated conversion; adding `Table` breaks that, so each spoke gains a manual `Convert_v1alpha6_VirtualMachineNetworkRouteSpec_To_v1alphaN_VirtualMachineNetworkRouteSpec` that delegates to the regenerated `autoConvert`.
+- **Up-conversion (spoke → hub)** restores the dropped values from the `MarshalData` annotation: extend each spoke's `restore_v1alpha6_VirtualMachineNetworkInterfaces` to copy `RoutingPolicies` (whole-field, like `Type` / `AdvancedProperties`) and per-route `Table`. Interfaces are matched by `Name` (existing behavior); within a matched interface, routes are matched by `(to, via)` — if the spoke client edited a route's `to`/`via`, the old `table` is intentionally not restored onto the changed route.
+- **Tests**: hub-spoke-hub round-trip cases with both fields populated in `api/test/v1alphaN/virtualmachine_conversion_test.go` for each spoke version.
+
+This annotation-based preservation is what keeps an older-version client's read-modify-write from silently clearing the new fields (the additive-change UPDATE hazard the constitution references).
 
 ---
 

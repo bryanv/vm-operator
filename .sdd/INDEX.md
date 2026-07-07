@@ -32,6 +32,7 @@ Each spec lives under `specs/NNN-slug/`. Standard artifacts: `spec.md` (behavior
 |---|------|-------|--------|------|
 | 000 | [sdd](specs/000-sdd/) | VM Operator Specification Driven Development | In Progress | vmop-3820 |
 | 001 | [class-policy-resize](specs/001-class-policy-resize/) | VM Service Class Policy and Resize — Policy + Environment Browser Pipeline | In Progress | vmop-3331 |
+| 002 | [policy-based-routing](specs/002-policy-based-routing/) | Policy-Based Routing for the Supervisor Cluster | Draft | TBD |
 
 ### Finding the right spec
 

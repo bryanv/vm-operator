@@ -412,12 +412,14 @@ _setup_kubectl_vsphere() {
         return 1
     fi
 
+    # TODO Need to switch to vcf-cli!
     _log "Installing kubectl-vsphere from supervisor ${wcp_ip}..."
     local plugin_os
     case "$(uname -s)-$(uname -m)" in
-        Darwin-arm64)  plugin_os="darwin-arm64" ;;
-        Darwin-x86_64) plugin_os="darwin-amd64" ;;
-        *)             plugin_os="linux-amd64"  ;;
+        Darwin-arm64)   plugin_os="darwin-arm64" ;;
+        Darwin-x86_64)  plugin_os="darwin-amd64" ;;
+        Linux-aarch64)  plugin_os="linux-arm64"  ;;
+        *)              plugin_os="linux-amd64"  ;;
     esac
 
     local -r plugin_url="https://${wcp_ip}/wcp/plugin/${plugin_os}/vsphere-plugin.zip"

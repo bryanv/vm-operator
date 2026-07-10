@@ -5,6 +5,7 @@ ARG BASE_IMAGE=mirror.gcr.io/library/photon:5.0
 
 # builder-base: Go toolchain + downloaded dependencies
 # Shared foundation for builder-e2e and builder-packer.
+#FROM --platform=$TARGETPLATFORM ${BASE_IMAGE} AS builder-base
 FROM ${BASE_IMAGE} AS builder-base
 
 # Go module proxy settings. Override at build time to use an internal mirror

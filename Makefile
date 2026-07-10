@@ -970,7 +970,7 @@ e2e-image-build: ## Build E2E test container image
 	@# Stage kubectl into the build context. This is to support passing the kubectl binary from the build system.
 	@if [ ! -s kubectl ]; then \
 		echo "Downloading kubectl $(E2E_KUBECTL_VERSION)..."; \
-		curl -fsSL "https://dl.k8s.io/release/$(E2E_KUBECTL_VERSION)/bin/linux/amd64/kubectl" -o kubectl && chmod +x kubectl; \
+		curl -fsSL "https://dl.k8s.io/release/$(E2E_KUBECTL_VERSION)/bin/linux/$(GOARCH)/kubectl" -o kubectl && chmod +x kubectl; \
 	fi
 	@# Stage packer-plugin-vsphere source into the build context so the Dockerfile
 	@# can compile it without needing git credentials inside the Docker build.

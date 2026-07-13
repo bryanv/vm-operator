@@ -183,6 +183,83 @@ var _ = Describe("Netplan",
 			})
 		})
 
+		Context("Route table and routing policies", func() {
+			BeforeEach(func() {
+				results.Results = []network.NetworkInterfaceResult{
+					{
+						Name:            ifName,
+						GuestDeviceName: guestDevName,
+						DHCP4:           true,
+						DHCP6:           true,
+						Routes: []network.NetworkInterfaceRoute{
+							{
+								To:    "default",
+								Via:   "192.168.20.1",
+								Table: ptr.To(int64(100)),
+							},
+							{
+								To:  "185.107.56.0/24",
+								Via: "10.1.1.1",
+							},
+						},
+						RoutingPolicies: []network.NetworkInterfaceRoutingPolicy{
+							{
+								From:     "192.168.20.0/24",
+								Table:    100,
+								Priority: ptr.To(int64(100)),
+							},
+							{
+								To:    "10.0.0.0/8",
+								Table: 200,
+							},
+						},
+					},
+				}
+			})
+
+			It("emits route table and routing-policy blocks", func() {
+				Expect(err).ToNot(HaveOccurred())
+				Expect(config).ToNot(BeNil())
+				Expect(config.Ethernets).To(HaveKey(ifName))
+
+				np := config.Ethernets[ifName]
+
+				Expect(np.Routes).To(HaveLen(2))
+				Expect(np.Routes[0].To).To(HaveValue(Equal("default")))
+				Expect(np.Routes[0].Via).To(HaveValue(Equal("192.168.20.1")))
+				Expect(np.Routes[0].Table).To(HaveValue(BeEquivalentTo(100)))
+				Expect(np.Routes[1].To).To(HaveValue(Equal("185.107.56.0/24")))
+				Expect(np.Routes[1].Table).To(BeNil())
+
+				Expect(np.RoutingPolicy).To(HaveLen(2))
+				Expect(np.RoutingPolicy[0].From).To(HaveValue(Equal("192.168.20.0/24")))
+				Expect(np.RoutingPolicy[0].To).To(BeNil())
+				Expect(np.RoutingPolicy[0].Table).To(BeEquivalentTo(100))
+				Expect(np.RoutingPolicy[0].Priority).To(HaveValue(BeEquivalentTo(100)))
+				Expect(np.RoutingPolicy[1].From).To(BeNil())
+				Expect(np.RoutingPolicy[1].To).To(HaveValue(Equal("10.0.0.0/8")))
+				Expect(np.RoutingPolicy[1].Table).To(BeEquivalentTo(200))
+				Expect(np.RoutingPolicy[1].Priority).To(BeNil())
+			})
+
+			Context("no routing policies or route tables set", func() {
+				BeforeEach(func() {
+					results.Results[0].Routes = []network.NetworkInterfaceRoute{
+						{To: "default", Via: "192.168.20.1"},
+					}
+					results.Results[0].RoutingPolicies = nil
+				})
+
+				It("routing-policy is empty and route table is nil", func() {
+					Expect(err).ToNot(HaveOccurred())
+					np := config.Ethernets[ifName]
+					Expect(np.RoutingPolicy).To(BeEmpty())
+					Expect(np.Routes).To(HaveLen(1))
+					Expect(np.Routes[0].Table).To(BeNil())
+				})
+			})
+		})
+
 		Context("IPv4/6 DHCP", func() {
 			BeforeEach(func() {
 				results.Results = []network.NetworkInterfaceResult{

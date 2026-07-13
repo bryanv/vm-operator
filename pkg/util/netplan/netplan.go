@@ -24,6 +24,8 @@ type Nameserver = schema.NameserverConfig
 
 type Route = schema.RoutingConfig
 
+type RoutingPolicy = schema.RoutingPolicy
+
 type Address = schema.AddressMapping
 
 type Renderer = schema.Renderer

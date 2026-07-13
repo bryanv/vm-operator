@@ -90,8 +90,26 @@ func NetPlanCustomization(result NetworkInterfaceResults, vlans []vmopv1.Virtual
 					To:     &route.To,
 					Metric: metric,
 					Via:    &route.Via,
+					Table:  route.Table,
 				},
 			)
+		}
+
+		for i := range r.RoutingPolicies {
+			policy := r.RoutingPolicies[i]
+
+			npPolicy := netplan.RoutingPolicy{
+				Table:    policy.Table,
+				Priority: policy.Priority,
+			}
+			if policy.From != "" {
+				npPolicy.From = &policy.From
+			}
+			if policy.To != "" {
+				npPolicy.To = &policy.To
+			}
+
+			npEth.RoutingPolicy = append(npEth.RoutingPolicy, npPolicy)
 		}
 
 		netPlan.Ethernets[r.Name] = npEth

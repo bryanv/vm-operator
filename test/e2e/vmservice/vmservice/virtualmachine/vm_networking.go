@@ -400,6 +400,13 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 			return true
 		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(BeTrue(), "Timed out updating VirtualMachine %s to add second network interface", vmName)
 
+		// This assumes the network provider resolves the interface's IP/gateway
+		// into status.network.config while the VM is still powered off (true for
+		// NSX/VPC IPAM). On a DHCP/VDS testbed this may not populate until the
+		// guest boots and Tools report in, in which case this Eventually will
+		// time out and the test needs a topology gate, similar to the
+		// IsNetworkNsxtVPC skip used by the "moved to a different subnet" test
+		// above.
 		By("Wait for the second interface's configured IP and gateway to be resolved by the network provider")
 		var eth1CIDR, eth1Gateway4 string
 		Eventually(func(g Gomega) {

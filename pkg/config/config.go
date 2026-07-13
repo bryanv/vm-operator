@@ -206,6 +206,7 @@ type FeatureStates struct {
 	PerNamespaceNetworkProvider bool
 	WorkloadIPv6                bool
 	VirtualMachineConfigPolicy  bool
+	VMRoutingPolicies           bool
 }
 
 type InstanceStorage struct {

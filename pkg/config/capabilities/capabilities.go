@@ -127,6 +127,12 @@ const (
 	// (ConfigTarget, VirtualMachineConfigOptions, VirtualMachineConfigPolicy,
 	// VirtualMachineGuestOptions).
 	CapabilityKeyVirtualMachineConfigPolicy = "supports_vm_service_vm_config_policy"
+
+	// CapabilityKeyVMRoutingPolicies is the name of the capability key defined
+	// in the Supervisor capabilities CRD for the VM Service's support for
+	// per-interface routing-policy rules and route tables (policy-based
+	// routing).
+	CapabilityKeyVMRoutingPolicies = "supports_vm_service_routing_policies"
 )
 
 var (
@@ -301,6 +307,8 @@ func updateCapabilitiesFeaturesFromCRD(
 			fs.WorkloadIPv6 = capStatus.Activated
 		case CapabilityKeyVirtualMachineConfigPolicy:
 			fs.VirtualMachineConfigPolicy = capStatus.Activated
+		case CapabilityKeyVMRoutingPolicies:
+			fs.VMRoutingPolicies = capStatus.Activated
 		}
 
 	}

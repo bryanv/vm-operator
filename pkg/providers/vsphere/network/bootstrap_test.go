@@ -435,6 +435,58 @@ var _ = Describe("InterfaceBootstrap", func() {
 				Expect(bootstrap.Routes).To(BeEmpty())
 			})
 		})
+
+		When("spec.Routes has a Table set", func() {
+			BeforeEach(func() {
+				interfaceSpec.Routes = []vmopv1.VirtualMachineNetworkRouteSpec{
+					{To: "default", Via: "192.168.20.1", Table: ptr.To(int64(100))},
+				}
+			})
+			It("copies Table onto the route", func() {
+				Expect(bootstrap.Routes).To(HaveLen(1))
+				Expect(bootstrap.Routes[0]).To(Equal(network.NetworkInterfaceRoute{
+					To: "default", Via: "192.168.20.1", Table: ptr.To(int64(100)),
+				}))
+			})
+		})
+
+		When("spec.Routes has no Table set", func() {
+			BeforeEach(func() {
+				interfaceSpec.Routes = []vmopv1.VirtualMachineNetworkRouteSpec{
+					{To: "default", Via: "192.168.20.1"},
+				}
+			})
+			It("bootstrap.Routes[].Table is nil", func() {
+				Expect(bootstrap.Routes).To(HaveLen(1))
+				Expect(bootstrap.Routes[0].Table).To(BeNil())
+			})
+		})
+	})
+
+	Context("RoutingPolicies", func() {
+		When("spec.RoutingPolicies has multiple entries", func() {
+			BeforeEach(func() {
+				interfaceSpec.RoutingPolicies = []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+					{From: "192.168.20.0/24", Table: 100, Priority: ptr.To(int64(100))},
+					{To: "10.0.0.0/8", Table: 200},
+				}
+			})
+			It("copies all entries with From/To/Table/Priority preserved", func() {
+				Expect(bootstrap.RoutingPolicies).To(HaveLen(2))
+				Expect(bootstrap.RoutingPolicies[0]).To(Equal(network.NetworkInterfaceRoutingPolicy{
+					From: "192.168.20.0/24", Table: 100, Priority: ptr.To(int64(100)),
+				}))
+				Expect(bootstrap.RoutingPolicies[1]).To(Equal(network.NetworkInterfaceRoutingPolicy{
+					To: "10.0.0.0/8", Table: 200,
+				}))
+			})
+		})
+
+		When("spec.RoutingPolicies is empty", func() {
+			It("bootstrap.RoutingPolicies is nil/empty", func() {
+				Expect(bootstrap.RoutingPolicies).To(BeEmpty())
+			})
+		})
 	})
 
 	Context("Nameservers", func() {

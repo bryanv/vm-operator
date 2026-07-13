@@ -76,6 +76,10 @@ type Bootstrap struct {
 	// copied verbatim from interfaceSpec.Routes.
 	Routes []NetworkInterfaceRoute
 
+	// RoutingPolicies is the list of routing-policy rules to configure inside
+	// the guest, copied verbatim from interfaceSpec.RoutingPolicies.
+	RoutingPolicies []NetworkInterfaceRoutingPolicy
+
 	// IPConfigs is the list of static IP configurations for this interface.
 	// Populated from the provider CR status when using StaticPool assignment,
 	// or replaced entirely by interfaceSpec.Addresses when the user supplies
@@ -196,6 +200,16 @@ func InterfaceBootstrap(
 			To:     route.To,
 			Via:    route.Via,
 			Metric: route.Metric,
+			Table:  route.Table,
+		})
+	}
+
+	for _, policy := range interfaceSpec.RoutingPolicies {
+		bootstrap.RoutingPolicies = append(bootstrap.RoutingPolicies, NetworkInterfaceRoutingPolicy{
+			From:     policy.From,
+			To:       policy.To,
+			Table:    policy.Table,
+			Priority: policy.Priority,
 		})
 	}
 
@@ -458,6 +472,7 @@ func devAndBootstrapToNetworkInterfaceResult(
 		Nameservers:        b.Nameservers,
 		SearchDomains:      b.SearchDomains,
 		Routes:             b.Routes,
+		RoutingPolicies:    b.RoutingPolicies,
 		IPConfigs:          b.IPConfigs,
 	}
 }

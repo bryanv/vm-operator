@@ -77,6 +77,7 @@ type NetworkInterfaceResult struct { //nolint:revive
 	Nameservers     []string
 	SearchDomains   []string
 	Routes          []NetworkInterfaceRoute
+	RoutingPolicies []NetworkInterfaceRoutingPolicy
 }
 
 type NetworkInterfaceIPConfig struct { //nolint:revive
@@ -89,6 +90,16 @@ type NetworkInterfaceRoute struct { //nolint:revive
 	To     string
 	Via    string
 	Metric int32
+	Table  *int64
+}
+
+// NetworkInterfaceRoutingPolicy is a routing-policy rule ("ip rule") for a
+// network interface, translated from VirtualMachineNetworkRoutingPolicySpec.
+type NetworkInterfaceRoutingPolicy struct { //nolint:revive
+	From     string
+	To       string
+	Table    int64
+	Priority *int64
 }
 
 // Device contains the information from the network interface CR needed to create or

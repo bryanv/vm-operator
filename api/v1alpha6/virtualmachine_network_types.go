@@ -24,6 +24,50 @@ type VirtualMachineNetworkRouteSpec struct {
 
 	// Metric is the weight/priority of the route.
 	Metric int32 `json:"metric,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+
+	// Table is the routing table into which this route is installed. When
+	// unset, the route is installed into the main table. Used together with
+	// RoutingPolicies to implement policy-based routing.
+	//
+	// Please note this feature is available only with the following bootstrap
+	// providers: CloudInit.
+	Table *int64 `json:"table,omitempty"`
+}
+
+// VirtualMachineNetworkRoutingPolicySpec defines a routing-policy rule (an
+// "ip rule") that selects a routing table for traffic matching a source
+// and/or destination address.
+type VirtualMachineNetworkRoutingPolicySpec struct {
+	// +optional
+
+	// From matches the source address of the traffic. It is an IP4 or IP6
+	// address, optionally with a network prefix length, ex. 192.168.0.0/24.
+	From string `json:"from,omitempty"`
+
+	// +optional
+
+	// To matches the destination address of the traffic. It is an IP4 or IP6
+	// address, optionally with a network prefix length, ex. 10.0.0.0/8.
+	To string `json:"to,omitempty"`
+
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+
+	// Table is the routing table this rule selects for matching traffic.
+	Table int64 `json:"table"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
+
+	// Priority is the rule priority. Lower numbers are evaluated first.
+	// Specifying an explicit priority is strongly recommended, and is
+	// mandatory for guests using the NetworkManager backend.
+	Priority *int64 `json:"priority,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.vmxnet3) || self.type == 'VMXNet3'",message="vmxnet3 tuning fields require interface type VMXNet3"
@@ -180,6 +224,18 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// Please note this feature is available only with the following bootstrap
 	// providers: CloudInit.
 	Routes []VirtualMachineNetworkRouteSpec `json:"routes,omitempty"`
+
+	// +optional
+	// +listType=atomic
+
+	// RoutingPolicies is a list of routing-policy rules ("ip rules") for this
+	// interface. Each rule matches traffic by source and/or destination
+	// address and selects a routing table. Combine with per-route Table
+	// values to implement policy-based routing on a multi-homed VM.
+	//
+	// Please note this feature is available only with the following bootstrap
+	// providers: CloudInit.
+	RoutingPolicies []VirtualMachineNetworkRoutingPolicySpec `json:"routingPolicies,omitempty"`
 
 	// +optional
 

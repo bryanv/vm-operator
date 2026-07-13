@@ -139,6 +139,14 @@ func Convert_v1alpha6_VirtualMachineNetworkInterfaceSpec_To_v1alpha3_VirtualMach
 	return autoConvert_v1alpha6_VirtualMachineNetworkInterfaceSpec_To_v1alpha3_VirtualMachineNetworkInterfaceSpec(in, out, s)
 }
 
+// Convert_v1alpha6_VirtualMachineNetworkRouteSpec_To_v1alpha3_VirtualMachineNetworkRouteSpec drops
+// Table, which does not exist in v1alpha3; it is preserved via MarshalData on ConvertFrom.
+func Convert_v1alpha6_VirtualMachineNetworkRouteSpec_To_v1alpha3_VirtualMachineNetworkRouteSpec(
+	in *vmopv1.VirtualMachineNetworkRouteSpec, out *VirtualMachineNetworkRouteSpec, s apiconversion.Scope) error {
+
+	return autoConvert_v1alpha6_VirtualMachineNetworkRouteSpec_To_v1alpha3_VirtualMachineNetworkRouteSpec(in, out, s)
+}
+
 // Convert_v1alpha3_VirtualMachineNetworkInterfaceSpec_To_v1alpha6_VirtualMachineNetworkInterfaceSpec converts
 // the spoke type to the hub. The auto-generated conversion maps spoke false to hub &false via
 // Convert_bool_To_Pointer_bool; we override to map false→nil so that a spoke user who never set
@@ -220,6 +228,34 @@ func restore_v1alpha6_VirtualMachineNetworkInterfaces(dst, src *vmopv1.VirtualMa
 		}
 		if dstIface.DHCP6 == nil && srcIface.DHCP6 != nil && !*srcIface.DHCP6 {
 			dstIface.DHCP6 = srcIface.DHCP6
+		}
+		dstIface.RoutingPolicies = srcIface.RoutingPolicies
+		restore_v1alpha6_VirtualMachineNetworkInterfaceRouteTables(dstIface, srcIface)
+	}
+}
+
+// restore_v1alpha6_VirtualMachineNetworkInterfaceRouteTables restores the
+// per-route Table field, which does not exist in this spoke version. Routes
+// are matched by (To, Via) within the interface; if a spoke client edited a
+// route's To/Via, the old Table is intentionally not restored onto the
+// changed route.
+func restore_v1alpha6_VirtualMachineNetworkInterfaceRouteTables(dstIface, srcIface *vmopv1.VirtualMachineNetworkInterfaceSpec) {
+	if len(srcIface.Routes) == 0 || len(dstIface.Routes) == 0 {
+		return
+	}
+	type routeKey struct {
+		to  string
+		via string
+	}
+	srcRouteByKey := make(map[routeKey]*vmopv1.VirtualMachineNetworkRouteSpec, len(srcIface.Routes))
+	for i := range srcIface.Routes {
+		r := &srcIface.Routes[i]
+		srcRouteByKey[routeKey{to: r.To, via: r.Via}] = r
+	}
+	for i := range dstIface.Routes {
+		dstRoute := &dstIface.Routes[i]
+		if srcRoute, ok := srcRouteByKey[routeKey{to: dstRoute.To, via: dstRoute.Via}]; ok {
+			dstRoute.Table = srcRoute.Table
 		}
 	}
 }

@@ -182,6 +182,41 @@ func TestVirtualMachineConversion(t *testing.T) {
 				},
 			},
 			{
+				name: "spec.network.interfaces routing policies and route table",
+				hub: &vmopv1.VirtualMachine{
+					Spec: vmopv1.VirtualMachineSpec{
+						Network: &vmopv1.VirtualMachineNetworkSpec{
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name: "eth0",
+								},
+								{
+									Name: "eth1",
+									Routes: []vmopv1.VirtualMachineNetworkRouteSpec{
+										{
+											To:    "default",
+											Via:   "192.168.20.1",
+											Table: ptr.To(int64(100)),
+										},
+									},
+									RoutingPolicies: []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+										{
+											From:     "192.168.20.0/24",
+											Table:    100,
+											Priority: ptr.To(int64(100)),
+										},
+										{
+											To:    "10.0.0.0/8",
+											Table: 200,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
 				name: "spec.network.interfaces legacy NIC type",
 				hub: &vmopv1.VirtualMachine{
 					Spec: vmopv1.VirtualMachineSpec{

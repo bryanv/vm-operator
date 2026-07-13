@@ -16069,6 +16069,18 @@ spec:
                                 format: int32
                                 minimum: 1
                                 type: integer
+                              table:
+                                description: |-
+                                  Table is the routing table into which this route is installed. When
+                                  unset, the route is installed into the main table. Used together with
+                                  RoutingPolicies to implement policy-based routing.
+
+                                  Please note this feature is available only with the following bootstrap
+                                  providers: CloudInit.
+                                format: int64
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
                               to:
                                 description: To is either "default", or an IP4 or
                                   IP6 address.
@@ -16081,6 +16093,52 @@ spec:
                             - via
                             type: object
                           type: array
+                        routingPolicies:
+                          description: |-
+                            RoutingPolicies is a list of routing-policy rules ("ip rules") for this
+                            interface. Each rule matches traffic by source and/or destination
+                            address and selects a routing table. Combine with per-route Table
+                            values to implement policy-based routing on a multi-homed VM.
+
+                            Please note this feature is available only with the following bootstrap
+                            providers: CloudInit.
+                          items:
+                            description: |-
+                              VirtualMachineNetworkRoutingPolicySpec defines a routing-policy rule (an
+                              "ip rule") that selects a routing table for traffic matching a source
+                              and/or destination address.
+                            properties:
+                              from:
+                                description: |-
+                                  From matches the source address of the traffic. It is an IP4 or IP6
+                                  address, optionally with a network prefix length, ex. 192.168.0.0/24.
+                                type: string
+                              priority:
+                                description: |-
+                                  Priority is the rule priority. Lower numbers are evaluated first.
+                                  Specifying an explicit priority is strongly recommended, and is
+                                  mandatory for guests using the NetworkManager backend.
+                                format: int64
+                                maximum: 4294967295
+                                minimum: 1
+                                type: integer
+                              table:
+                                description: Table is the routing table this rule
+                                  selects for matching traffic.
+                                format: int64
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              to:
+                                description: |-
+                                  To matches the destination address of the traffic. It is an IP4 or IP6
+                                  address, optionally with a network prefix length, ex. 10.0.0.0/8.
+                                type: string
+                            required:
+                            - table
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
                         searchDomains:
                           description: |-
                             SearchDomains is a list of search domains used when resolving IP

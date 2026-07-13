@@ -2773,6 +2773,169 @@ func unitTestsValidateCreate() {
 				},
 			),
 
+			Entry("disallow routing policy rule with neither from nor to",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+							config.Features.VMRoutingPolicies = true
+						})
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].RoutingPolicies = []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+							{
+								Table: 100,
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0].routingPolicies[0]: Required value: must specify at least one of from or to`,
+					),
+				},
+			),
+
+			Entry("disallow routing policy rule with mixed IP address families",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+							config.Features.VMRoutingPolicies = true
+						})
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].RoutingPolicies = []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+							{
+								From:  "192.168.20.0/24",
+								To:    "2605:a601:a0ba:720:2ce6::/48",
+								Table: 100,
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0].routingPolicies[0]: Invalid value: "": cannot mix IP address families`,
+					),
+				},
+			),
+
+			Entry("disallow routing policy rule with malformed from/to",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+							config.Features.VMRoutingPolicies = true
+						})
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].RoutingPolicies = []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+							{
+								From:  "not-an-ip",
+								To:    "also-not-an-ip",
+								Table: 100,
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0].routingPolicies[0].from: Invalid value: "not-an-ip": must be an IPv4 or IPv6 address, optionally with a network prefix length`,
+						`spec.network.interfaces[0].routingPolicies[0].to: Invalid value: "also-not-an-ip": must be an IPv4 or IPv6 address, optionally with a network prefix length`,
+					),
+				},
+			),
+
+			Entry("disallow routingPolicies when bootstrap doesn't support them",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+							config.Features.VMRoutingPolicies = true
+						})
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							Sysprep: &vmopv1.VirtualMachineBootstrapSysprepSpec{
+								RawSysprep: &common.SecretKeySelector{},
+							},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].RoutingPolicies = []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+							{
+								From:  "192.168.20.0/24",
+								Table: 100,
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0].routingPolicies: Invalid value: "routingPolicies": routingPolicies is available only with the following bootstrap providers: CloudInit`,
+					),
+				},
+			),
+
+			Entry("disallow routingPolicies when VMRoutingPolicies capability is disabled (by default)",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].RoutingPolicies = []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+							{
+								From:  "192.168.20.0/24",
+								Table: 100,
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0].routingPolicies: Forbidden: the VM Routing Policies feature is not enabled`,
+					),
+				},
+			),
+
+			Entry("disallow route table when VMRoutingPolicies capability is disabled (by default)",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].Routes = []vmopv1.VirtualMachineNetworkRouteSpec{
+							{
+								To:    "default",
+								Via:   "192.168.20.1",
+								Table: ptr.To(int64(100)),
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0].routes[0].table: Forbidden: the VM Routing Policies feature is not enabled`,
+					),
+				},
+			),
+
+			Entry("allow routingPolicies and route table when bootstrap supports them and VMRoutingPolicies capability is enabled",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+							config.Features.VMRoutingPolicies = true
+						})
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].Routes = []vmopv1.VirtualMachineNetworkRouteSpec{
+							{
+								To:    "default",
+								Via:   "192.168.20.1",
+								Table: ptr.To(int64(100)),
+							},
+						}
+						ctx.vm.Spec.Network.Interfaces[0].RoutingPolicies = []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+							{
+								From:     "192.168.20.0/24",
+								Table:    100,
+								Priority: ptr.To(int64(100)),
+							},
+							{
+								To:    "10.0.0.0/8",
+								Table: 200,
+							},
+						}
+					},
+					expectAllowed: true,
+				},
+			),
+
 			// Please note this feature is available only with the following bootstrap providers: CloudInit
 			Entry("validate searchDomains when bootstrap doesn't support searchDomains",
 				testParams{
@@ -7621,6 +7784,39 @@ func unitTestsValidateUpdate() { //nolint:gocyclo
 						ctx.vm.Spec.Network = nil
 					},
 					expectAllowed: true,
+				},
+			),
+			Entry("disallow routingPolicies on update when VMRoutingPolicies capability is disabled (by default)",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						ctx.oldVM.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.oldVM.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{Name: "eth0"},
+							},
+						}
+						ctx.vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+							CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+						}
+						ctx.vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name: "eth0",
+									RoutingPolicies: []vmopv1.VirtualMachineNetworkRoutingPolicySpec{
+										{
+											From:  "192.168.20.0/24",
+											Table: 100,
+										},
+									},
+								},
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0].routingPolicies: Forbidden: the VM Routing Policies feature is not enabled`,
+					),
 				},
 			),
 		)

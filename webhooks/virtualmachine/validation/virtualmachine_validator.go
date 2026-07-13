@@ -1273,6 +1273,8 @@ func (v validator) validateNetworkInterfaceSpec(
 		}
 	}
 
+	allErrs = append(allErrs, v.validateNetworkInterfaceRoutingPolicies(interfacePath, interfaceSpec)...)
+
 	if pkgcfg.FromContext(ctx).Features.TelcoVMServiceAPI && len(interfaceSpec.AdvancedProperties) > 0 {
 		allErrs = append(allErrs, v.validateNetworkInterfaceAdvancedProperties(
 			interfacePath.Child("advancedProperties"), interfaceSpec.AdvancedProperties)...)
@@ -1296,6 +1298,71 @@ func (v validator) validateNetworkInterfaceSpec(
 	}
 
 	return allErrs
+}
+
+// validateNetworkInterfaceRoutingPolicies validates spec.network.interfaces[].routingPolicies.
+// It enforces the two semantic checks Netplan cannot express structurally: a
+// rule must match on at least one of from/to, and from/to must not mix IP
+// address families. Range validation for table is handled by kubebuilder
+// markers.
+func (v validator) validateNetworkInterfaceRoutingPolicies(
+	interfacePath *field.Path,
+	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec) field.ErrorList {
+
+	var allErrs field.ErrorList
+
+	if len(interfaceSpec.RoutingPolicies) == 0 {
+		return allErrs
+	}
+
+	p := interfacePath.Child("routingPolicies")
+
+	for i, rp := range interfaceSpec.RoutingPolicies {
+		rpPath := p.Index(i)
+
+		if rp.From == "" && rp.To == "" {
+			allErrs = append(allErrs, field.Required(rpPath, "must specify at least one of from or to"))
+			continue
+		}
+
+		var fromIP, toIP net.IP
+
+		if rp.From != "" {
+			ip, err := parseIPOrCIDR(rp.From)
+			if err != nil {
+				allErrs = append(allErrs, field.Invalid(rpPath.Child("from"), rp.From, err.Error()))
+			}
+			fromIP = ip
+		}
+
+		if rp.To != "" {
+			ip, err := parseIPOrCIDR(rp.To)
+			if err != nil {
+				allErrs = append(allErrs, field.Invalid(rpPath.Child("to"), rp.To, err.Error()))
+			}
+			toIP = ip
+		}
+
+		if fromIP != nil && toIP != nil {
+			if (fromIP.To4() != nil) != (toIP.To4() != nil) {
+				allErrs = append(allErrs, field.Invalid(rpPath, "", "cannot mix IP address families"))
+			}
+		}
+	}
+
+	return allErrs
+}
+
+// parseIPOrCIDR parses s as either a bare IPv4/IPv6 address or an address
+// with a network prefix length (addr/prefixlen).
+func parseIPOrCIDR(s string) (net.IP, error) {
+	if ip, _, err := net.ParseCIDR(s); err == nil {
+		return ip, nil
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip, nil
+	}
+	return nil, fmt.Errorf("must be an IPv4 or IPv6 address, optionally with a network prefix length")
 }
 
 func (v validator) validateNetworkSpecWithBootStrap(
@@ -1449,7 +1516,7 @@ func isPowerOf2String(s string) bool {
 // MTU, routes, and searchDomains are available only with CloudInit.
 // Nameservers is available only with CloudInit and Sysprep.
 func (v validator) validateNetworkInterfaceSpecWithBootstrap(
-	_ *pkgctx.WebhookRequestContext,
+	ctx *pkgctx.WebhookRequestContext,
 	interfacePath *field.Path,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 	vm *vmopv1.VirtualMachine) field.ErrorList {
@@ -1493,6 +1560,35 @@ func (v validator) validateNetworkInterfaceSpecWithBootstrap(
 				// Not exposing routes here in error message
 				"routes",
 				"routes is available only with the following bootstrap providers: CloudInit",
+			))
+		}
+
+		if !pkgcfg.FromContext(ctx).Features.VMRoutingPolicies {
+			for i, route := range routes {
+				if route.Table != nil {
+					allErrs = append(allErrs, field.Forbidden(
+						interfacePath.Child("routes").Index(i).Child("table"),
+						fmt.Sprintf(featureNotEnabled, "VM Routing Policies"),
+					))
+				}
+			}
+		}
+	}
+
+	if routingPolicies := interfaceSpec.RoutingPolicies; len(routingPolicies) > 0 {
+		if cloudInit == nil {
+			allErrs = append(allErrs, field.Invalid(
+				interfacePath.Child("routingPolicies"),
+				// Not exposing routingPolicies here in error message
+				"routingPolicies",
+				"routingPolicies is available only with the following bootstrap providers: CloudInit",
+			))
+		}
+
+		if !pkgcfg.FromContext(ctx).Features.VMRoutingPolicies {
+			allErrs = append(allErrs, field.Forbidden(
+				interfacePath.Child("routingPolicies"),
+				fmt.Sprintf(featureNotEnabled, "VM Routing Policies"),
 			))
 		}
 	}

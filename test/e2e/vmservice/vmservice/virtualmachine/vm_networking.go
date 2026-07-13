@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 
@@ -23,7 +24,9 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1a3 "github.com/vmware-tanzu/vm-operator/api/v1alpha3"
+	vmopv1a6 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/appple2e/util"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/framework"
 	e2essh "github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/ssh"
@@ -67,6 +70,7 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 		vmName           string
 
 		isVMMutableNetworksCapEnabled bool
+		isVMRoutingPoliciesCapEnabled bool
 		linuxImageDisplayName         string
 		linuxVMIName                  string
 	)
@@ -105,6 +109,8 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 		isAsyncSvUpgradeEnabled, _ := util.IsFSSEnabled(sshCommandRunner, utils.SupervisorAsyncUpgradeFSS)
 		isVMMutableNetworksCapEnabled = utils.IsSupervisorCapabilityEnabled(ctx,
 			svClusterProxy.GetClientSet(), svClusterProxy.GetDynamicClient(), mutableNetworksCap, isAsyncSvUpgradeEnabled)
+		isVMRoutingPoliciesCapEnabled = utils.IsSupervisorCapabilityEnabled(ctx,
+			svClusterProxy.GetClientSet(), svClusterProxy.GetDynamicClient(), consts.VMRoutingPoliciesCapabilityName, isAsyncSvUpgradeEnabled)
 	})
 
 	AfterEach(func() {
@@ -336,4 +342,186 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 		ethCards = object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
 		Expect(ethCards).To(HaveLen(1), "VM config should have one EthernetCard")
 	})
+
+	It("Should apply routing-policy rules and route tables for a CloudInit VM with two interfaces on the same network", Label("experimental"), func() {
+		if !isVMMutableNetworksCapEnabled {
+			Skip("VM Mutable Networks capability is not enabled")
+		}
+		if !isVMRoutingPoliciesCapEnabled {
+			Skip("VM Routing Policies capability is not enabled")
+		}
+
+		const (
+			eth1Name        = "eth1"
+			routeTable      = int64(100)
+			routeToCIDR     = "10.99.0.0/16"
+			eth1DNSOverride = "8.8.4.4"
+		)
+
+		vmParameters := manifestbuilders.VirtualMachineYaml{
+			Namespace:        input.WCPNamespaceName,
+			Name:             vmName,
+			ImageName:        linuxVMIName,
+			VMClassName:      clusterResources.VMClassName,
+			StorageClassName: clusterResources.StorageClassName,
+			PowerState:       "PoweredOff",
+			Bootstrap: manifestbuilders.Bootstrap{
+				CloudInit: &manifestbuilders.CloudInit{},
+			},
+		}
+		vmYaml = manifestbuilders.GetVirtualMachineYamlA6(vmParameters)
+		Expect(clusterProxy.CreateWithArgs(ctx, vmYaml)).To(Succeed(), "failed to create virtualmachine:\n %s", string(vmYaml))
+
+		vmoperator.WaitForVirtualMachineToExist(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+
+		key := ctrlclient.ObjectKey{Name: vmName, Namespace: input.WCPNamespaceName}
+
+		By("Add second network interface, on the same network, to VM Spec")
+		Eventually(func() bool {
+			vm := &vmopv1a6.VirtualMachine{}
+
+			err := svClusterClient.Get(ctx, key, vm)
+			if err != nil {
+				e2eframework.Logf("retry due to: %v", err)
+				return false
+			}
+
+			Expect(vm.Spec.Network).ToNot(BeNil())
+			Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+			vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vm.Spec.Network.Interfaces[0])
+			vm.Spec.Network.Interfaces[1].Name = eth1Name
+
+			err = svClusterClient.Update(ctx, vm)
+			if err != nil {
+				e2eframework.Logf("retry due to: %v", err)
+				return false
+			}
+
+			return true
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(BeTrue(), "Timed out updating VirtualMachine %s to add second network interface", vmName)
+
+		By("Wait for the second interface's configured IP and gateway to be resolved by the network provider")
+		var eth1CIDR, eth1Gateway4 string
+		Eventually(func(g Gomega) {
+			vm := &vmopv1a6.VirtualMachine{}
+			g.Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+			g.Expect(vm.Status.Network).ToNot(BeNil())
+			g.Expect(vm.Status.Network.Config).ToNot(BeNil())
+
+			for _, ifaceStatus := range vm.Status.Network.Config.Interfaces {
+				if ifaceStatus.Name == eth1Name && ifaceStatus.IP != nil {
+					eth1CIDR = ""
+					if len(ifaceStatus.IP.Addresses) > 0 {
+						eth1CIDR = ifaceStatus.IP.Addresses[0]
+					}
+					eth1Gateway4 = ifaceStatus.IP.Gateway4
+				}
+			}
+
+			g.Expect(eth1CIDR).ToNot(BeEmpty(), "eth1's configured IP address was not resolved")
+			g.Expect(eth1Gateway4).ToNot(BeEmpty(), "eth1's configured gateway4 was not resolved")
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(),
+			"Timed out waiting for eth1's configured IP and gateway")
+
+		// The route's via address must be a reachable next hop. Since eth1
+		// shares eth0's network, eth1's own configured gateway is guaranteed
+		// to be on-link for eth1's subnet.
+		eth1Via := strings.SplitN(eth1Gateway4, "/", 2)[0]
+
+		By("Configure a route table and a routing-policy rule matching eth1's own address on the second interface")
+		Eventually(func() bool {
+			vm := &vmopv1a6.VirtualMachine{}
+
+			err := svClusterClient.Get(ctx, key, vm)
+			if err != nil {
+				e2eframework.Logf("retry due to: %v", err)
+				return false
+			}
+
+			Expect(vm.Spec.Network.Interfaces).To(HaveLen(2))
+			vm.Spec.Network.Interfaces[1].Nameservers = []string{eth1DNSOverride}
+			vm.Spec.Network.Interfaces[1].Routes = []vmopv1a6.VirtualMachineNetworkRouteSpec{
+				{
+					To:    routeToCIDR,
+					Via:   eth1Via,
+					Table: ptr.To(routeTable),
+				},
+			}
+			vm.Spec.Network.Interfaces[1].RoutingPolicies = []vmopv1a6.VirtualMachineNetworkRoutingPolicySpec{
+				{
+					From:     eth1CIDR,
+					Table:    routeTable,
+					Priority: ptr.To(int64(100)),
+				},
+			}
+
+			err = svClusterClient.Update(ctx, vm)
+			if err != nil {
+				e2eframework.Logf("retry due to: %v", err)
+				return false
+			}
+
+			return true
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(BeTrue(),
+			"Timed out updating VirtualMachine %s with routing policy and route table", vmName)
+
+		By("Power on VM")
+		Eventually(func() bool {
+			vm := &vmopv1a6.VirtualMachine{}
+			err := svClusterClient.Get(ctx, key, vm)
+			if err != nil {
+				e2eframework.Logf("retry due to: %v", err)
+				return false
+			}
+
+			vm.Spec.PowerState = vmopv1a6.VirtualMachinePowerStateOn
+
+			err = svClusterClient.Update(ctx, vm)
+			if err != nil {
+				e2eframework.Logf("retry due to: %v", err)
+				return false
+			}
+
+			return true
+		}, config.GetIntervals("default", "wait-virtual-machine-powerstate")...).Should(BeTrue(), "Timed out updating VirtualMachine %s PowerState to On", vmName)
+
+		vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, "PoweredOn")
+		vmoperator.WaitForVirtualMachineIP(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		vmIP := vmoperator.GetVirtualMachineIP(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+
+		By("Verify the routing-policy rule, route table, and per-interface DNS are applied inside the guest")
+		verifyNetworkingGuestCmds(ctx, config, clusterProxy, svClusterClient, input.WCPNamespaceName, vmIP,
+			[]string{
+				"ip rule show",
+				fmt.Sprintf("ip route show table %d", routeTable),
+				fmt.Sprintf("resolvectl status %s", eth1Name),
+			},
+			[]string{
+				fmt.Sprintf("lookup %d", routeTable),
+				routeToCIDR,
+				eth1DNSOverride,
+			},
+		)
+	})
+}
+
+// verifyNetworkingGuestCmds runs cmds inside the VM's guest over SSH (routed via
+// the NSX jumpbox or directly over the VDS gateway, depending on the testbed's
+// networking topology) and asserts each command's output contains the
+// corresponding entry in expectedOutput.
+func verifyNetworkingGuestCmds(
+	ctx context.Context,
+	config *e2eConfig.E2EConfig,
+	clusterProxy *common.VMServiceClusterProxy,
+	svClusterClient ctrlclient.Client,
+	namespace, vmIP string,
+	cmds, expectedOutput []string) {
+
+	switch config.InfraConfig.NetworkingTopology {
+	case consts.NSX:
+		vmservice.WaitForPodReady(ctx, config, svClusterClient, namespace, consts.JumpboxPodVMName)
+		vmservice.VerifyLoginAndRunCmdsInNSXSetup(ctx, config, clusterProxy, namespace, consts.JumpboxPodVMName, vmIP, cmds, expectedOutput)
+	case consts.VDS:
+		vmservice.VerifyLoginAndRunCmdsInVDSSetup(config, vmIP, cmds, expectedOutput)
+	}
 }

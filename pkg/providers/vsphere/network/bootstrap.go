@@ -81,6 +81,15 @@ type Bootstrap struct {
 	// or replaced entirely by interfaceSpec.Addresses when the user supplies
 	// explicit addresses.
 	IPConfigs []NetworkInterfaceIPConfig
+
+	// DHCP4Overrides and DHCP6Overrides carry interface-level DHCP client
+	// behavior overrides destined for netplan's dhcp4-overrides /
+	// dhcp6-overrides. Populated from the fully-resolved DHCP4/DHCP6 above,
+	// not directly from interfaceSpec, since the network provider can
+	// enable DHCP for a family the user never set explicitly. See
+	// NetworkInterfaceDHCPOverrides for the overrides currently supported.
+	DHCP4Overrides NetworkInterfaceDHCPOverrides
+	DHCP6Overrides NetworkInterfaceDHCPOverrides
 }
 
 // InterfaceBootstrap computes the final Bootstrap for a network interface by
@@ -120,6 +129,35 @@ func InterfaceBootstrap(
 	}
 	if interfaceSpec.DHCP6 != nil {
 		bootstrap.DHCP6 = *interfaceSpec.DHCP6
+	}
+
+	// Gateway4/Gateway6 set to "None" while the corresponding DHCP is
+	// active requests that DHCP-provided routes, including the default
+	// gateway, are not installed — netplan's dhcp4-overrides/dhcp6-overrides
+	// use-routes=false. This is derived from the fully-resolved bootstrap.
+	// DHCP4/DHCP6 above (spec-explicit or network-provider-inferred), not
+	// interfaceSpec.DHCP4/DHCP6 directly, so it also applies when the
+	// provider is the one that turned DHCP on.
+	if bootstrap.DHCP4 && interfaceSpec.Gateway4 == gatewayIgnored {
+		bootstrap.DHCP4Overrides.UseRoutes = ptr.To(false)
+	}
+	if bootstrap.DHCP6 && interfaceSpec.Gateway6 == gatewayIgnored {
+		bootstrap.DHCP6Overrides.UseRoutes = ptr.To(false)
+	}
+
+	// The networkd backend requires dhcp4-overrides and dhcp6-overrides to
+	// contain identical keys/values whenever both DHCP4 and DHCP6 end up
+	// active for this interface, or netplan refuses to apply the
+	// configuration at all. The validating webhook rejects this for
+	// spec-explicit dhcp4/dhcp6, but DHCP can also be inferred from the
+	// network provider, which the webhook cannot see at admission time.
+	// Re-check with the fully-resolved state here: on a mismatch, drop both
+	// overrides rather than risk rendering netplan config the guest would
+	// reject outright.
+	if bootstrap.DHCP4 && bootstrap.DHCP6 &&
+		!dhcpOverridesEqual(bootstrap.DHCP4Overrides, bootstrap.DHCP6Overrides) {
+		bootstrap.DHCP4Overrides = NetworkInterfaceDHCPOverrides{}
+		bootstrap.DHCP6Overrides = NetworkInterfaceDHCPOverrides{}
 	}
 
 	if len(interfaceSpec.Addresses) > 0 {
@@ -221,6 +259,13 @@ func InterfaceBootstrap(
 	}
 
 	return bootstrap
+}
+
+// dhcpOverridesEqual reports whether a and b specify identical values for
+// every override currently modeled by NetworkInterfaceDHCPOverrides. Extend
+// this alongside new fields added to that type.
+func dhcpOverridesEqual(a, b NetworkInterfaceDHCPOverrides) bool {
+	return ptr.Equal(a.UseRoutes, b.UseRoutes)
 }
 
 // NetOPInterfaceBootstrap computes the Bootstrap for a VDS NetOP NetworkInterface CR by
@@ -459,5 +504,7 @@ func devAndBootstrapToNetworkInterfaceResult(
 		SearchDomains:      b.SearchDomains,
 		Routes:             b.Routes,
 		IPConfigs:          b.IPConfigs,
+		DHCP4Overrides:     b.DHCP4Overrides,
+		DHCP6Overrides:     b.DHCP6Overrides,
 	}
 }

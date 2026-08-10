@@ -103,7 +103,9 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// supports DHCP.
 	//
 	// Please note this field is mutually exclusive with IP4 addresses in the
-	// Addresses field and the Gateway4 field.
+	// Addresses field. It is also mutually exclusive with the Gateway4
+	// field, except that Gateway4 may be set to "None" while this field is
+	// true; see Gateway4 for what that combination does.
 	DHCP4 *bool `json:"dhcp4,omitempty"`
 
 	// +optional
@@ -120,7 +122,9 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// supports DHCP.
 	//
 	// Please note this field is mutually exclusive with IP6 addresses in the
-	// Addresses field and the Gateway6 field.
+	// Addresses field. It is also mutually exclusive with the Gateway6
+	// field, except that Gateway6 may be set to "None" while this field is
+	// true; see Gateway6 for what that combination does.
 	DHCP6 *bool `json:"dhcp6,omitempty"`
 
 	// +optional
@@ -133,7 +137,18 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// Please note this field is only supported if the network connection
 	// supports manual IP allocation.
 	//
-	// Please note this field is mutually exclusive with DHCP4.
+	// Please note this field is mutually exclusive with DHCP4, except for
+	// the value "None". Setting Gateway4 to "None" while DHCP4 is true
+	// requests an IPv4 address via DHCP but instructs the guest to ignore
+	// any routes DHCP would otherwise install, including the default
+	// route, leaving the DevOps user free to supply their own via Routes.
+	// This is available only with the CloudInit bootstrap provider.
+	//
+	// Please note if DHCP4 and DHCP6 are both true on this interface,
+	// Gateway4 and Gateway6 must either both be "None" or both unset;
+	// networkd requires the underlying dhcp4-overrides and dhcp6-overrides
+	// to carry identical keys and values whenever both address families
+	// are DHCP-enabled.
 	Gateway4 string `json:"gateway4,omitempty"`
 
 	// +optional
@@ -146,7 +161,18 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// Please note this field is only supported if the network connection
 	// supports manual IP allocation.
 	//
-	// Please note this field is mutually exclusive with DHCP6.
+	// Please note this field is mutually exclusive with DHCP6, except for
+	// the value "None". Setting Gateway6 to "None" while DHCP6 is true
+	// requests an IPv6 address via DHCPv6 but instructs the guest to ignore
+	// any routes DHCP would otherwise install, including the default
+	// route, leaving the DevOps user free to supply their own via Routes.
+	// This is available only with the CloudInit bootstrap provider.
+	//
+	// Please note if DHCP4 and DHCP6 are both true on this interface,
+	// Gateway4 and Gateway6 must either both be "None" or both unset;
+	// networkd requires the underlying dhcp4-overrides and dhcp6-overrides
+	// to carry identical keys and values whenever both address families
+	// are DHCP-enabled.
 	Gateway6 string `json:"gateway6,omitempty"`
 
 	// +optional

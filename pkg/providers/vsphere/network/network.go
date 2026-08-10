@@ -77,6 +77,24 @@ type NetworkInterfaceResult struct { //nolint:revive
 	Nameservers     []string
 	SearchDomains   []string
 	Routes          []NetworkInterfaceRoute
+	DHCP4Overrides  NetworkInterfaceDHCPOverrides
+	DHCP6Overrides  NetworkInterfaceDHCPOverrides
+}
+
+// NetworkInterfaceDHCPOverrides captures interface-level overrides for DHCP
+// client behavior that get translated into netplan's dhcp4-overrides /
+// dhcp6-overrides (see https://netplan.readthedocs.io/en/stable/netplan-yaml/#dhcp-overrides).
+// Only fields with a corresponding VM Spec knob are populated today. Adding
+// support for another netplan dhcp-overrides key is additive: add a field
+// here, populate it in InterfaceBootstrap, and convert it alongside
+// UseRoutes in NetPlanCustomization — the generated netplan schema already
+// models every dhcp-overrides key.
+type NetworkInterfaceDHCPOverrides struct { //nolint:revive
+	// UseRoutes disables installing DHCP-provided routes, including the
+	// default gateway, when set to false. Derived from Gateway4 (for
+	// DHCP4Overrides) or Gateway6 (for DHCP6Overrides) being "None" while
+	// the corresponding DHCP is active for the interface.
+	UseRoutes *bool
 }
 
 type NetworkInterfaceIPConfig struct { //nolint:revive

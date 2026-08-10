@@ -222,6 +222,65 @@ var _ = Describe("Netplan",
 			})
 		})
 
+		Context("DHCP Overrides (use-routes)", func() {
+			BeforeEach(func() {
+				results.Results = []network.NetworkInterfaceResult{
+					{
+						MacAddress:      macAddr1,
+						Name:            ifName,
+						GuestDeviceName: guestDevName,
+						DHCP4:           true,
+						DHCP6:           true,
+						DHCP4Overrides: network.NetworkInterfaceDHCPOverrides{
+							UseRoutes: ptr.To(false),
+						},
+						DHCP6Overrides: network.NetworkInterfaceDHCPOverrides{
+							UseRoutes: ptr.To(false),
+						},
+					},
+				}
+			})
+
+			It("renders matching dhcp4-overrides and dhcp6-overrides with use-routes: false", func() {
+				Expect(err).ToNot(HaveOccurred())
+				Expect(config).ToNot(BeNil())
+
+				np := config.Ethernets[ifName]
+				Expect(np.Dhcp4Overrides).ToNot(BeNil())
+				Expect(np.Dhcp4Overrides.UseRoutes).To(HaveValue(BeFalse()))
+				Expect(np.Dhcp6Overrides).ToNot(BeNil())
+				Expect(np.Dhcp6Overrides.UseRoutes).To(HaveValue(BeFalse()))
+			})
+
+			Context("no override requested for either family", func() {
+				BeforeEach(func() {
+					results.Results[0].DHCP4Overrides = network.NetworkInterfaceDHCPOverrides{}
+					results.Results[0].DHCP6Overrides = network.NetworkInterfaceDHCPOverrides{}
+				})
+
+				It("omits both dhcp4-overrides and dhcp6-overrides", func() {
+					Expect(err).ToNot(HaveOccurred())
+					np := config.Ethernets[ifName]
+					Expect(np.Dhcp4Overrides).To(BeNil())
+					Expect(np.Dhcp6Overrides).To(BeNil())
+				})
+			})
+
+			Context("override requested for only one family", func() {
+				BeforeEach(func() {
+					results.Results[0].DHCP6Overrides = network.NetworkInterfaceDHCPOverrides{}
+				})
+
+				It("renders dhcp4-overrides and omits dhcp6-overrides", func() {
+					Expect(err).ToNot(HaveOccurred())
+					np := config.Ethernets[ifName]
+					Expect(np.Dhcp4Overrides).ToNot(BeNil())
+					Expect(np.Dhcp4Overrides.UseRoutes).To(HaveValue(BeFalse()))
+					Expect(np.Dhcp6Overrides).To(BeNil())
+				})
+			})
+		})
+
 		Context("DHCP6 without AcceptRA (DHCPv6-only)", func() {
 			BeforeEach(func() {
 				results.Results = []network.NetworkInterfaceResult{

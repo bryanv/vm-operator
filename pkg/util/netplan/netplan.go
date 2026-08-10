@@ -22,6 +22,8 @@ type Match = schema.MatchConfig
 
 type Nameserver = schema.NameserverConfig
 
+type DHCPOverrides = schema.DHCPOverrides
+
 type Route = schema.RoutingConfig
 
 type Address = schema.AddressMapping

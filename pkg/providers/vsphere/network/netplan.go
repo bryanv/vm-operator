@@ -39,6 +39,17 @@ func NetPlanCustomization(result NetworkInterfaceResults, vlans []vmopv1.Virtual
 		npEth.Dhcp6 = &r.DHCP6
 		npEth.AcceptRa = &r.AcceptRA
 
+		// dhcp4-overrides/dhcp6-overrides only take effect when the
+		// corresponding dhcp4/dhcp6 is true; gate on that here so this
+		// renderer stays self-consistent regardless of what the caller put
+		// in DHCP4Overrides/DHCP6Overrides.
+		if r.DHCP4 {
+			npEth.Dhcp4Overrides = toNetplanDHCPOverrides(r.DHCP4Overrides)
+		}
+		if r.DHCP6 {
+			npEth.Dhcp6Overrides = toNetplanDHCPOverrides(r.DHCP6Overrides)
+		}
+
 		if !*npEth.Dhcp4 {
 			for i := range r.IPConfigs {
 				ipConfig := r.IPConfigs[i]
@@ -115,6 +126,21 @@ func NetPlanCustomization(result NetworkInterfaceResults, vlans []vmopv1.Virtual
 	}
 
 	return netPlan, nil
+}
+
+// toNetplanDHCPOverrides converts a NetworkInterfaceDHCPOverrides, derived
+// from the VM Spec, into netplan's dhcp4-overrides/dhcp6-overrides mapping.
+// It returns nil when no override is requested so the rendered YAML omits
+// an empty dhcp-overrides block. Extend this alongside new fields added to
+// NetworkInterfaceDHCPOverrides.
+func toNetplanDHCPOverrides(o NetworkInterfaceDHCPOverrides) *netplan.DHCPOverrides {
+	if o.UseRoutes == nil {
+		return nil
+	}
+
+	return &netplan.DHCPOverrides{
+		UseRoutes: o.UseRoutes,
+	}
 }
 
 // NormalizeNetplanMac normalizes the mac address format to one compatible with netplan.

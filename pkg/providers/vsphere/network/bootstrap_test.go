@@ -411,6 +411,113 @@ var _ = Describe("InterfaceBootstrap", func() {
 		})
 	})
 
+	Context("DHCP Overrides", func() {
+		When("DHCP4 is active and Gateway4 is \"None\"", func() {
+			BeforeEach(func() {
+				interfaceSpec.DHCP4 = ptr.To(true)
+				interfaceSpec.Gateway4 = "None"
+			})
+			It("sets DHCP4Overrides.UseRoutes to false", func() {
+				Expect(bootstrap.DHCP4Overrides.UseRoutes).To(HaveValue(BeFalse()))
+			})
+			It("leaves DHCP6Overrides unset", func() {
+				Expect(bootstrap.DHCP6Overrides.UseRoutes).To(BeNil())
+			})
+		})
+
+		When("DHCP6 is active and Gateway6 is \"None\"", func() {
+			BeforeEach(func() {
+				interfaceSpec.DHCP6 = ptr.To(true)
+				interfaceSpec.Gateway6 = "None"
+			})
+			It("sets DHCP6Overrides.UseRoutes to false", func() {
+				Expect(bootstrap.DHCP6Overrides.UseRoutes).To(HaveValue(BeFalse()))
+			})
+		})
+
+		When("Gateway4 is \"None\" but DHCP4 is not active", func() {
+			BeforeEach(func() {
+				interfaceSpec.Gateway4 = "None"
+			})
+			It("does not set DHCP4Overrides", func() {
+				Expect(bootstrap.DHCP4Overrides.UseRoutes).To(BeNil())
+			})
+		})
+
+		When("DHCP4 is active but Gateway4 is unset", func() {
+			BeforeEach(func() {
+				interfaceSpec.DHCP4 = ptr.To(true)
+			})
+			It("does not set DHCP4Overrides", func() {
+				Expect(bootstrap.DHCP4Overrides.UseRoutes).To(BeNil())
+			})
+		})
+
+		When("DHCP4 and DHCP6 are both active with matching Gateway4/Gateway6 \"None\"", func() {
+			BeforeEach(func() {
+				interfaceSpec.DHCP4 = ptr.To(true)
+				interfaceSpec.DHCP6 = ptr.To(true)
+				interfaceSpec.Gateway4 = "None"
+				interfaceSpec.Gateway6 = "None"
+			})
+			It("sets both DHCP4Overrides and DHCP6Overrides to use-routes=false", func() {
+				Expect(bootstrap.DHCP4Overrides.UseRoutes).To(HaveValue(BeFalse()))
+				Expect(bootstrap.DHCP6Overrides.UseRoutes).To(HaveValue(BeFalse()))
+			})
+		})
+
+		When("DHCP4 and DHCP6 are both active, but only Gateway4 is \"None\" (spec-explicit mismatch)", func() {
+			BeforeEach(func() {
+				interfaceSpec.DHCP4 = ptr.To(true)
+				interfaceSpec.DHCP6 = ptr.To(true)
+				interfaceSpec.Gateway4 = "None"
+			})
+			It("drops both overrides rather than emit mismatched dhcp4/dhcp6-overrides", func() {
+				Expect(bootstrap.DHCP4Overrides.UseRoutes).To(BeNil())
+				Expect(bootstrap.DHCP6Overrides.UseRoutes).To(BeNil())
+			})
+		})
+
+		When("the network provider (not the spec) resolves both DHCP4 and DHCP6 active, and only Gateway4 is \"None\"", func() {
+			BeforeEach(func() {
+				// interfaceSpec leaves DHCP4/DHCP6 nil; the provider's
+				// initial Bootstrap is what turns DHCP on for both
+				// families, which the validating webhook cannot see.
+				initial.DHCP4 = true
+				initial.DHCP6 = true
+				interfaceSpec.Gateway4 = "None"
+			})
+			It("drops both overrides rather than emit mismatched dhcp4/dhcp6-overrides", func() {
+				Expect(bootstrap.DHCP4).To(BeTrue())
+				Expect(bootstrap.DHCP6).To(BeTrue())
+				Expect(bootstrap.DHCP4Overrides.UseRoutes).To(BeNil())
+				Expect(bootstrap.DHCP6Overrides.UseRoutes).To(BeNil())
+			})
+		})
+
+		When("both DHCP families are active and Gateway4 is \"None\", alongside a static address for a different family", func() {
+			BeforeEach(func() {
+				// This combination is unusual (DHCP4 active with spec
+				// addresses present) but the DHCP-overrides guard must not
+				// disturb the pre-existing "None" gateway-clearing behavior
+				// on IPConfigs, which is unrelated to DHCP4Overrides/
+				// DHCP6Overrides.
+				initial.DHCP4 = true
+				initial.DHCP6 = true
+				interfaceSpec.Addresses = []string{"192.168.1.100/24"}
+				interfaceSpec.Gateway4 = "None"
+			})
+			It("still clears the static IPv4 gateway on IPConfigs", func() {
+				Expect(bootstrap.IPConfigs).To(HaveLen(1))
+				Expect(bootstrap.IPConfigs[0].Gateway).To(BeEmpty())
+			})
+			It("drops both DHCP overrides due to the mismatch", func() {
+				Expect(bootstrap.DHCP4Overrides.UseRoutes).To(BeNil())
+				Expect(bootstrap.DHCP6Overrides.UseRoutes).To(BeNil())
+			})
+		})
+	})
+
 	Context("Routes", func() {
 		When("spec.Routes has multiple entries with mixed Metric", func() {
 			BeforeEach(func() {

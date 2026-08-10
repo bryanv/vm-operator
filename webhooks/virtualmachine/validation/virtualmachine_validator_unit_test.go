@@ -2526,6 +2526,65 @@ func unitTestsValidateCreate() {
 				},
 			),
 
+			Entry("allow dhcp4 with gateway4 None to disable DHCP-provided routes",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						ctx.vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							HostName: "my-vm",
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name:     "eth0",
+									DHCP4:    ptr.To(true),
+									Gateway4: "None",
+								},
+							},
+						}
+					},
+					expectAllowed: true,
+				},
+			),
+
+			Entry("allow dhcp4 and dhcp6 with matching gateway4/gateway6 None",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						ctx.vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							HostName: "my-vm",
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name:     "eth0",
+									DHCP4:    ptr.To(true),
+									DHCP6:    ptr.To(true),
+									Gateway4: "None",
+									Gateway6: "None",
+								},
+							},
+						}
+					},
+					expectAllowed: true,
+				},
+			),
+
+			Entry("disallow mismatched gateway4/gateway6 None when dhcp4 and dhcp6 are both enabled",
+				testParams{
+					setup: func(ctx *unitValidatingWebhookContext) {
+						ctx.vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							HostName: "my-vm",
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name:     "eth0",
+									DHCP4:    ptr.To(true),
+									DHCP6:    ptr.To(true),
+									Gateway4: "None",
+								},
+							},
+						}
+					},
+					validate: doValidateWithMsg(
+						`spec.network.interfaces[0]: Invalid value: "": gateway4 and gateway6 must both be "None" or both unset when dhcp4 and dhcp6 are both enabled, since netplan requires dhcp4-overrides and dhcp6-overrides to match`,
+					),
+				},
+			),
+
 			Entry("disallow mixing static and dhcp",
 				testParams{
 					setup: func(ctx *unitValidatingWebhookContext) {

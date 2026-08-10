@@ -35,6 +35,7 @@ Each spec lives under `specs/NNN-slug/`. Standard artifacts: `spec.md` (behavior
 | 002 | [vm-extraconfig-reconcile](specs/002-vm-extraconfig-reconcile/) | VM ExtraConfig Reconciliation — E2E Coverage (`spec.md`/`plan.md` pending) | In Progress | vmop-3782 |
 | 003 | [compute-config-reconcile](specs/003-compute-config-reconcile/) | VM Compute Configuration Reconciliation | In Review | vmop-3388 |
 | 004 | [nic-extraconfig-reconcile](specs/004-nic-extraconfig-reconcile/) | NIC ExtraConfig Reconciler — E2E Coverage (`spec.md`/`plan.md` pending) | In Progress | vmop-3782 |
+| 005 | [netplan-dhcp-overrides](specs/005-netplan-dhcp-overrides/) | Netplan DHCP Overrides — `use-routes` | Draft | TBD |
 
 ### Finding the right spec
 

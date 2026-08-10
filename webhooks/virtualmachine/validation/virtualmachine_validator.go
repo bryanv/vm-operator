@@ -105,6 +105,10 @@ const (
 	bootstrapProviderTypeCannotBeChanged       = "bootstrap provider type cannot be changed"
 	forbiddenRemovableVolume                   = "cannot remove volume with removable=false"
 
+	// Gateway4/Gateway6 "None" sentinel and DHCP overrides parity.
+	gatewayValueNone                    = "None"
+	gatewayDHCPOverridesMismatchNoneFmt = "gateway4 and gateway6 must both be %q or both unset when dhcp4 and dhcp6 are both enabled, since netplan requires dhcp4-overrides and dhcp6-overrides to match"
+
 	// ExtraConfig validation error messages.
 	extraConfigUseFirstClassFieldFmt       = "%s: use the corresponding first-class field in %s instead"
 	extraConfigReservedForSystemFmt        = "%s: this key is reserved for the system"
@@ -1188,7 +1192,7 @@ func (v validator) validateNetworkInterfaceSpec(
 		}
 	}
 
-	if ipv4 := interfaceSpec.Gateway4; ipv4 != "" && ipv4 != "None" {
+	if ipv4 := interfaceSpec.Gateway4; ipv4 != "" && ipv4 != gatewayValueNone {
 		p := interfacePath.Child("gateway4")
 
 		if len(ipv4Addrs) == 0 {
@@ -1200,7 +1204,7 @@ func (v validator) validateNetworkInterfaceSpec(
 		}
 	}
 
-	if ipv6 := interfaceSpec.Gateway6; ipv6 != "" && ipv6 != "None" {
+	if ipv6 := interfaceSpec.Gateway6; ipv6 != "" && ipv6 != gatewayValueNone {
 		p := interfacePath.Child("gateway6")
 
 		if len(ipv6Addrs) == 0 {
@@ -1212,29 +1216,54 @@ func (v validator) validateNetworkInterfaceSpec(
 		}
 	}
 
-	if interfaceSpec.DHCP4 != nil && *interfaceSpec.DHCP4 {
+	dhcp4 := interfaceSpec.DHCP4 != nil && *interfaceSpec.DHCP4
+	dhcp6 := interfaceSpec.DHCP6 != nil && *interfaceSpec.DHCP6
+
+	if dhcp4 {
 		if len(ipv4Addrs) > 0 {
 			p := interfacePath.Child("dhcp4")
 			allErrs = append(allErrs, field.Invalid(p, strings.Join(ipv4Addrs, ","),
 				"dhcp4 cannot be used with IPv4 addresses in addresses field"))
 		}
 
-		if gw := interfaceSpec.Gateway4; gw != "" {
+		// "None" is not a real gateway: it requests that netplan's
+		// dhcp4-overrides disable use-routes instead, so it is not subject
+		// to the mutual-exclusivity rule below.
+		if gw := interfaceSpec.Gateway4; gw != "" && gw != gatewayValueNone {
 			p := interfacePath.Child("gateway4")
 			allErrs = append(allErrs, field.Invalid(p, gw, "gateway4 is mutually exclusive with dhcp4"))
 		}
 	}
 
-	if interfaceSpec.DHCP6 != nil && *interfaceSpec.DHCP6 {
+	if dhcp6 {
 		if len(ipv6Addrs) > 0 {
 			p := interfacePath.Child("dhcp6")
 			allErrs = append(allErrs, field.Invalid(p, strings.Join(ipv6Addrs, ","),
 				"dhcp6 cannot be used with IPv6 addresses in addresses field"))
 		}
 
-		if gw := interfaceSpec.Gateway6; gw != "" {
+		if gw := interfaceSpec.Gateway6; gw != "" && gw != gatewayValueNone {
 			p := interfacePath.Child("gateway6")
 			allErrs = append(allErrs, field.Invalid(p, gw, "gateway6 is mutually exclusive with dhcp6"))
+		}
+	}
+
+	// The networkd backend requires dhcp4-overrides and dhcp6-overrides to
+	// carry identical keys/values whenever both dhcp4 and dhcp6 are enabled
+	// (https://netplan.readthedocs.io/en/stable/netplan-yaml/#dhcp-overrides),
+	// or netplan refuses to apply the configuration at all. The only
+	// override VM Operator currently derives is use-routes, set from
+	// gateway4/gateway6 == "None", so require both address families to
+	// agree on that setting. This only catches the case where dhcp4/dhcp6
+	// are explicitly true in the request; DHCP inferred later from the
+	// network provider is guarded separately when the netplan config is
+	// generated, since it isn't visible here.
+	if dhcp4 && dhcp6 {
+		gw4None := interfaceSpec.Gateway4 == gatewayValueNone
+		gw6None := interfaceSpec.Gateway6 == gatewayValueNone
+		if gw4None != gw6None {
+			allErrs = append(allErrs, field.Invalid(interfacePath, "",
+				fmt.Sprintf(gatewayDHCPOverridesMismatchNoneFmt, gatewayValueNone)))
 		}
 	}
 

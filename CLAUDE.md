@@ -2,7 +2,7 @@
 
 This project follows Spec-Driven Development (SDD). The authoritative guidelines live in `.sdd/memory/`. This file is a Claude Code proxy that maps those rules into the contexts where they apply.
 
-> **Do not duplicate guidance here.** Add or change rules in `.sdd/memory/*.md`; this file only points at them. `@path` inlines a file into every session, so it is reserved for rules that apply to every change; file-scoped rules are plain links, read on demand.
+> **Do not duplicate guidance here.** Add or change rules in `.sdd/memory/*.md`; every proxy only points at them. `@path` inlines a file into every session, so it is reserved for rules that apply to every change. A rule scoped to one directory belongs in a nested `CLAUDE.md` there, which loads only with that subtree. Everything else is a plain link, read on demand.
 
 ---
 
@@ -26,12 +26,11 @@ Before starting any non-trivial task, read `.sdd/INDEX.md`. If the files you are
 
 ## Read-on-demand rules
 
-Read the linked file before doing the matching work. Work under `test/e2e/` is covered by `test/e2e/CLAUDE.md`, which loads on its own.
+Read the linked file before doing the matching work. Directory-scoped rules are not listed here: `controllers/`, `services/`, `pkg/providers/`, `pkg/errors/`, `pkg/util/kube/cource/`, and `test/e2e/` each carry their own `CLAUDE.md` that loads when you touch that subtree.
 
 | When | Read |
 |---|---|
 | Editing any `**/*.go` file, tests included | [`.sdd/memory/architectural-standards.md`](.sdd/memory/architectural-standards.md) |
-| Editing `controllers/**/*.go`, `pkg/providers/**/*.go`, `pkg/errors/**/*.go`, `pkg/util/kube/cource/**/*.go`, `services/**/*.go` | [`.sdd/memory/operator-best-practices.md`](.sdd/memory/operator-best-practices.md) |
 | Editing `**/*_test.go` | [`.sdd/memory/testing-standards.md`](.sdd/memory/testing-standards.md) |
 | Opening a PR or writing a PR description | [`.sdd/memory/pull-request-standards.md`](.sdd/memory/pull-request-standards.md) |
 | Creating or updating a spec under `.sdd/specs/` | [`.sdd/memory/sdd-standards.md`](.sdd/memory/sdd-standards.md) |

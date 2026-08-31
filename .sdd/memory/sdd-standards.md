@@ -32,7 +32,10 @@ All SDD artifacts live under `.sdd/` at the repository root:
 │   ├── operator-best-practices.md
 │   ├── testing-standards.md
 │   ├── e2e-testing.md
-│   └── e2e-sync-with-changes.md
+│   ├── e2e-sync-with-changes.md
+│   ├── dev-commands.md
+│   ├── commit-message-standards.md
+│   └── pull-request-standards.md
 └── specs/
     └── NNN-slug/                        # one directory per feature
         ├── spec.md                      # REQUIRED — feature specification
@@ -43,7 +46,7 @@ All SDD artifacts live under `.sdd/` at the repository root:
         └── contracts/                   # MAY      — OpenAPI / CRD schemas / golden samples
 ```
 
-The Cursor proxy rules under `.cursor/rules/*.mdc` are **thin pointers** to these files; they are not an alternate source of truth. Edits to guidance go into `.sdd/memory/*.md`, never into the `.mdc` files.
+Assistant-specific rule files (`CLAUDE.md`, `AGENTS.md`) are **thin pointers** to these files; they are not an alternate source of truth. Edits to guidance go into `.sdd/memory/*.md`, never into those proxy files.
 
 ### Feature directory naming
 
@@ -60,7 +63,7 @@ When opening a new feature, scan `.sdd/specs/` and take `max(NNN) + 1`. Allocate
 
 ## Tickets and wiki links
 
-This repository is mirrored upstream, so **internal Broadcom URLs (JIRA tickets, Confluence wiki pages, internal dashboards) MUST NOT appear in any file under `.sdd/`, `.cursor/`, `docs/`, or any other tracked path**. Use the conventions below instead. See [`constitution.md`](./constitution.md) "Tickets and WIKI links" for the underlying rule.
+This repository is mirrored upstream, so **internal Broadcom URLs (JIRA tickets, Confluence wiki pages, internal dashboards) MUST NOT appear in any file under `.sdd/`, `docs/`, or any other tracked path**. Use the conventions below instead. See [`constitution.md`](./constitution.md) "Tickets and WIKI links" for the underlying rule.
 
 ### Ticket references
 
@@ -385,7 +388,7 @@ Every `vmop-NNN` in `tasks.md` is a **story** or **sub-task** linked to the spec
 1. **Implementation details in `spec.md`** — package paths, function names, Go code. Move them to `plan.md`.
 2. **Silent constitution violations** — never bend a rule without an explicit entry in `plan.md` "Complexity tracking" (or an amendment PR).
 3. **Stale specs in `main`** — if the code says one thing and the spec says another after a PR merges, the spec is wrong by definition. Update it in the same PR.
-4. **Duplicated guidance between `.cursor/rules/*.mdc` and `.sdd/memory/*.md`** — the `.mdc` file is a pointer, not a copy.
+4. **Duplicated guidance between assistant proxy files (`CLAUDE.md`, `AGENTS.md`) and `.sdd/memory/*.md`** — the proxy file is a pointer, not a copy.
 5. **Renumbering or reusing `NNN`** — abandoned specs stay; their status flips to `Abandoned`.
 6. **Mixing E2E-only PRs with product changes** — if the change set is _only_ E2E, do not touch `pkg/` or `api/` (see [`e2e-sync-with-changes.md`](./e2e-sync-with-changes.md)).
 7. **Treating generated plans as authority over production reality** — incidents that contradict a spec result in a spec update, not a wallpaper-over fix.

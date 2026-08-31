@@ -1,7 +1,0 @@
----
-description: Standards for Ginkgo/Gomega testing, test builder patterns, and unit/integration test conventions in VM Operator
-globs: **/*_test.go
-alwaysApply: false
----
-
-Follow the rules in `../../.sdd/memory/testing-standards.md`.

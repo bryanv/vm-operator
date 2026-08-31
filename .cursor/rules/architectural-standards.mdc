@@ -1,7 +1,0 @@
----
-description: VM Operator project structure, naming conventions, import organization, and Go style guidelines
-globs: **/*.go
-alwaysApply: false
----
-
-Follow the rules in `../../.sdd/memory/architectural-standards.md`.

@@ -16,18 +16,16 @@
 
 This document defines the **non-negotiables** that govern every change in this repository. Detailed guidance on _how_ to satisfy these non-negotiables lives in companion memory files:
 
-| Topic | Companion file | Cursor rule |
-|-------|----------------|-------------|
-| Project layout, naming, imports, Go style | [`architectural-standards.md`](./architectural-standards.md) | `.cursor/rules/architectural-standards.mdc` |
-| Controller patterns, reconciler structure, error semantics | [`operator-best-practices.md`](./operator-best-practices.md) | `.cursor/rules/operator-best-practices.mdc` |
-| Ginkgo/Gomega unit and integration test conventions | [`testing-standards.md`](./testing-standards.md) | `.cursor/rules/testing-standards.mdc` |
-| Running and writing E2E tests | [`e2e-testing.md`](./e2e-testing.md) | `.cursor/rules/e2e-testing.mdc` |
-| Keeping E2E coverage aligned with product changes | [`e2e-sync-with-changes.md`](./e2e-sync-with-changes.md) | `.cursor/rules/e2e-sync-with-changes.mdc` |
-| Spec-Driven Development (SDD) workflow and artifacts | [`sdd-standards.md`](./sdd-standards.md) | _(see below)_ |
+| Topic | Companion file |
+|-------|----------------|
+| Project layout, naming, imports, Go style | [`architectural-standards.md`](./architectural-standards.md) |
+| Controller patterns, reconciler structure, error semantics | [`operator-best-practices.md`](./operator-best-practices.md) |
+| Ginkgo/Gomega unit and integration test conventions | [`testing-standards.md`](./testing-standards.md) |
+| Running and writing E2E tests | [`e2e-testing.md`](./e2e-testing.md) |
+| Keeping E2E coverage aligned with product changes | [`e2e-sync-with-changes.md`](./e2e-sync-with-changes.md) |
+| Spec-Driven Development (SDD) workflow and artifacts | [`sdd-standards.md`](./sdd-standards.md) |
 
 When a section below references one of these files, treat the linked file as authoritative for the details. The constitution states **what is required**; the companion files state **how to do it**.
-
-`.cursor/rules/*.mdc` files are thin Cursor proxies — each `.mdc` points at the matching `.md` here so that humans and AI assistants read the same source of truth.
 
 ---
 
@@ -50,7 +48,7 @@ All non-trivial work in this repository follows a Spec-Driven Development workfl
 - Repository-wide rules live in `.sdd/memory/*.md`. Per-feature artifacts live in `.sdd/specs/NNN-slug/`.
 - Each feature directory **MUST** contain `spec.md`, `plan.md`, and `tasks.md`. It **SHOULD** contain `research.md`; it **SHOULD** contain `model.md` when the feature introduces or changes a data model / API.
 - Feature directory names follow `NNN-slug`, where `NNN` is a zero-padded auto-incrementing scalar starting at `000`. The scalar expands beyond three digits when needed (`1000-...`).
-- AI-assistant-specific rule files (e.g. `.cursor/rules/*.mdc`) **MUST** be proxies that link back into `.sdd/memory/*.md`. Do not duplicate guidance across the two trees.
+- AI-assistant-specific rule files (e.g. `CLAUDE.md`, `AGENTS.md`) **MUST NOT** restate engineering guidance; they link into `.sdd/memory/*.md` instead, so a rule has exactly one home. They **MAY** carry notes about operating a specific assistant or harness (how to invoke a tool, how to run a long command) that have no meaning outside that tool.
 - New features that materially affect product behavior **MUST** ship with their spec, plan, tasks, and (if applicable) model artifacts in the same change set as the code. Code-only PRs that bypass `.sdd/specs/` are reserved for trivial fixes (see [`sdd-standards.md`](./sdd-standards.md) for the exemption list).
 - The constitution is **immutable per change**: a PR that needs to bend a constitutional rule must amend the constitution in the same PR with a documented rationale, and call that amendment out in the PR description.
 - An SDD spec should be related to an epic ticket.

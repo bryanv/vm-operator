@@ -1,6 +1,0 @@
----
-description: Add, update, or delete E2E tests in the same change set as related product behavior
-alwaysApply: true
----
-
-Follow the rules in `../../.sdd/memory/e2e-sync-with-changes.md`.

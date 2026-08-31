@@ -1,6 +1,6 @@
 # E2E Tests (`test/e2e`)
 
-**Product + E2E together:** `.cursor/rules/e2e-sync-with-changes.mdc` (always on) — add, update, or delete E2E tests alongside related code changes.
+**Product + E2E together:** [`e2e-sync-with-changes.md`](./e2e-sync-with-changes.md) (always applies) — add, update, or delete E2E tests alongside related code changes.
 
 **Canonical documentation:** `test/e2e/README.md` — prerequisites, architecture, env vars, labels, debugging, and writing patterns. Prefer updating that README when workflows change; keep this rule as a short pointer plus the commands used most often.
 

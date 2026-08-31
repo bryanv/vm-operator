@@ -18,6 +18,7 @@ These apply to all work in this repo. Read them before making or reviewing any c
 | [testing-standards.md](memory/testing-standards.md) | One test file per package, external `_test` package, Ginkgo labels, no `time.Sleep` |
 | [e2e-testing.md](memory/e2e-testing.md) | E2E test structure, labels, helpers, make targets |
 | [e2e-sync-with-changes.md](memory/e2e-sync-with-changes.md) | When E2E coverage is mandatory and what must ship together |
+| [dev-commands.md](memory/dev-commands.md) | Make targets for lint / generate / test, narrow `hack/test.sh` invocations, envtest quirks |
 | [sdd-standards.md](memory/sdd-standards.md) | SDD workflow: when it applies, required artifacts, task format, ticket tagging |
 | [commit-message-standards.md](memory/commit-message-standards.md) | Imperative mood, 50-char subject, 72-char body wrap |
 | [pull-request-standards.md](memory/pull-request-standards.md) | Emoji prefix, release notes block, issue links, PR template |

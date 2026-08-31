@@ -1,7 +1,0 @@
----
-description: Run and write VM Operator E2E tests (Ginkgo suite against real WCP/vSphere)
-globs: test/e2e/**/*.go
-alwaysApply: false
----
-
-Follow the rules in `../../.sdd/memory/e2e-testing.md`.

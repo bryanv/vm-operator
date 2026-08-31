@@ -1,6 +1,0 @@
----
-description: Rules for creating and reviewing GitHub pull requests.
-alwaysApply: true
----
-
-Follow the rules in `../../.sdd/memory/pull-request-standards.md`.

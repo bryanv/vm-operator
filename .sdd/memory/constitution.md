@@ -24,6 +24,7 @@ This document defines the **non-negotiables** that govern every change in this r
 | Running and writing E2E tests | [`e2e-testing.md`](./e2e-testing.md) |
 | Keeping E2E coverage aligned with product changes | [`e2e-sync-with-changes.md`](./e2e-sync-with-changes.md) |
 | Spec-Driven Development (SDD) workflow and artifacts | [`sdd-standards.md`](./sdd-standards.md) |
+| Make targets and test invocations for lint, codegen, and tests | [`dev-commands.md`](./dev-commands.md) |
 
 When a section below references one of these files, treat the linked file as authoritative for the details. The constitution states **what is required**; the companion files state **how to do it**.
 

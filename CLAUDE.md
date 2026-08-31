@@ -18,8 +18,6 @@ Before starting any non-trivial task, read `.sdd/INDEX.md`. If the files you are
 
 @.sdd/memory/commit-message-standards.md
 
-@.sdd/memory/pull-request-standards.md
-
 @.sdd/memory/e2e-sync-with-changes.md
 
 @.sdd/memory/dev-commands.md
@@ -28,14 +26,16 @@ Before starting any non-trivial task, read `.sdd/INDEX.md`. If the files you are
 
 ## Read-on-demand rules
 
-Before editing a path below, read the linked file.
+Read the linked file before doing the matching work.
 
-| When editing | Read |
+| When | Read |
 |---|---|
-| Any `**/*.go` file, tests included | [`.sdd/memory/architectural-standards.md`](.sdd/memory/architectural-standards.md) |
-| `controllers/**/*.go`, `pkg/providers/**/*.go`, `pkg/errors/**/*.go`, `pkg/util/kube/cource/**/*.go`, `services/**/*.go` | [`.sdd/memory/operator-best-practices.md`](.sdd/memory/operator-best-practices.md) |
-| `**/*_test.go` | [`.sdd/memory/testing-standards.md`](.sdd/memory/testing-standards.md) |
-| `test/e2e/**/*.go` | [`.sdd/memory/e2e-testing.md`](.sdd/memory/e2e-testing.md) and `test/e2e/README.md` |
+| Editing any `**/*.go` file, tests included | [`.sdd/memory/architectural-standards.md`](.sdd/memory/architectural-standards.md) |
+| Editing `controllers/**/*.go`, `pkg/providers/**/*.go`, `pkg/errors/**/*.go`, `pkg/util/kube/cource/**/*.go`, `services/**/*.go` | [`.sdd/memory/operator-best-practices.md`](.sdd/memory/operator-best-practices.md) |
+| Editing `**/*_test.go` | [`.sdd/memory/testing-standards.md`](.sdd/memory/testing-standards.md) |
+| Editing `test/e2e/**/*.go` | [`.sdd/memory/e2e-testing.md`](.sdd/memory/e2e-testing.md) and `test/e2e/README.md` |
+| Opening a PR or writing a PR description | [`.sdd/memory/pull-request-standards.md`](.sdd/memory/pull-request-standards.md) |
+| Creating or updating a spec under `.sdd/specs/` | [`.sdd/memory/sdd-standards.md`](.sdd/memory/sdd-standards.md) |
 
 ---
 

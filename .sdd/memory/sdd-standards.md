@@ -174,6 +174,20 @@ Required when the feature introduces or modifies a CRD field, status condition, 
 
 ---
 
+## Roles referenced in specs
+
+Write user stories and acceptance criteria against these personas:
+
+| Role | Persona |
+|------|---------|
+| **CSP admin** | Cloud Service Provider admin with vCenter and Supervisor admin access |
+| **Tenant admin** | Namespace-level admin managing VM Classes and policies within a tenancy boundary |
+| **DevOps user** | Namespace member creating and operating VMs |
+| **Platform engineer** | Builds controllers/webhooks in this repo (`controllers/`, `webhooks/`, `pkg/`) |
+| **Partner engineer** | CCI/VCFA UI, VKS, supportability — consumes the API from outside `vmop` |
+
+---
+
 ## When SDD applies
 
 | Change | Apply SDD |

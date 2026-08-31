@@ -6,6 +6,13 @@
 
 ## Template
 
+Apply these rules when filing. They are repeated inside the template's HTML comments below, but those comments do not reliably survive into an AI assistant's context, so they are stated here in plain text as well:
+
+* Prefix the PR title with the icon matching the change type: ⚠️ breaking or major, ✨ feature, 🐛 bugfix or patch, 📖 documentation or proposal, 🌱 minor or other.
+* Prefix the subject with `WIP:` while the PR is unfinished.
+* Fill in the `release-note` block, or write `NONE` in it when no release note is needed. Include the string `action required` when users upgrading must take action.
+* Delete every HTML comment from the PR body before submitting.
+
 The following content after the `BEGIN TEMPLATE` line and before the `END TEMPLATE` line is the template for submitting a pull-request description in GitHub:
 
 <!-- BEGIN TEMPLATE -->

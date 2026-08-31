@@ -112,48 +112,7 @@ The non-negotiables below are constitutional; for unit and integration patterns 
 
 ## Repository layout and Go modules
 
-`vm-operator` is a **multi-module** repository. The root `go.mod` is the main binary module; every `go.mod` nested below it is an independent Go module that is imported by the root (or by tooling) via `replace` directives in the workspace. For the package-level organization principles, import aliases, and naming conventions, see [`architectural-standards.md`](./architectural-standards.md).
-
-### Root module — `github.com/vmware-tanzu/vm-operator`
-
-```
-go.mod / go.sum
-main.go
-api/                   — vmoperator.vmware.com API types (v1alpha1..v1alpha6)
-cmd/                   — additional binaries
-config/                — Kubernetes manifests, RBAC, Kustomize bases
-controllers/           — reconcile loops (thin); one sub-package per controller
-docs/                  — user-facing documentation
-external/              — vendored API definitions (each sub-directory is its own module — see below)
-hack/                  — build scripts (hack/tools/ is its own module — see below)
-pkg/                   — business logic, providers, config, conditions
-services/              — long-running manager runnables (e.g. vm-watcher)
-test/                  — test builders, envtest helpers, E2E suites
-webhooks/              — admission webhooks
-.sdd/                  — Spec-Driven Development root
-  memory/              — repository-wide rules (this file + companions)
-  specs/               — per-feature artifacts
-    NNN-slug/          — one directory per feature (spec.md, plan.md, tasks.md, ...)
-```
-
-### Sub-modules
-
-| Directory | Module |
-|-----------|--------|
-| `api/` | `github.com/vmware-tanzu/vm-operator/api` |
-| `api/test/` | `github.com/vmware-tanzu/vm-operator/api/test` |
-| `external/appplatform/` | `github.com/vmware-tanzu/vm-operator/external/appplatform` |
-| `external/byok/` | `github.com/vmware-tanzu/vm-operator/external/byok` |
-| `external/capabilities/` | `github.com/vmware-tanzu/vm-operator/external/capabilities` |
-| `external/infra/` | `github.com/vmware-tanzu/vm-operator/external/infra` |
-| `external/ncp/` | `github.com/vmware-tanzu/vm-operator/external/ncp` |
-| `external/storage-policy-quota/` | `github.com/vmware-tanzu/vm-operator/external/storage-policy-quota` |
-| `external/tanzu-topology/` | `github.com/vmware-tanzu/vm-operator/external/tanzu-topology` |
-| `external/vsphere-csi-driver/` | `github.com/vmware-tanzu/vm-operator/external/vsphere-csi-driver` |
-| `external/vsphere-policy/` | `github.com/vmware-tanzu/vm-operator/external/vsphere-policy` |
-| `hack/tools/` | `github.com/vmware-tanzu/vm-operator/hack/tools` |
-| `pkg/backup/api/` | `github.com/vmware-tanzu/vm-operator/pkg/backup/api` |
-| `pkg/constants/testlabels/` | `github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels` |
+`vm-operator` is a **multi-module** repository. A change that adds a Go module MUST wire it into the root `go.mod` (`replace` plus a matching `require`) when the manager binary imports it, and MUST keep the module's generated manifests checked in. The directory layout, the module inventory, and how to enumerate it live in [`architectural-standards.md`](./architectural-standards.md).
 
 ## Ticket / wiki conventions
 
@@ -170,14 +129,4 @@ The non-negotiables below are constitutional; for import aliases, import group o
 - Do not import packages forbidden by `.golangci.yml` `linters.settings.depguard` (`io/ioutil`, `github.com/pkg/errors`, `k8s.io/utils`, and `testing` / `github.com/onsi/ginkgo` / `github.com/onsi/gomega` outside `_test.go`).
 - `+optional` / `+required` markers on every struct field; `omitempty` JSON tags on optional fields.
 - Resource names must be DNS-subdomain safe (`^[a-z][a-z0-9-]{0,61}[a-z0-9]?$`).
-- Managed object IDs (`spec.id`) are immutable after create. Enforce this per the CEL/Go split in the Webhooks section below: a plain `self == oldSelf` transition rule for the unconditional case, a webhook only when the immutability rule is conditional or cross-field.
-
-## Roles referenced in specs
-
-| Role | Persona |
-|------|---------|
-| **CSP admin** | Cloud Service Provider admin with vCenter and Supervisor admin access |
-| **Tenant admin** | Namespace-level admin managing VM Classes and policies within a tenancy boundary |
-| **DevOps user** | Namespace member creating and operating VMs |
-| **Platform engineer** | Builds controllers/webhooks in this repo (`controllers/`, `webhooks/`, `pkg/`) |
-| **Partner engineer** | CCI/VCFA UI, VKS, supportability — consumes the API from outside `vmop` |
+- Managed object IDs (`spec.id`) are immutable after create. Enforce this per the CEL/Go split in the Webhooks section above: a plain `self == oldSelf` transition rule for the unconditional case, a webhook only when the immutability rule is conditional or cross-field.

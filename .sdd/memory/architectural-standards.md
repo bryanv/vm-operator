@@ -11,9 +11,11 @@
 
 ```
 vm-operator/
+├── main.go           # Manager entry point
 ├── api/              # CRD type definitions (one directory per alpha version).
 │   └── v1alphaN/     # The active alpha is whichever directory is aliased
 │                     # as `vmopv1` in `.golangci.yml` importas (see below).
+├── cmd/              # Additional binaries
 ├── controllers/      # Reconciliation logic for each CRD
 ├── webhooks/         # Admission webhooks (validation/ and mutation/ subdirs)
 ├── pkg/              # Reusable packages (business logic, utilities)
@@ -27,12 +29,30 @@ vm-operator/
 │   ├── record/       # Event recording helpers
 │   ├── util/         # General-purpose utilities (kube, ptr, vmopv1)
 │   └── vmconfig/     # VM configuration reconcilers (crypto, bootoptions, diskpromo)
+├── services/         # Long-running manager runnables (e.g. vm-watcher)
 ├── external/         # Vendored external API types (byok, ncp, capabilities, etc.)
 ├── test/             # Test utilities
-│   └── builder/      # Test context builders (unit, intg, vcsim)
+│   ├── builder/      # Test context builders (unit, intg, vcsim)
+│   └── e2e/          # E2E suite (its own Go module)
 ├── config/           # Kubernetes manifests and RBAC
-└── hack/             # Build and development scripts
+├── docs/             # User-facing documentation
+├── hack/             # Build and development scripts
+└── .sdd/             # SDD root: memory/ repo-wide rules, specs/ per-feature
 ```
+
+## Go modules
+
+`vm-operator` is a **multi-module** repository. The root `go.mod` builds the manager binary; every `go.mod` nested below it is an independent module. All modules share one git history.
+
+Modules the root binary imports are wired through a `replace` directive **and** a matching `require` entry in the root `go.mod` — add both when introducing one. Test and tooling modules (`hack/tools/`, `test/e2e/`, `api/test/`) stand alone and are not replaced into the root.
+
+Enumerate the modules rather than relying on a checked-in list, which drifts:
+
+```bash
+find . -name go.mod -not -path './go.mod'
+```
+
+Manifests for the `external/` API modules are generated with `make generate-external-manifests`; see [`dev-commands.md`](./dev-commands.md).
 
 ## Package Organization Principles
 

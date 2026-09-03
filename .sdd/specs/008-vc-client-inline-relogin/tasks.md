@@ -1,0 +1,500 @@
+# Tasks: Inline vCenter Session Re-login
+
+- **Spec**: [`spec.md`](./spec.md)
+- **Plan**: [`plan.md`](./plan.md)
+- **Research**: [`research.md`](./research.md)
+- **Epic**: TBD
+
+> Every task that produces shipping code needs a `[vmop-NNN]` story or sub-task linked to the epic via `customfield_10830` (set post-create via PUT). File them once the epic exists and fill in the tags.
+
+## How to work these tasks
+
+Phases are ordered; tasks inside a phase marked `[P]` touch disjoint files and may run in parallel. Each task states the exact file, the exact symbols, and a **Verify** line. Do not move to the next phase until the current phase's Verify passes.
+
+Repo-wide checks, run from the repo root:
+
+```bash
+make lint-go
+```
+
+```bash
+go test ./pkg/util/vsphere/client/... ./pkg/config/...
+```
+
+### Read these before writing code
+
+1. [`research.md`](./research.md) — the govmomi mechanics. Sections §3 (PBM), §4 (watcher), §5 (the vcsim property-collector trap) and §7 (REST) each describe a way to get this wrong that is not obvious from the source.
+2. `pkg/util/vsphere/client/client.go` — the file being changed.
+3. `.golangci.yml` `linters.settings.importas.alias` — import aliases are enforced, not optional.
+
+### Standing rules for every task here
+
+- Copyright header on every new file, copied verbatim from `pkg/util/vsphere/client/client.go` lines 1-3.
+- Comments are complete sentences ending in a period (`architectural-standards.md`).
+- Test files are `package client_test` (external). The `depguard` linter forbids `testing`/ginkgo/gomega outside `_test.go`.
+- Never import `github.com/vmware/govmomi/vapi/internal` — Go's `internal` rule makes it uncompilable from this repo. Redeclare the constants you need.
+- Never call `pkgcfg.FromContext` from inside `pkg/util/vsphere/client`. It panics when the context has no config, and this package's own tests use a bare `context.Background()`.
+
+---
+
+## Phase 1 — Feature flag plumbing
+
+No behavior change. At the end of this phase the flag exists and is readable, and nothing consumes it.
+
+- [ ] **T001** Add the config field.
+  - `pkg/config/config.go`: add to `type Config struct`, after `CRDCleanupEnabled`:
+    ```go
+    // VCSessionInlineReloginEnabled causes the vCenter client to
+    // re-authenticate inline, on the call that observes the expired
+    // session, instead of waiting for the next keepalive tick.
+    //
+    // Defaults to false.
+    VCSessionInlineReloginEnabled bool
+    ```
+  - `pkg/config/default.go`: add `VCSessionInlineReloginEnabled: false,` to the `Default()` literal, next to `CRDCleanupEnabled`.
+  - **Verify**: `go build ./pkg/config/...`
+
+- [ ] **T002** Add the environment variable.
+  - `pkg/config/env/env.go`: add `VCSessionInlineReloginEnabled` to the `const` block in the "Config" group — anywhere **before** `_varNameEnd`, next to `CRDCleanupEnabled` — and add to `String()`:
+    ```go
+    case VCSessionInlineReloginEnabled:
+        return "VC_SESSION_INLINE_RELOGIN_ENABLED"
+    ```
+  - `pkg/config/env.go`: in `FromEnv()`, next to the `CRDCleanupEnabled` line, add
+    `setBool(env.VCSessionInlineReloginEnabled, &config.VCSessionInlineReloginEnabled)`.
+  - **Verify**: `go build ./pkg/config/...`
+
+- [ ] **T003** `[P]` Extend the config tests.
+  - `pkg/config/env_test.go`: in the "Should return a default config overridden by the environment" block, add `Expect(os.Setenv("VC_SESSION_INLINE_RELOGIN_ENABLED", "true")).To(Succeed())` to the `BeforeEach`, and `VCSessionInlineReloginEnabled: true,` to the expected `pkgcfg.Config` literal. The file's own comment requires booleans be set to the **opposite** of their default, and the default is `false`.
+  - **Verify**: `go test ./pkg/config/...`
+
+- [ ] **T004** Add the client-side switch (still unused).
+  - `pkg/util/vsphere/client/client.go`: add to `type Config struct`:
+    ```go
+    // InlineReloginEnabled selects the inline re-login round trippers
+    // instead of the timer-driven keepalive handlers.
+    InlineReloginEnabled bool
+    ```
+  - `test/builder/vcsim_test_context.go` around line 783: the `pkgclient.Config{...}` literal gains `InlineReloginEnabled: false,` so tests can flip it per-suite.
+  - **Verify**: `go build ./... && go vet ./pkg/util/vsphere/client/...`
+
+---
+
+## Phase 2 — The session keeper
+
+The shared object all three wrappers depend on. Nothing wires it up yet.
+
+- [ ] **T005** Create `pkg/util/vsphere/client/relogin.go`.
+
+  Package-private type, roughly:
+
+  ```go
+  type sessionKeeper struct {
+      sm       *session.Manager
+      rest     *rest.Client // set after the REST client is built
+      userInfo *url.Userinfo
+
+      muSOAP  sync.Mutex
+      genSOAP atomic.Uint64
+      muREST  sync.Mutex
+      genREST atomic.Uint64
+  }
+  ```
+
+  Methods:
+
+  - `func newSessionKeeper(sm *session.Manager, userInfo *url.Userinfo) *sessionKeeper`
+  - `func (k *sessionKeeper) setRestClient(c *rest.Client)`
+  - `func (k *sessionKeeper) soapGeneration() uint64` / `restGeneration() uint64` — plain `Load()`.
+  - `func (k *sessionKeeper) reloginSOAP(ctx context.Context, gen uint64) error`
+  - `func (k *sessionKeeper) reloginREST(ctx context.Context, gen uint64) error`
+  - `func (k *sessionKeeper) restKeepAlive() error`
+
+  The re-login body, identical in shape for both transports:
+
+  ```go
+  k.muSOAP.Lock()
+  defer k.muSOAP.Unlock()
+
+  // Another goroutine already refreshed while we were faulting.
+  if k.genSOAP.Load() != gen {
+      return nil
+  }
+
+  log := pkglog.FromContextOrDefault(ctx).WithName("vcSessionRelogin")
+  log.Info("Re-authenticating vim client", "generation", gen)
+
+  if err := k.sm.Login(ctx, k.userInfo); err != nil {
+      return err
+  }
+  k.genSOAP.Add(1)
+  return nil
+  ```
+
+  `restKeepAlive` is the `send` func for `keepalive.NewHandlerREST`. It probes and heals, because `rest.Client.Session` swallows a 401 and returns `(nil, nil)` — the wrapper never sees a failure to act on:
+
+  ```go
+  ctx := context.Background()
+  gen := k.restGeneration()
+  s, err := k.rest.Session(ctx)
+  if err != nil {
+      return nil // Transport hiccup; do not kill the ticker.
+  }
+  if s != nil {
+      return nil
+  }
+  return k.reloginREST(ctx, gen)
+  ```
+
+  Also in this file, the context opt-out:
+
+  ```go
+  type noReplayContextKey struct{}
+
+  // WithNoReplay returns a context that suppresses request replay after an
+  // inline re-login. Re-login still happens; the original fault is still
+  // returned. Use it for callers that own session-scoped server state --
+  // property collectors, property filters, container and list views -- which
+  // a re-login destroys.
+  func WithNoReplay(ctx context.Context) context.Context
+
+  func isNoReplay(ctx context.Context) bool
+  ```
+
+  **Do not** return an error from `restKeepAlive` for a transport failure — govmomi's handler calls `Stop()` and the goroutine exits permanently on any error (`session/keepalive/handler.go`).
+
+  **Verify**: `go build ./pkg/util/vsphere/client/...`
+
+- [ ] **T006** `[P]` Unit-test the keeper in a new `pkg/util/vsphere/client/relogin_test.go`.
+  - Reuse the existing suite bootstrap — do **not** add a second `_suite_test.go`; `client_suite_test.go` already calls `RunSpecs`.
+  - Top-level `Describe("Relogin", Label(testlabels.VCSim), func() {...})`, matching `client_test.go`.
+  - Cases: a stale generation short-circuits without calling `Login`; N=20 goroutines calling `reloginSOAP` with the same starting generation produce exactly one `Login`; a `Login` error propagates and does **not** bump the generation.
+  - Drive these against `simulator.Test` with a real `session.Manager`, counting logins with a spy round tripper (see T011 for the spy).
+  - **Verify**: `go test ./pkg/util/vsphere/client/...`
+
+---
+
+## Phase 3 — SOAP and PBM
+
+- [ ] **T007** Create `pkg/util/vsphere/client/relogin_soap.go`.
+
+  ```go
+  type reloginSOAP struct {
+      rt     soap.RoundTripper
+      keeper *sessionKeeper
+  }
+
+  func newReloginSOAP(
+      rt soap.RoundTripper,
+      keeper *sessionKeeper) *reloginSOAP
+  ```
+
+  `RoundTrip` follows `plan.md` "SOAP / PBM wrapper" exactly. Three details that are easy to get wrong:
+
+  1. **Read the generation before the first attempt**, not after the fault. A login that lands while the call was in flight must be observable.
+  2. **Match the fault with the package's existing `IsNotAuthenticatedError`** (`client.go:251`), which delegates to `fault.Is(err, &vimtypes.NotAuthenticated{})`. Do **not** write `switch err.VimFault().(type) { case *vimtypes.NotAuthenticated: }` — the decoder stores the **value**, not the pointer, so a pointer arm never matches (`research.md` §2).
+  3. **Leave the context alone.** The replay reuses the same `ctx`, so `pkgctx.WithVCOpID`'s value rides along unchanged. Do not derive a `-retry` operation ID.
+
+  `classify(ctx, req) action` returns one of `actionPassThrough`, `actionReloginOnly`, `actionReloginAndReplay`:
+
+  ```go
+  switch req.(type) {
+  // Re-entrancy guard: these are how a session is established or torn
+  // down. Acting on their faults can recurse.
+  case *methods.LoginBody,
+      *methods.LoginByTokenBody,
+      *methods.LoginExtensionByCertificateBody,
+      *methods.LogoutBody,
+      *methods.CloneSessionBody,
+      *methods.SessionIsActiveBody:
+      return actionPassThrough
+
+  // "This" names session-scoped state that the re-login just destroyed.
+  // Replaying is guaranteed to fail; the caller's own restart logic is
+  // the correct recovery. See research.md section 4.
+  case *methods.WaitForUpdatesExBody,
+      *methods.WaitForUpdatesBody,
+      *methods.CancelWaitForUpdatesBody,
+      *methods.CreateFilterBody,
+      *methods.DestroyPropertyCollectorBody,
+      *methods.DestroyViewBody,
+      *methods.ModifyListViewBody:
+      return actionReloginOnly
+  }
+
+  if isNoReplay(ctx) {
+      return actionReloginOnly
+  }
+  return actionReloginAndReplay
+  ```
+
+  Note the creation calls — `CreatePropertyCollectorBody`, `CreateContainerViewBody`, `CreateListViewBody` — are deliberately **absent**: they build fresh state on the new session and are safe to replay.
+
+  `resetResponse(res soap.HasFault) error` zeroes the whole response struct before the replay:
+
+  ```go
+  v := reflect.ValueOf(res)
+  if v.Kind() != reflect.Ptr || v.IsNil() {
+      return fmt.Errorf("response is not a non-nil pointer: %T", res)
+  }
+  e := v.Elem()
+  if e.Kind() != reflect.Struct || !e.CanSet() {
+      return fmt.Errorf("response is not a settable struct: %T", res)
+  }
+  e.Set(reflect.Zero(e.Type()))
+  return nil
+  ```
+
+  This is not cosmetic: govmomi returns `WrapSoapFault(f)` whenever `resBody.Fault() != nil`, and a successful second response has no `Fault` element to overwrite the first attempt's — so without this the caller gets `NotAuthenticated` from a retry that actually succeeded. Zeroing the whole struct (rather than just `Fault_`) also drops any partial `Res` and needs no field-name knowledge. It is safe because generated methods pass **distinct** `reqBody` and `resBody` values (`research.md` §2).
+
+  On re-login failure return `errors.Join(originalFault, loginErr)` so the caller can see why recovery failed.
+
+  **Verify**: `go build ./pkg/util/vsphere/client/... && make lint-go`
+
+- [ ] **T008** Branch the SOAP assembly in `NewVimClient` (`pkg/util/vsphere/client/client.go`).
+
+  Replace the single `vimClient.RoundTripper = keepalive.NewHandlerSOAP(...)` assignment with a branch on `config.InlineReloginEnabled`. The inline arm:
+
+  ```go
+  keeper := newSessionKeeper(sm, userInfo)
+  vimClient.RoundTripper = keepalive.NewHandlerSOAP(
+      newReloginSOAP(soapClient, keeper),
+      keepAliveIdleTime,
+      nil)
+  ```
+
+  Four things this ordering depends on. Changing any of them breaks recovery silently:
+
+  - The re-login wrapper wraps **`soapClient`**, the raw `*soap.Client` — never `vimClient.RoundTripper`, which would be an infinite loop.
+  - The keepalive handler is **outermost**, so its ping travels through the wrapper and a dead session heals with no application traffic (`research.md` §6, arrangement B).
+  - The `send` argument is **`nil`**, so the default ping is `GetCurrentTime` through the wrapper. Passing `SoapKeepAliveHandlerFn` here would defeat the point.
+  - The whole chain is installed **before** `sm.Login(ctx, userInfo)`. The ticker starts only when a login body traverses the handler.
+
+  `NewVimClient` must also return the keeper (or accept one) so `NewClient` can share it with the REST and PBM wrappers. Change the signature to return `(*vim25.Client, *session.Manager, *sessionKeeper, error)` and update the one caller, `NewClient`. **Verified**: the function is exported but has no callers outside this package — the `NewVimClient` hits under `test/e2e/` are a different function, `vcenter.NewVimClient`.
+
+  Leave the legacy arm byte-for-byte as it is today.
+
+  **Verify**: `go build ./... && go test ./pkg/util/vsphere/client/...` — the existing keepalive specs must still pass, since the default is `InlineReloginEnabled: false`.
+
+- [ ] **T009** Wrap PBM, and add a constructor for ad-hoc PBM clients.
+
+  In `NewClient` (`pkg/util/vsphere/client/client.go`), after `pbm.NewClient`:
+
+  ```go
+  if config.InlineReloginEnabled {
+      pbmClient.RoundTripper = newReloginSOAP(pbmClient.Client, keeper)
+  }
+  ```
+
+  `pbmClient.Client` is the derived raw `*soap.Client`; `pbm.Client.RoundTrip` dispatches through the `RoundTripper` field, so this is the correct injection point. Replay works because `pbm.NewClient` sets `sc.Cookie = c.SessionCookie`, a method value that reads the vim25 client's cookie jar **live** on every request — so once the vim25 session is refreshed the replay carries the new cookie (`research.md` §3).
+
+  Then add:
+
+  ```go
+  // NewPbmClient returns a new PBM client that shares this client's vCenter
+  // session, including its inline re-login behavior when enabled.
+  func (c *Client) NewPbmClient(ctx context.Context) (*pbm.Client, error)
+  ```
+
+  **Verify**: `go build ./pkg/util/vsphere/client/...`
+
+- [ ] **T010** `[P]` Route the ad-hoc PBM constructions through `NewPbmClient`.
+  - `pkg/providers/vsphere/vmprovider_vm.go:733`
+  - `pkg/providers/vsphere/storage/provisioning.go:70`
+  - `pkg/vmconfig/volumes/unmanaged/register/unmanagedvolumes_register.go:351`
+
+  Each currently calls `pbm.NewClient(ctx, <vim25 client>)`. Where a `*client.Client` is in scope, call `NewPbmClient` on it. Where only a `*vim25.Client` is in scope (check each site), thread the `*client.Client` through instead of adding a second construction path.
+
+  **Verify**: `go build ./... && go test ./pkg/providers/... ./pkg/vmconfig/...`
+
+- [ ] **T011** SOAP specs in `pkg/util/vsphere/client/relogin_test.go`.
+
+  **The trap that will cost you an afternoon if you skip this paragraph**: do **not** drive the retry with a property-collector call — `finder.*`, `property.Collector.Retrieve*`, `object.*.Properties`, `mo.RetrieveProperties`. `RetrieveProperties` and `RetrievePropertiesEx` are on vcsim's no-session allow-list (`simulator/simulator.go:196-203`), so an unauthenticated call returns **HTTP 200** with `NotAuthenticated` inside `ObjectContent.MissingSet`. govmomi converts that to a `vimFaultError` **above** the round tripper, `soap.IsSoapFault` is false, and the retry never fires. The test then fails for a reason that has nothing to do with the code under test. Drive it with `methods.GetCurrentTime`, or inject with `simulator.FaultTypeNotAuthenticated` (`simulator/fault_injection.go:180`).
+
+  Spy round tripper — records `fmt.Sprintf("%T", req)` for every body it forwards. **Guard the slice with a mutex**; the keepalive goroutine calls `RoundTrip` on the same object.
+
+  ```go
+  type spyRT struct {
+      inner soap.RoundTripper
+      mu    sync.Mutex
+      seen  []string
+  }
+
+  func (s *spyRT) RoundTrip(
+      ctx context.Context, req, res soap.HasFault) error {
+
+      s.mu.Lock()
+      s.seen = append(s.seen, fmt.Sprintf("%T", req))
+      s.mu.Unlock()
+      return s.inner.RoundTrip(ctx, req, res)
+  }
+  ```
+
+  Splice it in as the wrapper's **underlying** RT so the sequence includes the re-login:
+  `newReloginSOAP(&spyRT{inner: soapClient}, keeper)`.
+
+  To exercise a real expiry rather than "never logged in", log in, read `sm.UserSession(ctx).Key`, then terminate it from a second manager: `session.NewManager(other).TerminateSession(ctx, []string{key})`. `client_test.go` already uses this two-manager technique — copy its shape.
+
+  Cases:
+  - Terminated session, then `methods.GetCurrentTime`: returns **success**, and the spy sequence is
+    `["*methods.CurrentTimeBody", "*methods.LoginBody", "*methods.CurrentTimeBody"]`.
+  - Same, asserting no error — this is the `resetResponse` regression. Delete `resetResponse` locally and confirm this case fails; that is how you know it is testing what it claims.
+  - A faulting `*methods.LoginBody` does not recurse: bounded spy length.
+  - `*methods.WaitForUpdatesExBody` on a dead session: a `LoginBody` appears in the sequence, the fault is still returned to the caller, and there is no second `WaitForUpdatesExBody`.
+  - `WithNoReplay(ctx)`: same shape as above for an ordinary body.
+  - Wrong credentials in the keeper: the returned error satisfies both `IsNotAuthenticatedError` and `errors.Is`/`MatchError` for the login failure.
+  - 20 goroutines faulting concurrently: exactly one `*methods.LoginBody` in the spy sequence.
+  - `NoPermission` / `InvalidArgument` faults and a transport error pass through untouched, and no `LoginBody` appears.
+
+  **Verify**: `go test ./pkg/util/vsphere/client/... -run TestClient`
+
+- [ ] **T012** `[P]` PBM spec: terminate the session, then call a PBM method (e.g. `pbmClient.QueryProfile`) and assert it succeeds. Requires the PBM simulator, already blank-imported in `client_test.go` (`_ "github.com/vmware/govmomi/pbm/simulator"`).
+  - **Verify**: `go test ./pkg/util/vsphere/client/...`
+
+---
+
+## Phase 4 — REST
+
+- [ ] **T013** Create `pkg/util/vsphere/client/relogin_rest.go`.
+
+  ```go
+  const (
+      // restSessionHeader mirrors vapi/internal.SessionCookieName, which is
+      // in an internal package and cannot be imported from this repository.
+      restSessionHeader = "vmware-api-session-id"
+
+      // restSessionPath mirrors vapi/rest.Path + vapi/internal.SessionPath.
+      // Login (POST), logout (DELETE) and the session probe
+      // (POST ?~action=get) all share this path.
+      restSessionPath = "/rest/com/vmware/cis/session"
+  )
+
+  type reloginREST struct {
+      rt     http.RoundTripper
+      keeper *sessionKeeper
+  }
+  ```
+
+  `RoundTrip` follows `plan.md` "REST wrapper". Five details:
+
+  1. **Exclude the session path first**, before anything else. That is the re-entrancy guard, and it also preserves `rest.Client.Session`'s documented `(nil, nil)`-on-401 contract.
+  2. **Rewrite the header on the replay.** `rest.Client.Do` stamps the *old* session id before the transport sees the request; without `req2.Header.Set(restSessionHeader, k.rest.SessionID())` the replay fails identically.
+  3. **Clone the request.** `http.RoundTripper`'s contract forbids mutating the one you were given.
+  4. **Drain and close the 401 response body** before replaying, so the connection can be reused.
+  5. **Only replay a safely repeatable body.** Return non-nil from `replayBody` when `req.Body == nil`, `req.Body == http.NoBody`, or `req.GetBody != nil` — the last covers the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()`. Return nil otherwise, so `rest.Client.Upload` of a content-library item is neither buffered into memory nor retried.
+
+  **Verify**: `go build ./pkg/util/vsphere/client/... && make lint-go`
+
+- [ ] **T014** Branch the REST assembly in `newRestClient` (`pkg/util/vsphere/client/client.go`).
+
+  ```go
+  keeper.setRestClient(restClient)
+  restClient.Transport = newReloginREST(restClient.Transport, keeper)
+  restClient.Transport = keepalive.NewHandlerREST(
+      restClient, keepAliveIdleTime, keeper.restKeepAlive)
+  ```
+
+  Order matters: the first line makes the re-login wrapper inner, the second captures it as the handler's downstream (`keepalive.NewHandlerREST` reads `c.Transport` at construction). Then `restClient.Login(ctx, userInfo)` as today, which starts the ticker.
+
+  `newRestClient` needs the keeper passed in. Leave the legacy arm unchanged.
+
+  **Verify**: `go build ./... && go test ./pkg/util/vsphere/client/...`
+
+- [ ] **T015** REST specs in `relogin_test.go`.
+  - Requires the VAPI simulator, already blank-imported in `client_test.go`.
+  - Cases: log in, log out (or terminate) to force a 401, then a tags/content-library call succeeds and the replayed request carried the **new** session id; a request to `restSessionPath` is never retried; a request with a streaming body and `GetBody == nil` returns the 401 unretried; `keeper.restKeepAlive` heals a dead session with no application traffic.
+  - Assert the header rewrite with a counting `http.RoundTripper` spliced under `newReloginREST`, recording `req.Header.Get(restSessionHeader)` per attempt.
+  - **Verify**: `go test ./pkg/util/vsphere/client/...`
+
+---
+
+## Phase 5 — Callers
+
+- [ ] **T016** Read the flag at the provider boundary.
+  - `pkg/providers/vsphere/client/client.go`, in `NewClient`: add
+    `InlineReloginEnabled: pkgcfg.FromContext(ctx).VCSessionInlineReloginEnabled,` to the `client.Config{...}` literal.
+  - This is the **only** place the flag is read. `pkg/util/vsphere/client` must stay free of `pkgcfg`.
+  - **Verify**: `go build ./... && go test ./pkg/providers/vsphere/...`
+
+- [ ] **T017** Mark the watcher's traffic no-replay.
+  - `pkg/util/vsphere/watcher/watcher.go`, in `Start` (around line 400-440): wrap the context the goroutine uses — `ctx = pkgclient.WithNoReplay(ctx)` — before `ctx, cancel = context.WithCancel(ctx)`, so both `newWatcher`'s setup calls and the `WaitForUpdatesEx` loop inherit it.
+  - **Verified**: no import cycle. `go list -deps ./pkg/util/vsphere/client | grep vsphere/watcher` prints nothing today, so `watcher` may import `client`. Re-run it if you add imports to `client` in an earlier phase; if it ever prints something, move `WithNoReplay`/`isNoReplay` into a tiny leaf package and import that from both.
+  - `services/vm-watcher/vm_watcher_service.go` needs **no** change: its `IsNotAuthenticatedError` / `IsInvalidLogin` restart loop (lines 110-125) is still the correct recovery, and now runs against an already-re-authenticated session.
+  - **Verify**: `go build ./... && go test ./pkg/util/vsphere/watcher/... ./services/vm-watcher/...`
+
+- [ ] **T018** `[P]` Keepalive spec in `relogin_test.go`: with a short idle (`sim25.SetSessionTimeout` plus a sub-second `keepAliveIdleTime`, as `client_test.go` does), terminate the session from a second manager and assert — with **no** application call — that the session becomes valid again and pings resume. This is the arrangement-B property; it fails if the wrapper is placed outside the keepalive.
+  - **Verify**: `go test ./pkg/util/vsphere/client/...`
+
+- [ ] **T019** `[P]` Pin and extend the legacy coverage.
+  - `pkg/util/vsphere/client/client_test.go`: the existing `Describe("Keepalive")` specs construct handlers by hand and are unaffected, but the `Describe("NewClient")` specs now run with `InlineReloginEnabled: false` implicitly. Make that explicit in the `client.Config` literal so a future default flip does not silently repoint them.
+  - Add one spec asserting flag-off yields the legacy chain: assert `vimClient.RoundTripper` is a `*keepalive.HandlerSOAP` and that no `*reloginSOAP` is in the chain (compare against the inline case).
+  - **Verify**: `go test ./pkg/util/vsphere/client/...`
+
+---
+
+## Phase 6 — Deployment and E2E
+
+- [ ] **T020** Add the env var to both manager overlays. They use different formats, so copy the neighbouring `CRD_CLEANUP_ENABLED` entry in each rather than writing one from scratch.
+  - `config/wcp/vmoperator/manager_env_var_patch.yaml` (JSON-patch list, `CRD_CLEANUP_ENABLED` is at line 64):
+    ```yaml
+    - op: add
+      path: /spec/template/spec/containers/0/env/-
+      value:
+        name: VC_SESSION_INLINE_RELOGIN_ENABLED
+        value: "false"
+    ```
+  - `config/local/vmoperator/local_env_var_patch.yaml` (plain Deployment overlay, `CRD_CLEANUP_ENABLED` is at line 20):
+    ```yaml
+    - name: VC_SESSION_INLINE_RELOGIN_ENABLED
+      value: "false"
+    ```
+  - **Verify**: `make kustomize-local` succeeds and the rendered YAML contains the new variable.
+
+- [ ] **T021** Run the existing vcsim suites in both modes.
+  - `services/vm-watcher/vm_watcher_service_test.go` and `controllers/virtualmachine/virtualmachine/virtualmachine_controller_intg_test.go` both build clients via `vsclient.NewClient(ctx, vcSimCtx.VCClientConfig)`. Add a variant that sets `VCClientConfig.InlineReloginEnabled = true` before the call.
+  - **Verify**: `go test ./services/vm-watcher/... ./controllers/virtualmachine/...`
+
+- [ ] **T022** New E2E spec file `test/e2e/vmservice/vmservice/virtualmachine/vm_vcsession.go`.
+
+  Full design — including both `It` blocks, the timing rationale, and the caveats — is in [`plan.md`](./plan.md) "E2E design". Implement it exactly as written there. Structural notes:
+
+  - Follow the shape of `test/e2e/vmservice/vmservice/virtualmachine/vm_extraconfig.go`: a `VCSessionRecoverySpecInput` struct, an exported `VCSessionRecoverySpec(ctx, inputGetter)` func, `input`-validation `Expect`s in `BeforeEach`, `framework.WatchPodLogsAndEventsInNamespaces` with `DeferCleanup`.
+  - Both `It` blocks carry the `Serial` decorator. They take VM Operator's VC session away from every other spec.
+  - Register it in `test/e2e/vmservice/vmservice_test.go` under `Context("VIRTUAL-MACHINE", ...)` as `Context("VM-VCSESSION", ...)`, following the `VMExtraConfigSpec` registration block.
+  - `const vpxdRestartCmd = "vmon-cli -r vpxd"` — a single constant, because **this command needs validating on a real testbed**; `service-control --restart vmware-vpxd` is the documented fallback.
+  - **Verify**: `cd test/e2e && go build ./...`, then on a testbed:
+    ```bash
+    make test-e2e TEST_FOCUS="VM-VCSESSION"
+    ```
+
+- [ ] **T023** `[P]` E2E gating helper.
+  - `test/e2e/vmservice/config/wcp.yaml` and `kind.yaml`: add `EnvVCSessionInlineRelogin: "VC_SESSION_INLINE_RELOGIN_ENABLED"`.
+  - `test/e2e/vmservice/skipper/skipper.go`: add
+    ```go
+    func SkipUnlessVCSessionInlineReloginEnabled(
+        ctx context.Context,
+        client ctrlclient.Client,
+        config *config.E2EConfig) {
+
+        skipUnlessFSSEnabled(
+            ctx, client,
+            config.GetVariable("VMOPNamespace"),
+            config.GetVariable("VMOPDeploymentName"),
+            config.GetVariable("VMOPManagerCommand"),
+            config.GetVariable("EnvVCSessionInlineRelogin"))
+    }
+    ```
+    following the existing `SkipUnlessWindowsFSSEnabled` exactly.
+  - **Verify**: `cd test/e2e && go build ./...`
+
+- [ ] **T024** Confirm the E2E actually discriminates. Run T022 against a build with the flag **off** and confirm both blocks **fail**. A recovery test that passes in both modes is testing nothing. Record the observed timings in this file.
+
+---
+
+## Phase Final — Polish
+
+- [ ] **T025** Re-login logging: `Info` level, with the generation and the triggering method name, so a burst of logins is visible as a burst rather than as one line repeated.
+- [ ] **T026** Move `vc-client-retry-login.md` (repo root, untracked) into this directory as `reference-wcpsvc-retry-login.md`.
+- [ ] **T027** Update `docs/` if the flag is operator-facing, and write the release note per `pull-request-standards.md`.
+- [ ] **T028** Flip the default to `true` — separate PR, after soak. Record the soak criteria in this file before flipping.
+- [ ] **T029** Remove `SoapKeepAliveHandlerFn`, `RestKeepAliveHandlerFn`, the `InlineReloginEnabled` field and the env var — separate spec, after the enabled default has shipped.

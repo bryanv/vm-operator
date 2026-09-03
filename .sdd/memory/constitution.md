@@ -1,7 +1,7 @@
 # Constitution: vm-operator Spec-Driven Development
 
 - **Repository**: [`github.com/vmware-tanzu/vm-operator`](https://github.com/vmware-tanzu/vm-operator)
-- **Last updated**: 2026-07-30
+- **Last updated**: 2026-09-02
 - **Applies to**: All feature specs under `.sdd/specs/`
 
 ---
@@ -14,20 +14,9 @@
 
 ## How to use this constitution
 
-This document defines the **non-negotiables** that govern every change in this repository. Detailed guidance on _how_ to satisfy these non-negotiables lives in companion memory files:
+This document defines the **non-negotiables** that govern every change in this repository. Detailed guidance on _how_ to satisfy them lives in the companion files under `.sdd/memory/`, indexed with one-line descriptions in [`.sdd/INDEX.md`](../INDEX.md). When a section below references a companion file, treat that file as authoritative for the details. The constitution states **what is required**; the companion files state **how to do it**.
 
-| Topic | Companion file | Cursor rule |
-|-------|----------------|-------------|
-| Project layout, naming, imports, Go style | [`architectural-standards.md`](./architectural-standards.md) | `.cursor/rules/architectural-standards.mdc` |
-| Controller patterns, reconciler structure, error semantics | [`operator-best-practices.md`](./operator-best-practices.md) | `.cursor/rules/operator-best-practices.mdc` |
-| Ginkgo/Gomega unit and integration test conventions | [`testing-standards.md`](./testing-standards.md) | `.cursor/rules/testing-standards.mdc` |
-| Running and writing E2E tests | [`e2e-testing.md`](./e2e-testing.md) | `.cursor/rules/e2e-testing.mdc` |
-| Keeping E2E coverage aligned with product changes | [`e2e-sync-with-changes.md`](./e2e-sync-with-changes.md) | `.cursor/rules/e2e-sync-with-changes.mdc` |
-| Spec-Driven Development (SDD) workflow and artifacts | [`sdd-standards.md`](./sdd-standards.md) | _(see below)_ |
-
-When a section below references one of these files, treat the linked file as authoritative for the details. The constitution states **what is required**; the companion files state **how to do it**.
-
-`.cursor/rules/*.mdc` files are thin Cursor proxies — each `.mdc` points at the matching `.md` here so that humans and AI assistants read the same source of truth.
+`.cursor/rules/*.mdc` and `.claude/rules/*.md` are thin proxies — each points at the matching `.md` here so that humans and AI assistants read the same source of truth.
 
 ---
 
@@ -37,12 +26,13 @@ Due to Broadcom rules, internal links are disallowed in upstream repositories. T
 
 * Instead, the prefix `vmop` is used in place of our internal JIRA project. Therefore, an internal ticket `XXX-123` becomes `vmop-123`.
 * In place of a direct WIKI URL, just reference the page ID with the prefix `WIKI page`, ex. `WIKI page 123456`.
+* JIRA field IDs (Epic Link, Acceptance Criteria), the spec ↔ epic and task ↔ story mapping, and the design-docs wiki page are specified in [`sdd-standards.md`](./sdd-standards.md) "Tickets and wiki links".
 
 ---
 
 ## Spec-Driven Development (SDD)
 
-All non-trivial work in this repository follows a Spec-Driven Development workflow rooted at `.sdd/`. The intent is that **specifications drive code**, not the other way around. See [`sdd-standards.md`](./sdd-standards.md) for the full workflow, templates, and artifact contracts.
+All non-trivial work in this repository follows a Spec-Driven Development workflow rooted at `.sdd/`. The intent is that **specifications drive code**, not the other way around. See [`sdd-standards.md`](./sdd-standards.md) for the full workflow, templates, artifact contracts, and the amendment process.
 
 ### Non-negotiables for SDD
 
@@ -55,17 +45,6 @@ All non-trivial work in this repository follows a Spec-Driven Development workfl
 - The constitution is **immutable per change**: a PR that needs to bend a constitutional rule must amend the constitution in the same PR with a documented rationale, and call that amendment out in the PR description.
 - An SDD spec should be related to an epic ticket.
 - All SDD tasks should be related to story or sub-task tickets.
-
-### Expected behavior for new features
-
-1. **Start with the spec.** Create `.sdd/specs/NNN-slug/spec.md` describing user-visible behavior, goals, non-goals, and acceptance criteria. Mark every unknown with `[NEEDS CLARIFICATION: …]` rather than guessing.
-2. **Research as needed.** Capture investigation, prior art, and external references in `research.md` so future engineers (and AI assistants) inherit the context.
-3. **Plan against the constitution.** `plan.md` translates the spec into a constitutionally-compliant technical approach: project structure, module impacts, API/CRD versioning strategy, test strategy, and any constitution-check exceptions with justification.
-4. **Decompose into tasks.** `tasks.md` breaks the plan into ordered, parallelizable, executable tasks. Each task identifies the files it touches and the user story / acceptance criterion it serves.
-5. **Implement with tests.** Follow [`testing-standards.md`](./testing-standards.md) and [`e2e-sync-with-changes.md`](./e2e-sync-with-changes.md). E2E coverage ships with the behavior, not after it.
-6. **Keep specs alive.** When implementation reveals a wrong assumption, update the spec/plan/tasks in the same PR. Production incidents that invalidate a spec result in a follow-up PR that updates the spec.
-
-See [`sdd-standards.md`](./sdd-standards.md) for templates, the file contracts for each artifact, and the workflow for amendments.
 
 ---
 
@@ -115,70 +94,12 @@ The non-negotiables below are constitutional; for unit and integration patterns 
 
 `vm-operator` is a **multi-module** repository. The root `go.mod` is the main binary module; every `go.mod` nested below it is an independent Go module that is imported by the root (or by tooling) via `replace` directives in the workspace. For the package-level organization principles, import aliases, and naming conventions, see [`architectural-standards.md`](./architectural-standards.md).
 
-### Root module — `github.com/vmware-tanzu/vm-operator`
-
-```
-go.mod / go.sum
-main.go
-api/                   — vmoperator.vmware.com API types (v1alpha1..v1alpha6)
-cmd/                   — additional binaries
-config/                — Kubernetes manifests, RBAC, Kustomize bases
-controllers/           — reconcile loops (thin); one sub-package per controller
-docs/                  — user-facing documentation
-external/              — vendored API definitions (each sub-directory is its own module — see below)
-hack/                  — build scripts (hack/tools/ is its own module — see below)
-pkg/                   — business logic, providers, config, conditions
-services/              — long-running manager runnables (e.g. vm-watcher)
-test/                  — test builders, envtest helpers, E2E suites
-webhooks/              — admission webhooks
-.sdd/                  — Spec-Driven Development root
-  memory/              — repository-wide rules (this file + companions)
-  specs/               — per-feature artifacts
-    NNN-slug/          — one directory per feature (spec.md, plan.md, tasks.md, ...)
-```
-
-### Sub-modules
-
-| Directory | Module |
-|-----------|--------|
-| `api/` | `github.com/vmware-tanzu/vm-operator/api` |
-| `api/test/` | `github.com/vmware-tanzu/vm-operator/api/test` |
-| `external/appplatform/` | `github.com/vmware-tanzu/vm-operator/external/appplatform` |
-| `external/byok/` | `github.com/vmware-tanzu/vm-operator/external/byok` |
-| `external/capabilities/` | `github.com/vmware-tanzu/vm-operator/external/capabilities` |
-| `external/infra/` | `github.com/vmware-tanzu/vm-operator/external/infra` |
-| `external/ncp/` | `github.com/vmware-tanzu/vm-operator/external/ncp` |
-| `external/storage-policy-quota/` | `github.com/vmware-tanzu/vm-operator/external/storage-policy-quota` |
-| `external/tanzu-topology/` | `github.com/vmware-tanzu/vm-operator/external/tanzu-topology` |
-| `external/vsphere-csi-driver/` | `github.com/vmware-tanzu/vm-operator/external/vsphere-csi-driver` |
-| `external/vsphere-policy/` | `github.com/vmware-tanzu/vm-operator/external/vsphere-policy` |
-| `hack/tools/` | `github.com/vmware-tanzu/vm-operator/hack/tools` |
-| `pkg/backup/api/` | `github.com/vmware-tanzu/vm-operator/pkg/backup/api` |
-| `pkg/constants/testlabels/` | `github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels` |
-
-## Ticket / wiki conventions
-
-- All code Stories belong to an Epic via `customfield_10830` (Epic Link), set post-create via PUT (ticket creation screen does not expose it).
-- Acceptance Criteria in `customfield_10100`.
-- Architecture docs (One Pager, Design, TDS) live in the wiki under `VM Operator: Design Docs` (wiki page ID: `644900152`, space `WCP`).
+The authoritative module list is whatever `find . -name go.mod -not -path './vendor/*'` reports; the directory layout is whatever `ls` shows.
 
 ## Coding style
 
-The non-negotiables below are constitutional; for import aliases, import group ordering, error wrapping, context usage, copyright headers, and comment grammar see [`architectural-standards.md`](./architectural-standards.md). Wherever a rule is also enforced by `golangci-lint`, [`.golangci.yml`](../../.golangci.yml) is the **source of truth** — this constitution and `architectural-standards.md` document the rule, but the linter is what enforces it.
+Wherever a rule is also enforced by `golangci-lint`, [`.golangci.yml`](../../.golangci.yml) is the **source of truth** — import aliases (`importas`), import grouping (`goimports`), and forbidden imports (`depguard`) are enforced there and documented in [`architectural-standards.md`](./architectural-standards.md). The non-negotiables below are the ones the linter does **not** catch:
 
-- Follow the import alias table in [`.golangci.yml`](../../.golangci.yml) `linters.settings.importas.alias` (enforced by the `importas` linter). The `corev1` / `metav1` / `ctrl` / `vmopv1` / `pkgcfg` / `pkgctx` / … aliases are not optional.
-- Follow the import-grouping rules enforced by `goimports` via `.golangci.yml` `formatters.settings.goimports.local-prefixes` (`github.com/vmware`, `github.com/vmware-tanzu`, `github.com/vmware-tanzu/vm-operator`).
-- Do not import packages forbidden by `.golangci.yml` `linters.settings.depguard` (`io/ioutil`, `github.com/pkg/errors`, `k8s.io/utils`, and `testing` / `github.com/onsi/ginkgo` / `github.com/onsi/gomega` outside `_test.go`).
 - `+optional` / `+required` markers on every struct field; `omitempty` JSON tags on optional fields.
 - Resource names must be DNS-subdomain safe (`^[a-z][a-z0-9-]{0,61}[a-z0-9]?$`).
-- Managed object IDs (`spec.id`) are immutable after create. Enforce this per the CEL/Go split in the Webhooks section below: a plain `self == oldSelf` transition rule for the unconditional case, a webhook only when the immutability rule is conditional or cross-field.
-
-## Roles referenced in specs
-
-| Role | Persona |
-|------|---------|
-| **CSP admin** | Cloud Service Provider admin with vCenter and Supervisor admin access |
-| **Tenant admin** | Namespace-level admin managing VM Classes and policies within a tenancy boundary |
-| **DevOps user** | Namespace member creating and operating VMs |
-| **Platform engineer** | Builds controllers/webhooks in this repo (`controllers/`, `webhooks/`, `pkg/`) |
-| **Partner engineer** | CCI/VCFA UI, VKS, supportability — consumes the API from outside `vmop` |
+- Managed object IDs (`spec.id`) are immutable after create. Enforce this per the CEL/Go split in the Webhooks section above: a plain `self == oldSelf` transition rule for the unconditional case, a webhook only when the immutability rule is conditional or cross-field.

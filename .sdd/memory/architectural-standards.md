@@ -7,33 +7,6 @@
 > source of truth and update this document if the linter changes. Run
 > `make lint-go` (or `golangci-lint run` / `golangci-lint fmt`) to apply.
 
-## Project Structure
-
-```
-vm-operator/
-├── api/              # CRD type definitions (one directory per alpha version).
-│   └── v1alphaN/     # The active alpha is whichever directory is aliased
-│                     # as `vmopv1` in `.golangci.yml` importas (see below).
-├── controllers/      # Reconciliation logic for each CRD
-├── webhooks/         # Admission webhooks (validation/ and mutation/ subdirs)
-├── pkg/              # Reusable packages (business logic, utilities)
-│   ├── conditions/   # Kubernetes condition management (Getter/Setter)
-│   ├── config/       # Feature flags and configuration (pkgcfg)
-│   ├── context/      # Typed context structs per resource
-│   ├── constants/    # Shared constants and test labels
-│   ├── log/          # Structured logging helpers
-│   ├── patch/        # Strategic merge patch helpers for status updates
-│   ├── providers/    # Provider interface + vsphere implementation
-│   ├── record/       # Event recording helpers
-│   ├── util/         # General-purpose utilities (kube, ptr, vmopv1)
-│   └── vmconfig/     # VM configuration reconcilers (crypto, bootoptions, diskpromo)
-├── external/         # Vendored external API types (byok, ncp, capabilities, etc.)
-├── test/             # Test utilities
-│   └── builder/      # Test context builders (unit, intg, vcsim)
-├── config/           # Kubernetes manifests and RBAC
-└── hack/             # Build and development scripts
-```
-
 ## Package Organization Principles
 
 ### Keep Controllers Thin
@@ -54,7 +27,7 @@ If you introduce a new widely-imported package, add its alias to `.golangci.yml`
 ### Files
 
 - Controller files: `<resource>_controller.go`
-- Test files: `<resource>_controller_unit_test.go`, `<resource>_controller_intg_test.go`
+- Test files: `<resource>_controller_test.go` — see `testing-standards.md`; do **not** use the old `_unit_test.go` / `_intg_test.go` split
 - Suite files: `<resource>_controller_suite_test.go`
 - Webhook validators: `<resource>_validator.go`
 - Webhook mutators: `<resource>_mutator.go`

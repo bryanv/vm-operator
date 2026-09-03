@@ -2,7 +2,7 @@
 
 This project follows Spec-Driven Development (SDD). The authoritative guidelines live in `.sdd/memory/`. This file is a Claude Code proxy that maps those rules into the contexts where they apply, following the same pattern as `.cursor/rules/*.mdc`.
 
-> **Do not duplicate guidance here.** Update `.sdd/memory/*.md` instead; this file and the `.cursor` rules will stay current automatically via the `@` imports below.
+> **Do not duplicate guidance here.** Update `.sdd/memory/*.md` instead; this file, the `.claude/rules` proxies, and the `.cursor` rules all stay current automatically via their `@` imports.
 
 ---
 
@@ -24,22 +24,14 @@ Before starting any non-trivial task, read `.sdd/INDEX.md`. If the files you are
 
 ---
 
-## Go source files
+## Path-scoped rules
 
-Applies when editing any `**/*.go` file that is not a test file.
+The rules below are **not** always-loaded — they live in `.claude/rules/` and load only when you touch a matching file, mirroring the `globs:` in the `.cursor/rules/*.mdc` proxies. Each is a thin proxy that `@`-imports the authoritative file in `.sdd/memory/`.
 
-@.sdd/memory/architectural-standards.md
+| Rule file | Loads for | Proxies |
+|-----------|-----------|---------|
+| `.claude/rules/architectural-standards.md` | `**/*.go` | `.sdd/memory/architectural-standards.md` |
+| `.claude/rules/operator-best-practices.md` | `controllers/**/*.go`, `pkg/providers/**/*.go`, `pkg/errors/**/*.go`, `pkg/util/kube/cource/**/*.go`, `services/**/*.go` | `.sdd/memory/operator-best-practices.md` |
+| `.claude/rules/testing-standards.md` | `**/*_test.go` | `.sdd/memory/testing-standards.md` |
 
----
-
-## Controller and provider files
-
-Applies when editing `controllers/**/*.go`, `pkg/providers/**/*.go`, `services/**/*.go`, and related packages.
-
-@.sdd/memory/operator-best-practices.md
-
----
-
-## Test files (`**/*_test.go`)
-
-@.sdd/memory/testing-standards.md
+If you are reasoning about one of these areas without having opened a matching file, read the corresponding `.sdd/memory/*.md` directly.

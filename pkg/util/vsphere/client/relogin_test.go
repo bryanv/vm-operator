@@ -455,10 +455,9 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
-				// Create the property filter on the current session.
-				// CreateFilter is not deny-listed, so the wrapper heals its
-				// fault on the terminated session with a replay on the new
-				// session.
+				// Create the property filter on the current session. CreateFilter
+				// is deny-listed, but it runs on a live session here, so no fault
+				// and no re-login are involved.
 				propertyCollector := property.DefaultCollector(c)
 				filter, cerr := propertyCollector.CreateFilter(ctx, vimtypes.CreateFilter{
 					Spec: vimtypes.PropertyFilterSpec{

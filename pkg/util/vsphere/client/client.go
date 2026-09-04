@@ -251,15 +251,16 @@ func NewVimClient(
 		// outermost so its ping travels through the re-login wrapper and a
 		// dead session heals with no application traffic. The re-login
 		// wrapper wraps the raw soap client -- never vimClient.RoundTripper,
-		// which would be an infinite loop -- and a nil send uses the default
-		// GetCurrentTime ping. The chain is installed before the first login
-		// because the keepalive ticker is started only by a login body
-		// traversing the handler.
+		// which would be an infinite loop -- and the keeper's send tolerates
+		// transient ping errors so the ticker survives them. The chain is
+		// installed before the first login because the keepalive ticker is
+		// started only by a login body traversing the handler.
 		keeper := newSessionKeeper(sm, userInfo)
+		rt := newReloginSOAP(soapClient, keeper)
 		vimClient.RoundTripper = keepalive.NewHandlerSOAP(
-			newReloginSOAP(soapClient, keeper),
+			rt,
 			keepAliveIdleTime,
-			nil)
+			keeper.soapKeepAlive(rt))
 
 		// Initial login. This will also start the keepalive.
 		if err = sm.Login(ctx, userInfo); err != nil {

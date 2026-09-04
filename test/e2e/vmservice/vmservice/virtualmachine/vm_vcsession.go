@@ -168,10 +168,16 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 		Expect(session.NewManager(adminClient).TerminateSession(ctx, keys)).To(Succeed())
 	}
 
-	// managerRestartCount sums the restart counts of the VM Operator manager
-	// pods. A stable count is what proves recovery happened in process
-	// rather than via a crash-loop, and it holds regardless of timing.
-	managerRestartCount := func() int32 {
+	// managerBaseline records the manager deployment's ready replicas and
+	// the summed restart counts of its pods. A stable pair is what proves
+	// recovery happened in process rather than via a crash-loop, and it
+	// holds regardless of timing.
+	type managerBaseline struct {
+		readyReplicas int32
+		restartCount  int32
+	}
+
+	managerBaselineOf := func() managerBaseline {
 		vmopNamespace := config.GetVariable("VMOPNamespace")
 		deployment := &appsv1.Deployment{}
 		Expect(svClusterClient.Get(ctx,
@@ -192,14 +198,19 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 				total += cs.RestartCount
 			}
 		}
-		return total
+		return managerBaseline{
+			readyReplicas: deployment.Status.ReadyReplicas,
+			restartCount:  total,
+		}
 	}
 
-	// assertManagerNotCrashLooped asserts the manager pod restart count is
-	// unchanged from the baseline.
-	assertManagerNotCrashLooped := func(baseline int32) {
+	// assertManagerNotCrashLooped asserts the manager deployment's ready
+	// replicas and pod restart counts are unchanged from the baseline.
+	assertManagerNotCrashLooped := func(baseline managerBaseline) {
 		Eventually(func(g Gomega) {
-			g.Expect(managerRestartCount()).To(Equal(baseline))
+			current := managerBaselineOf()
+			g.Expect(current.restartCount).To(Equal(baseline.restartCount))
+			g.Expect(current.readyReplicas).To(Equal(baseline.readyReplicas))
 		}, 10*time.Second, time.Second).Should(Succeed())
 	}
 
@@ -278,7 +289,7 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 			vmName := fmt.Sprintf("%s-terminate-%s", specName, capiutil.RandomString(4))
 			vmKey := createPoweredOnVM(vmName)
 
-			baselineRestartCount := managerRestartCount()
+			baselineManager := managerBaselineOf()
 
 			By("Terminating the VM Operator solution user's vCenter sessions")
 			adminClient := newAdminVimClient()
@@ -290,7 +301,7 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 				vmName, elapsed)
 
 			By("Asserting the manager did not crash-loop")
-			assertManagerNotCrashLooped(baselineRestartCount)
+			assertManagerNotCrashLooped(baselineManager)
 		})
 
 	It("recovers when vpxd restarts", Serial,
@@ -299,7 +310,7 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 			vmName := fmt.Sprintf("%s-vpxd-%s", specName, capiutil.RandomString(4))
 			vmKey := createPoweredOnVM(vmName)
 
-			baselineRestartCount := managerRestartCount()
+			baselineManager := managerBaselineOf()
 
 			By("Restarting vpxd over SSH")
 			runner, err := e2essh.NewSSHCommandRunner(
@@ -347,7 +358,7 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 				vmName, elapsed)
 
 			By("Asserting the manager did not crash-loop")
-			assertManagerNotCrashLooped(baselineRestartCount)
+			assertManagerNotCrashLooped(baselineManager)
 		})
 }
 

@@ -46,6 +46,8 @@ func SkipUnlessWindowsFSSEnabled(ctx context.Context, client ctrlclient.Client, 
 	skipUnlessFSSEnabled(ctx, client, config.GetVariable("VMOPNamespace"), config.GetVariable("VMOPDeploymentName"), config.GetVariable("VMOPManagerCommand"), config.GetVariable("EnvFSSWindowsSysprep"))
 }
 
+// SkipUnlessVCSessionInlineReloginEnabled skips the spec unless the VC session
+// inline re-login feature state switch is enabled on the deployment.
 func SkipUnlessVCSessionInlineReloginEnabled(ctx context.Context, client ctrlclient.Client, config *config.E2EConfig) {
 	skipUnlessFSSEnabled(ctx, client, config.GetVariable("VMOPNamespace"), config.GetVariable("VMOPDeploymentName"), config.GetVariable("VMOPManagerCommand"), config.GetVariable("EnvVCSessionInlineRelogin"))
 }

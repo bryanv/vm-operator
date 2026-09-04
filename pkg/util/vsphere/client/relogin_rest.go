@@ -89,6 +89,11 @@ func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
 		// GetBody failed; do not replay with a missing body.
 		return res, nil
 	}
+	if req2.Body == http.NoBody {
+		// Rules 2 and 3 replay a bodiless request as http.NoBody; the stale
+		// ContentLength from the original request must go with it.
+		req2.ContentLength = 0
+	}
 	req2.Header.Set(restSessionHeader, r.keeper.rest.SessionID())
 	return r.rt.RoundTrip(req2)
 }

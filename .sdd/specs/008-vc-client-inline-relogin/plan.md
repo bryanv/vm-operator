@@ -79,7 +79,8 @@ pbmClient.RoundTripper  = <raw derived soap.Client>   // no wrapper at all
 With the flag on — arrangement **B**, keepalive outermost, per [`research.md`](./research.md) §6:
 
 ```
-vimClient.RoundTripper  = keepalive.NewHandlerSOAP(reloginSOAP(soapClient, keeper), 5m, nil)
+vimClient.RoundTripper  = keepalive.NewHandlerSOAP(reloginSOAP(soapClient, keeper), 5m,
+                          keeper.soapKeepAlive(<the same reloginSOAP wrapper>))
 pbmClient.RoundTripper  = reloginSOAP(pbmClient.Client, keeper)
 restClient.Transport    = keepalive.NewHandlerREST(restClient, 5m, keeper.restKeepAlive)
                           // where restClient.Transport was first set to
@@ -88,12 +89,12 @@ restClient.Transport    = keepalive.NewHandlerREST(restClient, 5m, keeper.restKe
 
 Three things this ordering buys, and one it demands:
 
-- The keepalive ping travels **through** the re-login wrapper, so a dead session heals even with zero application traffic, and the ticker never dies permanently.
+- The keepalive ping travels **through** the re-login wrapper, so a dead session heals even with zero application traffic, and the ticker never dies permanently: the keeper's SOAP send (`keeper.soapKeepAlive`) swallows transient ping errors so a transport hiccup does not stop the goroutine, and only a persistent credential failure (`InvalidLogin`) is surfaced, matching legacy `SoapKeepAliveHandlerFn`.
 - The re-login wrapper wraps the **raw** `soap.Client`, never `vimClient.RoundTripper` — wrapping the latter is an infinite loop.
 - `session.Manager.Login` re-enters at the **top** of the chain (it holds the `*vim25.Client`), so the login body traverses the keepalive handler and (re)starts the ticker. That is desirable, and it is also the recursion hazard the deny-list below closes.
 - **Demanded**: the handler must be installed before the first login, or the ticker never starts.
 
-REST needs its own `send` because `rest.Client.Session()` swallows a 401 and returns `(nil, nil)` — the wrapper never sees a failure to act on. `keeper.restKeepAlive` is today's `RestKeepAliveHandlerFn` routed through the shared mutex.
+REST needs its own `send` because `rest.Client.Session()` swallows a 401 and returns `(nil, nil)` — the wrapper never sees a failure to act on. `keeper.restKeepAlive` is today's `RestKeepAliveHandlerFn` routed through the shared mutex. SOAP needs its own `send` for the mirror reason: with a `nil` send, govmomi's default `keepAliveSOAP` returns any error from the ping, and the keepalive handler stops its goroutine permanently on the first error — so a transient transport hiccup would silently kill the keepalive. `keeper.soapKeepAlive` mirrors the legacy `SoapKeepAliveHandlerFn` tolerance instead.
 
 ### 2. The session keeper
 
@@ -162,7 +163,7 @@ Notes:
 | Bodies | Action | Why |
 |---|---|---|
 | `LoginBody`, `LoginByTokenBody`, `LoginExtensionByCertificateBody`, `LogoutBody`, `CloneSessionBody`, `SessionIsActiveBody` | pass through | Re-entrancy guard. Closes reference gap §10.4 rather than relying on `vpxd` never answering a rejected login with `NotAuthenticated`. |
-| `WaitForUpdatesExBody`, `WaitForUpdatesBody`, `CancelWaitForUpdatesBody`, `CreateFilterBody`, `DestroyPropertyCollectorBody`, `DestroyViewBody`, `ModifyListViewBody` | re-login, do **not** replay | `This` names session-scoped state that the re-login just destroyed. The vm-watcher's existing restart loop is the correct recovery ([`research.md`](./research.md) §4). |
+| `WaitForUpdatesExBody`, `WaitForUpdatesBody`, `CancelWaitForUpdatesBody`, `CreateFilterBody`, `DestroyPropertyFilterBody`, `DestroyPropertyCollectorBody`, `DestroyViewBody`, `ModifyListViewBody` | re-login, do **not** replay | `This` names session-scoped state that the re-login just destroyed. The vm-watcher's existing restart loop is the correct recovery ([`research.md`](./research.md) §4). |
 | ctx carries `WithNoReplay` | re-login, do **not** replay | Explicit opt-out for callers that own session-scoped state; the watcher marks its goroutine's ctx. |
 | everything else | re-login **and** replay | Including PBM, which reads the vim25 cookie live ([`research.md`](./research.md) §3). |
 
@@ -195,7 +196,7 @@ func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
 
 - `restSessionHeader = "vmware-api-session-id"` and the session path `"/rest/com/vmware/cis/session"` are **redeclared locally** — `github.com/vmware/govmomi/vapi/internal` is not importable from this repo. Comment each constant with its govmomi source.
 - The header rewrite is not optional: `rest.Client.Do` stamps the *old* session id before the transport sees the request.
-- `replayBody` implements an ordered rule and returns non-nil only when the body is safely repeatable: `req.GetBody != nil` (which `http.NewRequest` populates for the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()`); else a provably empty body (`req.Body == nil`, `http.NoBody`, or `ContentLength == 0`) replayed as `http.NoBody`; else `GET`/`HEAD`/`OPTIONS`/`DELETE` replayed as `http.NoBody` (govmomi's vapi/rest only ever puts the empty `io.MultiReader()` body on those verbs — `GetBody == nil` — and servers ignore bodies on them); else nil — streaming bodies with `ContentLength > 0` (`rest.Client.Upload`) are never buffered into memory and never retried. Action-style POSTs (`?~action=`) carry the empty MultiReader body with `ContentLength == 0`, so rule 2 replays them; only a streaming action POST with `ContentLength > 0` is excluded, which is the desired upload behavior.
+- `replayBody` implements an ordered rule and returns non-nil only when the body is safely repeatable: `req.GetBody != nil` (which `http.NewRequest` populates for the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()`); else a provably empty body (`req.Body == nil`, `http.NoBody`, or `ContentLength == 0`) replayed as `http.NoBody`; else `GET`/`HEAD`/`OPTIONS`/`DELETE` replayed as `http.NoBody` (govmomi's vapi/rest only ever puts the empty `io.MultiReader()` body on those verbs — `GetBody == nil` — and servers ignore bodies on them), with the stale `ContentLength` zeroed on any `http.NoBody` replay; else nil — streaming bodies with `ContentLength > 0` (`rest.Client.Upload`) are never buffered into memory and never retried. Action-style POSTs (`?~action=`) carry the empty MultiReader body with `ContentLength == 0`, so rule 2 replays them; only a streaming action POST with `ContentLength > 0` is excluded, which is the desired upload behavior.
 - `http.RoundTripper`'s contract forbids mutating the request; hence `Clone`.
 - Path matching, not method matching, is what keeps login/logout/probe out of the retry — all three share the path.
 
@@ -213,7 +214,7 @@ Three call sites build a PBM client directly off the vim25 client and would sile
 
 ## Test strategy
 
-Unit and vcsim, in `pkg/util/vsphere/client/relogin_test.go`, `Label(testlabels.VCSim)`:
+Unit and vcsim, in `pkg/util/vsphere/client/relogin_test.go`, `Label(testlabels.VCSim)`. The file is deliberately `package client` (internal), not `package client_test`: the spy round tripper must splice and inspect the package-private wrapper wiring, which an external test package cannot reach.
 
 - **The vcsim trap** — do **not** drive the retry with a property-collector call (`finder.*`, `property.Collector.Retrieve*`, `object.*.Properties`). Those are on vcsim's no-session allow-list and deliver `NotAuthenticated` via `MissingSet`, above the round tripper; the retry never fires and the test fails for reasons unrelated to the code ([`research.md`](./research.md) §5). Drive it with `methods.GetCurrentTime`, or inject with `simulator.FaultTypeNotAuthenticated`.
 - **Spy round tripper** — splice a counting `soap.RoundTripper` in as the wrapper's *underlying* RT and assert on the sequence of `%T` body names. The canonical assertion is `["*methods.CurrentTimeBody", "*methods.LoginBody", "*methods.CurrentTimeBody"]`. Guard the slice with a mutex; the keepalive goroutine calls `RoundTrip` too.

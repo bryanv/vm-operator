@@ -7,6 +7,7 @@ package client
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +24,7 @@ import (
 	"github.com/vmware/govmomi/pbm"
 	_ "github.com/vmware/govmomi/pbm/simulator" // load PBM simulator
 	pbmtypes "github.com/vmware/govmomi/pbm/types"
+	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/session"
 	"github.com/vmware/govmomi/session/keepalive"
 	"github.com/vmware/govmomi/simulator"
@@ -95,9 +97,24 @@ func (s *spyRT) count(body string) int {
 
 // spyHTTPRequest records the session header of one REST round trip.
 type spyHTTPRequest struct {
-	method  string
-	path    string
-	session string
+	method        string
+	path          string
+	session       string
+	contentLength int64
+}
+
+// errRT is a soap.RoundTripper that always returns the given error. It
+// stands in for a transport failure in tests of the keepalive send func.
+type errRT struct {
+	err error
+}
+
+func (e *errRT) RoundTrip(
+	_ context.Context,
+	_ soap.HasFault,
+	_ soap.HasFault) error {
+
+	return e.err
 }
 
 // spyHTTPRT is the REST counterpart of spyRT.
@@ -110,9 +127,10 @@ type spyHTTPRT struct {
 func (s *spyHTTPRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.mu.Lock()
 	s.seen = append(s.seen, spyHTTPRequest{
-		method:  req.Method,
-		path:    req.URL.Path,
-		session: req.Header.Get(restSessionHeader),
+		method:        req.Method,
+		path:          req.URL.Path,
+		session:       req.Header.Get(restSessionHeader),
+		contentLength: req.ContentLength,
 	})
 	s.mu.Unlock()
 	return s.inner.RoundTrip(req)
@@ -276,6 +294,51 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			Expect(spy.count("*methods.LoginBody")).To(Equal(1))
 			Expect(keeper.soapGeneration()).To(Equal(gen))
 		})
+
+		It("soapKeepAlive tolerates a transient ping error", func() {
+			simulator.Test(func(ctx context.Context, c *vim25.Client) {
+				sm := session.NewManager(c)
+				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+
+				// A transport failure on the ping is swallowed so the
+				// keepalive handler's ticker survives it.
+				Expect(keeper.soapKeepAlive(&errRT{
+					err: errors.New("transport down"),
+				})()).NotTo(HaveOccurred())
+			})
+		})
+
+		It("soapKeepAlive surfaces a persistent credential failure", func() {
+			ctx := context.Background()
+			_, server := startReloginSimServer(reloginSimUsername, reloginSimPassword)
+
+			c, err := vim25.NewClient(ctx, soap.NewClient(server.URL, true))
+			Expect(err).NotTo(HaveOccurred())
+
+			spy := &spyRT{inner: c.RoundTripper}
+			sm := session.NewManager(c)
+			keeper := newSessionKeeper(
+				sm,
+				url.UserPassword(reloginSimUsername, reloginSimPassword))
+			rt := newReloginSOAP(spy, keeper)
+			c.RoundTripper = rt
+
+			Expect(sm.Login(ctx, url.UserPassword(reloginSimUsername, reloginSimPassword))).To(Succeed())
+
+			admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
+			terminateSession(ctx, sm, admin)
+
+			keeper.userInfo = url.UserPassword(reloginSimUsername, reloginSimBadPass)
+
+			// The ping faults with NotAuthenticated, the wrapper's
+			// re-login fails with InvalidLogin, and the send func
+			// surfaces the joined error so the keepalive handler
+			// stops its goroutine, as the legacy handler does.
+			err = keeper.soapKeepAlive(rt)()
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotAuthenticatedError(err)).To(BeTrue())
+			Expect(IsInvalidLogin(err)).To(BeTrue())
+		})
 	})
 
 	Describe("SOAP wrapper", func() {
@@ -382,6 +445,52 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 					"*methods.WaitForUpdatesExBody",
 					"*methods.LoginBody",
 				}))
+			})
+		})
+
+		It("re-logs in but does not replay DestroyPropertyFilter", func() {
+			simulator.Test(func(ctx context.Context, c *vim25.Client) {
+				spy := &spyRT{inner: c.RoundTripper}
+				sm := session.NewManager(c)
+				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				c.RoundTripper = newReloginSOAP(spy, keeper)
+
+				// Create the property filter on the current session.
+				// CreateFilter is not deny-listed, so the wrapper heals its
+				// fault on the terminated session with a replay on the new
+				// session.
+				propertyCollector := property.DefaultCollector(c)
+				filter, cerr := propertyCollector.CreateFilter(ctx, vimtypes.CreateFilter{
+					Spec: vimtypes.PropertyFilterSpec{
+						PropSet: []vimtypes.PropertySpec{{
+							Type:    "SessionManager",
+							PathSet: []string{"currentSession"},
+						}},
+						ObjectSet: []vimtypes.ObjectSpec{{
+							Obj: *c.ServiceContent.SessionManager,
+						}},
+					},
+				})
+				Expect(cerr).NotTo(HaveOccurred())
+
+				admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
+				terminateSession(ctx, sm, admin)
+				spy.reset()
+				gen := keeper.soapGeneration()
+
+				_, err := methods.DestroyPropertyFilter(ctx, c, &vimtypes.DestroyPropertyFilter{
+					This: filter.Reference(),
+				})
+				Expect(err).To(HaveOccurred())
+				Expect(IsNotAuthenticatedError(err)).To(BeTrue())
+
+				// The destroy is re-login-only: the login happened, the
+				// fault is still returned, and there is no second destroy.
+				Expect(spy.recorded()).To(Equal([]string{
+					"*methods.DestroyPropertyFilterBody",
+					"*methods.LoginBody",
+				}))
+				Expect(keeper.soapGeneration()).To(Equal(gen + 1))
 			})
 		})
 
@@ -713,6 +822,64 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			})
 		})
 
+		It("does not replay a bodiless POST", func() {
+			simulator.Test(func(ctx context.Context, vc *vim25.Client) {
+				spy, restClient, _, wrapper := newRestChain(ctx, vc)
+
+				Expect(restClient.Logout(ctx)).To(Succeed())
+
+				// A bodiless POST with no GetBody and a non-zero
+				// ContentLength falls through rule 3, which applies only to
+				// GET, HEAD, OPTIONS and DELETE, and into rule 4: it must be
+				// surfaced unretried, never replayed.
+				req, err := http.NewRequest(
+					http.MethodPost,
+					restClient.Resource("/com/vmware/cis/tagging/category/id:test").String(),
+					io.NopCloser(strings.NewReader("body")))
+				Expect(err).NotTo(HaveOccurred())
+				req.ContentLength = 4
+
+				res, err := wrapper.RoundTrip(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res.StatusCode).To(Equal(http.StatusUnauthorized))
+				Expect(spy.countPath(reloginSimCategoryPath + "/id:test")).To(Equal(1))
+			})
+		})
+
+		It("replays a bodiless GET with a zeroed ContentLength", func() {
+			simulator.Test(func(ctx context.Context, vc *vim25.Client) {
+				spy, restClient, _, wrapper := newRestChain(ctx, vc)
+
+				Expect(restClient.Logout(ctx)).To(Succeed())
+
+				// A GET whose body has no GetBody and a non-zero
+				// ContentLength, like govmomi's vapi/rest builds for verbs
+				// that carry the empty io.MultiReader body when a length is
+				// set. Rule 3 replays it as http.NoBody, and the stale
+				// ContentLength must be zeroed on the replay.
+				req, err := http.NewRequest(
+					http.MethodGet,
+					restClient.Resource("/com/vmware/cis/tagging/category").String(),
+					io.NopCloser(strings.NewReader("body")))
+				Expect(err).NotTo(HaveOccurred())
+				req.ContentLength = 4
+
+				res, err := wrapper.RoundTrip(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res.StatusCode).To(Equal(http.StatusOK))
+
+				gets := []spyHTTPRequest{}
+				for _, r := range spy.recorded() {
+					if r.method == http.MethodGet && r.path == reloginSimCategoryPath {
+						gets = append(gets, r)
+					}
+				}
+				Expect(gets).To(HaveLen(2))
+				Expect(gets[0].contentLength).To(Equal(int64(4)))
+				Expect(gets[1].contentLength).To(Equal(int64(0)))
+			})
+		})
+
 		It("never retries the session path", func() {
 			simulator.Test(func(ctx context.Context, vc *vim25.Client) {
 				spy, restClient, _, _ := newRestChain(ctx, vc)
@@ -770,18 +937,20 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 
 				terminateSession(ctx, sm, admin)
 				spy.reset()
-				spy.reset()
 
 				// No application traffic from here on: the keepalive ping
 				// travels through the re-login wrapper and heals the
 				// session on its own.
-				Eventually(func() int {
-					return spy.count("*methods.LoginBody")
-				}, 10*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 1))
-
-				// The ping sequence is fault, login, replayed ping; the
-				// ticker survived and no further login was needed.
-				Expect(spy.recorded()[:3]).To(Equal([]string{
+				Eventually(func() []string {
+					// Assert on the first three bodies only once they are
+					// all recorded, so the poll never observes the window
+					// between the login and the replayed ping.
+					rec := spy.recorded()
+					if len(rec) < 3 {
+						return rec
+					}
+					return rec[:3]
+				}, 10*time.Second, 100*time.Millisecond).Should(Equal([]string{
 					"*methods.CurrentTimeBody",
 					"*methods.LoginBody",
 					"*methods.CurrentTimeBody",

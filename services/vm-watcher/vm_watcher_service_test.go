@@ -42,7 +42,6 @@ import (
 // the timer-driven keepalive and with the inline re-login round trippers.
 func init() {
 	for _, inlineRelogin := range []bool{false, true} {
-		inlineRelogin := inlineRelogin
 		Describe(
 			fmt.Sprintf("Start (VCSessionInlineReloginEnabled: %v)", inlineRelogin),
 			Label(

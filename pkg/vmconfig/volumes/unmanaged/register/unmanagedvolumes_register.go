@@ -35,6 +35,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 	pkgvol "github.com/vmware-tanzu/vm-operator/pkg/util/volumes"
+	pkgclient "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/client"
 	pkgdatastore "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/datastore"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig/diskpromo"
@@ -56,7 +57,13 @@ const (
 var ErrPendingRegister = pkgerr.NoRequeueNoErr(
 	"has unmanaged volumes pending registration")
 
-type reconciler struct{}
+// reconciler carries an optional *pkgclient.Client so ad-hoc PBM clients
+// route through NewPbmClient and inherit the inline re-login wrapper. A nil
+// vcClient falls back to pbm.NewClient, which is the behavior when the client
+// is not threaded through, e.g. when the reconciler is built by New().
+type reconciler struct {
+	vcClient *pkgclient.Client
+}
 
 var _ vmconfig.Reconciler = reconciler{}
 
@@ -90,9 +97,10 @@ func Reconcile(
 	vimClient *vim25.Client,
 	vm *vmopv1.VirtualMachine,
 	moVM mo.VirtualMachine,
-	configSpec *vimtypes.VirtualMachineConfigSpec) error {
+	configSpec *vimtypes.VirtualMachineConfigSpec,
+	vcClient *pkgclient.Client) error {
 
-	return New().Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+	return reconciler{vcClient: vcClient}.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
 }
 
 // Reconcile ensures all non-PVC disks become PVCs.
@@ -154,6 +162,7 @@ func (r reconciler) Reconcile(
 		ctx,
 		k8sClient,
 		vimClient,
+		r.vcClient,
 		vm,
 		configSpec,
 		&info)
@@ -239,6 +248,7 @@ func ensureUnmanagedDisksConfigsAreUpdated(
 	ctx context.Context,
 	k8sClient ctrlclient.Client,
 	vimClient *vim25.Client,
+	vcClient *pkgclient.Client,
 	vm *vmopv1.VirtualMachine,
 	configSpec *vimtypes.VirtualMachineConfigSpec,
 	info *pkgvol.VolumeInfo) (bool, error) {
@@ -256,6 +266,7 @@ func ensureUnmanagedDisksConfigsAreUpdated(
 		ctx,
 		k8sClient,
 		vimClient,
+		vcClient,
 		vm,
 		info)
 	if err != nil {
@@ -333,10 +344,29 @@ func ensureUnmanagedDisksConfigsAreUpdated(
 	return hasConfigSpecChanges, nil
 }
 
+// newPbmClient returns a PBM client for the given vim25 client. When a
+// *pkgclient.Client is provided and its vim25 client is the same one this flow
+// uses -- pointer equality, because the inline re-login keeper is bound to a
+// specific vim25 session -- the client is built through NewPbmClient so it
+// inherits the inline re-login wrapper. Otherwise it falls back to an ad-hoc
+// pbm.NewClient, which reads the vim25 session cookie live and therefore
+// works, without inline recovery, once the keepalive has re-authenticated.
+func newPbmClient(
+	ctx context.Context,
+	vimClient *vim25.Client,
+	vcClient *pkgclient.Client) (*pbm.Client, error) {
+
+	if vcClient != nil && vcClient.VimClient() == vimClient {
+		return vcClient.NewPbmClient(ctx)
+	}
+	return pbm.NewClient(ctx, vimClient)
+}
+
 func ensureUnmanagedDisksHaveStoragePolicies(
 	ctx context.Context,
 	k8sClient ctrlclient.Client,
 	vimClient *vim25.Client,
+	vcClient *pkgclient.Client,
 	vm *vmopv1.VirtualMachine,
 	info *pkgvol.VolumeInfo) (
 	map[string]string,
@@ -348,7 +378,7 @@ func ensureUnmanagedDisksHaveStoragePolicies(
 
 	// For information on lookup up the profile ID for a disk, see the doc
 	// https://developer.broadcom.com/xapis/vmware-storage-policy-api/latest/pbm.ServerObjectRef.html.
-	pbmClient, err := pbm.NewClient(ctx, vimClient)
+	pbmClient, err := newPbmClient(ctx, vimClient, vcClient)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get pbm client: %w", err)
 	}

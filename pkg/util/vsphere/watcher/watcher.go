@@ -23,6 +23,7 @@ import (
 
 	backupapi "github.com/vmware-tanzu/vm-operator/pkg/backup/api"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
+	pkgclient "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/client"
 	pkgnil "github.com/vmware-tanzu/vm-operator/pkg/util/nil"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 )
@@ -433,6 +434,13 @@ func Start(
 		cancel  context.CancelFunc
 		version string
 	)
+
+	// Mark the watcher's traffic no-replay before deriving the goroutine's
+	// context, so both newWatcher's setup calls and the WaitForUpdatesEx loop
+	// inherit it. A re-login must happen, but a replay must not: the watcher
+	// owns session-scoped server state -- a property collector, property
+	// filter and container/list views -- that a re-login destroys.
+	ctx = pkgclient.WithNoReplay(ctx)
 
 	ctx, cancel = context.WithCancel(ctx)
 	w.cancel = cancel

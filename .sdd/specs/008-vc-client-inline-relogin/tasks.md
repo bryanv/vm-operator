@@ -258,17 +258,18 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
 
   ```go
   keeper := newSessionKeeper(sm, userInfo)
+  rt := newReloginSOAP(soapClient, keeper)
   vimClient.RoundTripper = keepalive.NewHandlerSOAP(
-      newReloginSOAP(soapClient, keeper),
+      rt,
       keepAliveIdleTime,
-      nil)
+      keeper.soapKeepAlive(rt))
   ```
 
   Four things this ordering depends on. Changing any of them breaks recovery silently:
 
   - The re-login wrapper wraps **`soapClient`**, the raw `*soap.Client` — never `vimClient.RoundTripper`, which would be an infinite loop.
   - The keepalive handler is **outermost**, so its ping travels through the wrapper and a dead session heals with no application traffic (`research.md` §6, arrangement B).
-  - The `send` argument is **`nil`**, so the default ping is `GetCurrentTime` through the wrapper. Passing `SoapKeepAliveHandlerFn` here would defeat the point.
+  - The `send` argument is **`keeper.soapKeepAlive(rt)`**: the ping is `GetCurrentTime` through the wrapper, and the send tolerates transient ping errors (logging and returning nil) because govmomi's keepalive goroutine stops permanently on the first non-nil send error. It returns an error only on a persistent `InvalidLogin`, matching the legacy `SoapKeepAliveHandlerFn`. Passing `SoapKeepAliveHandlerFn` here would defeat the point.
   - The whole chain is installed **before** `sm.Login(ctx, userInfo)`. The ticker starts only when a login body traverses the handler.
 
   `NewVimClient` must also return the keeper (or accept one) so `NewClient` can share it with the REST and PBM wrappers. Change the signature to return `(*vim25.Client, *session.Manager, *sessionKeeper, error)` and update the one caller, `NewClient`. **Verified**: the function is exported but has no callers outside this package — the `NewVimClient` hits under `test/e2e/` are a different function, `vcenter.NewVimClient`.

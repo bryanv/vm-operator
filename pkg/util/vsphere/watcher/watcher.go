@@ -416,6 +416,14 @@ func Start(
 
 	logger.Info("Started watching VMs")
 
+	// Mark the watcher's traffic no-replay before any vCenter call, so both
+	// newWatcher's setup calls and the WaitForUpdatesEx loop inherit it. A
+	// re-login must happen, but a replay must not: the watcher owns
+	// session-scoped server state -- a property collector, property filter
+	// and container/list views -- that a re-login destroys. The setup calls
+	// still surface their auth faults so the service's restart loop runs.
+	ctx = pkgclient.WithNoReplay(ctx)
+
 	w, err := newWatcher(
 		ctx,
 		client,
@@ -434,13 +442,6 @@ func Start(
 		cancel  context.CancelFunc
 		version string
 	)
-
-	// Mark the watcher's traffic no-replay before deriving the goroutine's
-	// context, so both newWatcher's setup calls and the WaitForUpdatesEx loop
-	// inherit it. A re-login must happen, but a replay must not: the watcher
-	// owns session-scoped server state -- a property collector, property
-	// filter and container/list views -- that a re-login destroys.
-	ctx = pkgclient.WithNoReplay(ctx)
 
 	ctx, cancel = context.WithCancel(ctx)
 	w.cancel = cancel

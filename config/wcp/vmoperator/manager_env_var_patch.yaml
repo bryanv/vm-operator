@@ -67,6 +67,12 @@
 - op: add
   path: /spec/template/spec/containers/0/env/-
   value:
+    name: VC_SESSION_INLINE_RELOGIN_ENABLED
+    value: "false"
+
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
     name: FSS_PODVMONSTRETCHEDSUPERVISOR
     value: "<FSS_PODVMONSTRETCHEDSUPERVISOR>"
 

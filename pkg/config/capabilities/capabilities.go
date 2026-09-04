@@ -146,6 +146,13 @@ const (
 	// BestEffortRestartPolicy CRDs as well as the VirtualMachinePowerStateSynced
 	// condition's InfraInMaintenance reason.
 	CapabilityKeyVMEviction = "supports_infrapolicy_vm_evacuation"
+
+	// CapabilityKeyVCSessionInlineRelogin is the name of the capability key
+	// defined in the Supervisor capabilities CRD. It gates the vCenter
+	// client's inline session re-login: when active, an authentication
+	// failure re-authenticates and replays the request in place instead of
+	// waiting for the next timer-driven keepalive tick.
+	CapabilityKeyVCSessionInlineRelogin = "supports_vc_session_inline_relogin"
 )
 
 var (
@@ -326,6 +333,8 @@ func updateCapabilitiesFeaturesFromCRD(
 			fs.ExtensionCompatConstraint = capStatus.Activated
 		case CapabilityKeyVMEviction:
 			fs.VMEviction = capStatus.Activated
+		case CapabilityKeyVCSessionInlineRelogin:
+			fs.VCSessionInlineRelogin = capStatus.Activated
 		}
 
 	}

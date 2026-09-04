@@ -222,6 +222,7 @@ type FeatureStates struct {
 	WorkloadNetworkConfiguration bool
 	ExtensionCompatConstraint    bool
 	VMEviction                   bool
+	VCSessionInlineRelogin       bool
 }
 
 type InstanceStorage struct {

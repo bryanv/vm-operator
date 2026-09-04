@@ -381,7 +381,7 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
   2. **Rewrite the header on the replay.** `rest.Client.Do` stamps the *old* session id before the transport sees the request; without `req2.Header.Set(restSessionHeader, k.rest.SessionID())` the replay fails identically.
   3. **Clone the request.** `http.RoundTripper`'s contract forbids mutating the one you were given.
   4. **Drain and close the 401 response body** before replaying, so the connection can be reused.
-  5. **Only replay a safely repeatable body.** Return non-nil from `replayBody` when `req.Body == nil`, `req.Body == http.NoBody`, or `req.GetBody != nil` — the last covers the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()`. Return nil otherwise, so `rest.Client.Upload` of a content-library item is neither buffered into memory nor retried.
+  5. **Only replay a safely repeatable body.** `replayBody` implements an ordered rule and returns non-nil only then: `req.GetBody != nil` — the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()` for JSON POST/PATCH/PUT; else a provably empty body (`req.Body == nil`, `http.NoBody`, or `ContentLength == 0`) replayed as `http.NoBody` — this covers the empty `io.MultiReader()` body (`GetBody == nil`, `ContentLength == 0`) that `rest.Resource.Request` puts on no-body requests, including action POSTs; else GET/HEAD/OPTIONS/DELETE replayed as `http.NoBody`, because servers ignore bodies on these verbs; else nil, so streaming POST/PATCH/PUT with `ContentLength > 0` — `rest.Client.Upload` of a content-library item — is neither buffered into memory nor retried.
 
   **Verify**: `go build ./pkg/util/vsphere/client/... && make lint-go`
 

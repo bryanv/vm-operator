@@ -39,6 +39,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/util/paused"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/resize"
 	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
+	pkgclient "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/client"
 	vmutil "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/vm"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig"
 	vmconfanno2extraconfig "github.com/vmware-tanzu/vm-operator/pkg/vmconfig/anno2extraconfig"
@@ -101,15 +102,15 @@ func (s *Session) UpdateVirtualMachine(
 	switch {
 	case powerState == vimtypes.VirtualMachinePowerStateSuspended:
 		vmCtx.Logger.Info("Reconciling config for suspended vm")
-		updateErr = reconcileSuspendedVM(vmCtx, s.K8sClient, vcVM)
+		updateErr = reconcileSuspendedVM(vmCtx, s.K8sClient, vcVM, s.Client)
 
 	case pkgctx.HasVMRunningTask(vmCtx, false):
 		vmCtx.Logger.Info("Reconciling config for VM with running task")
-		updateErr = reconcileVMWithTask(vmCtx, s.K8sClient, vcVM)
+		updateErr = reconcileVMWithTask(vmCtx, s.K8sClient, vcVM, s.Client)
 
 	case isVMPaused(vmCtx):
 		vmCtx.Logger.Info("Reconciling config for paused vm")
-		updateErr = reconcilePausedVM(vmCtx, s.K8sClient, vcVM)
+		updateErr = reconcilePausedVM(vmCtx, s.K8sClient, vcVM, s.Client)
 
 	case powerState == vimtypes.VirtualMachinePowerStatePoweredOn:
 		vmCtx.Logger.Info("Reconciling config for powered on vm")
@@ -157,7 +158,8 @@ func (s *Session) UpdateVirtualMachine(
 func reconcilePausedVM(
 	vmCtx pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
-	vcVM *object.VirtualMachine) error {
+	vcVM *object.VirtualMachine,
+	vcClient *pkgclient.Client) error {
 
 	var configSpec vimtypes.VirtualMachineConfigSpec
 
@@ -185,13 +187,15 @@ func reconcilePausedVM(
 		vmCtx.VM,
 		vcVM,
 		vmCtx.MoVM,
-		configSpec)
+		configSpec,
+		vcClient)
 }
 
 func reconcileVMWithTask(
 	vmCtx pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
-	vcVM *object.VirtualMachine) error {
+	vcVM *object.VirtualMachine,
+	vcClient *pkgclient.Client) error {
 
 	var configSpec vimtypes.VirtualMachineConfigSpec
 
@@ -204,13 +208,15 @@ func reconcileVMWithTask(
 		vmCtx.VM,
 		vcVM,
 		vmCtx.MoVM,
-		configSpec)
+		configSpec,
+		vcClient)
 }
 
 func reconcileSuspendedVM(
 	vmCtx pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
-	vcVM *object.VirtualMachine) error {
+	vcVM *object.VirtualMachine,
+	vcClient *pkgclient.Client) error {
 
 	var configSpec vimtypes.VirtualMachineConfigSpec
 
@@ -223,7 +229,8 @@ func reconcileSuspendedVM(
 		vmCtx.VM,
 		vcVM,
 		vmCtx.MoVM,
-		configSpec)
+		configSpec,
+		vcClient)
 }
 
 func (s *Session) reconcilePoweredOffOrPoweredOnVM(
@@ -452,7 +459,8 @@ func (s *Session) poweredOnReconfigure(
 		vmCtx.VM,
 		vcVM,
 		vmCtx.MoVM,
-		*configSpec)
+		*configSpec,
+		s.Client)
 
 	if errors.Is(reconfigErr, ErrReconfigure) {
 		if cbtErr := s.reconcilePoweredOnChangeBlockTracking(vmCtx, configSpec); cbtErr != nil {
@@ -507,7 +515,8 @@ func (s *Session) poweredOffReconfigure(
 		vmCtx.VM,
 		vcVM,
 		vmCtx.MoVM,
-		*configSpec)
+		*configSpec,
+		s.Client)
 
 	if reconfigErr != nil && !errors.Is(reconfigErr, ErrReconfigure) {
 		return reconfigErr
@@ -1058,7 +1067,8 @@ func (s *Session) resizeVMWhenPoweredStateOff(
 		vmCtx.VM,
 		vcVM,
 		vmCtx.MoVM,
-		configSpec)
+		configSpec,
+		s.Client)
 
 	if reconfigErr != nil && !errors.Is(reconfigErr, ErrReconfigure) {
 		return reconfigErr
@@ -1331,17 +1341,22 @@ func reconcileRegisterUnmanagedDisks(
 	vm *vmopv1.VirtualMachine,
 	vcVM *object.VirtualMachine,
 	moVM mo.VirtualMachine,
-	configSpec *vimtypes.VirtualMachineConfigSpec) error {
+	configSpec *vimtypes.VirtualMachineConfigSpec,
+	vcClient *pkgclient.Client) error {
 
 	pkglog.FromContextOrDefault(ctx).V(4).Info("Reconciling unmanaged disks")
 
+	// vcVM derives from the same vim25 client as vcClient in this flow, so
+	// the unmanaged volumes reconciler builds its PBM client through
+	// NewPbmClient and inherits the inline re-login wrapper when enabled.
 	return vmconfunmanagedvolsreg.Reconcile(
 		ctx,
 		k8sClient,
 		vcVM.Client(),
 		vm,
 		moVM,
-		configSpec)
+		configSpec,
+		vcClient)
 }
 
 func reconcileExtensionCompatConstraint(
@@ -1517,7 +1532,8 @@ func doReconfigure(
 	vm *vmopv1.VirtualMachine,
 	vcVM *object.VirtualMachine,
 	moVM mo.VirtualMachine,
-	configSpec vimtypes.VirtualMachineConfigSpec) error {
+	configSpec vimtypes.VirtualMachineConfigSpec,
+	vcClient *pkgclient.Client) error {
 
 	if pkgcfg.FromContext(ctx).Features.FastDeploy {
 		if err := reconcileDiskPromo(
@@ -1552,7 +1568,8 @@ func doReconfigure(
 			vm,
 			vcVM,
 			moVM,
-			&configSpec); err != nil {
+			&configSpec,
+			vcClient); err != nil {
 
 			return err
 		}

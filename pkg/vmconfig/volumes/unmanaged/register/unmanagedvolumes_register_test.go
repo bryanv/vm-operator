@@ -319,7 +319,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 				})
 			})
 
@@ -338,7 +339,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 				})
 			})
 
@@ -354,7 +356,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 					cond := pkgcond.Get(vm, unmanagedvolsreg.Condition)
 					Expect(cond).ToNot(BeNil())
 					Expect(cond.Status).To(Equal(metav1.ConditionFalse))
@@ -432,7 +435,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeSCSI,
@@ -465,7 +469,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify CnsRegisterVolume was created
 					crv := &cnsv1alpha1.CnsRegisterVolume{}
@@ -496,7 +501,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeSCSI,
@@ -539,7 +545,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					crv := &cnsv1alpha1.CnsRegisterVolume{}
 					Expect(k8sClient.Get(ctx, ctrlclient.ObjectKey{
@@ -628,7 +635,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeSCSI,
@@ -661,7 +669,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify CnsRegisterVolume was created
 					crv := &cnsv1alpha1.CnsRegisterVolume{}
@@ -779,7 +788,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeSCSI,
@@ -876,7 +886,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeSCSI,
@@ -963,7 +974,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeSCSI,
@@ -1051,7 +1063,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeSCSI,
@@ -1189,7 +1202,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeIDE,
@@ -1286,7 +1300,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 					Expect(configSpec.DeviceChange).To(HaveLen(1))
 
 					Expect(unmanagedvolsreg.Reconcile(
@@ -1295,7 +1310,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify PVC was patched
 					pvc := &corev1.PersistentVolumeClaim{}
@@ -1322,7 +1338,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify CnsRegisterVolume was created
 					crv := &cnsv1alpha1.CnsRegisterVolume{}
@@ -1426,7 +1443,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify PVC was patched
 					pvc := &corev1.PersistentVolumeClaim{}
@@ -1538,7 +1556,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify PVC was patched
 					pvc := &corev1.PersistentVolumeClaim{}
@@ -1651,7 +1670,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 				})
 			})
 
@@ -1716,7 +1736,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeIDE,
@@ -1741,7 +1762,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify CnsRegisterVolume was created
 					crv := &cnsv1alpha1.CnsRegisterVolume{}
@@ -1775,7 +1797,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 
 					// Verify CnsRegisterVolume was deleted
 					Expect(apierrors.IsNotFound(k8sClient.Get(ctx, ctrlclient.ObjectKey{
@@ -1794,7 +1817,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 
 					// Verify the status was unchanged.
 					Expect(vm.Status.Volumes).To(HaveLen(1))
@@ -1868,7 +1892,7 @@ var _ = Describe("Reconcile", func() {
 				})
 
 				It("should return error", func() {
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("failed to get pvc"))
 				})
@@ -1931,7 +1955,7 @@ var _ = Describe("Reconcile", func() {
 				})
 
 				It("should return error", func() {
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("failed to create pvc"))
 				})
@@ -1995,13 +2019,13 @@ var _ = Describe("Reconcile", func() {
 
 				It("should return error", func() {
 					Expect(unmanagedvolsreg.Reconcile(
-						ctx, k8sClient, vimClient, vm, moVM, configSpec)).To(
+						ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)).To(
 						MatchError(unmanagedvolsreg.ErrPendingRegister))
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeIDE,
 						0, 0, vm.Spec.Volumes...).PersistentVolumeClaim.ClaimName
 					createBatchAttachWithPVCVolumeIDCacheMiss(ctx, k8sClient, vm, claimName)
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("failed to ensure CnsRegisterVolume"))
 				})
@@ -2065,13 +2089,13 @@ var _ = Describe("Reconcile", func() {
 
 				It("should return error", func() {
 					Expect(unmanagedvolsreg.Reconcile(
-						ctx, k8sClient, vimClient, vm, moVM, configSpec)).To(
+						ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)).To(
 						MatchError(unmanagedvolsreg.ErrPendingRegister))
 					claimName := vmopv1util.FindByTargetID(
 						vmopv1.VirtualControllerTypeIDE,
 						0, 0, vm.Spec.Volumes...).PersistentVolumeClaim.ClaimName
 					createBatchAttachWithPVCVolumeIDCacheMiss(ctx, k8sClient, vm, claimName)
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("failed to get CnsRegisterVolume"))
 				})
@@ -2164,7 +2188,7 @@ var _ = Describe("Reconcile", func() {
 				})
 
 				It("should return error", func() {
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("failed to patch pvc"))
 				})
@@ -2295,7 +2319,7 @@ var _ = Describe("Reconcile", func() {
 				})
 
 				It("should return error", func() {
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("failed to delete CnsRegisterVolume"))
 				})
@@ -2425,7 +2449,7 @@ var _ = Describe("Reconcile", func() {
 				})
 
 				It("should return error", func() {
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("failed to delete CnsRegisterVolume"))
 				})
@@ -2499,7 +2523,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+						configSpec,
+						nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 				})
 			})
 		})
@@ -2572,7 +2597,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+					configSpec, nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 				Expect(pkgcond.IsFalse(vm, unmanagedvolsreg.Condition)).To(BeTrue())
 			})
@@ -2637,7 +2662,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 
 					// Verify configSpec has device change
 					Expect(configSpec.DeviceChange).To(HaveLen(1))
@@ -2668,7 +2694,8 @@ var _ = Describe("Reconcile", func() {
 						vimClient,
 						vm,
 						moVM,
-						configSpec)).To(Succeed())
+						configSpec,
+						nil)).To(Succeed())
 
 					// Verify configSpec still has one device change but with profile added
 					Expect(configSpec.DeviceChange).To(HaveLen(1))
@@ -2759,7 +2786,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)
+					configSpec, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to get pbm client"))
 			})
@@ -2844,7 +2871,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)
+					configSpec, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to query associated profiles"))
 			})
@@ -2919,7 +2946,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)
+					configSpec, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to list storage classes"))
 			})
@@ -2986,7 +3013,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
+					configSpec, nil)).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 				claimName := vmopv1util.FindByTargetID(
 					vmopv1.VirtualControllerTypeIDE,
 					0, 0, vm.Spec.Volumes...).PersistentVolumeClaim.ClaimName
@@ -2997,7 +3024,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)
+					configSpec, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to get datastore url"))
 			})
@@ -3071,7 +3098,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)
+					configSpec, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to create pvc"))
 				Expect(err.Error()).To(ContainSubstring("simulated create error"))
@@ -3164,7 +3191,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)
+					configSpec, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to patch pvc"))
 				Expect(err.Error()).To(ContainSubstring("simulated patch error"))
@@ -3239,7 +3266,7 @@ var _ = Describe("Reconcile", func() {
 					vimClient,
 					vm,
 					moVM,
-					configSpec)
+					configSpec, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to get pvc"))
 				Expect(err.Error()).To(ContainSubstring("simulated general error"))
@@ -3343,7 +3370,7 @@ var _ = Describe("Reconcile", func() {
 				It("should skip FCD disk (filtered out early)", func() {
 					// FCD disks are filtered out at the beginning of Reconcile
 					// because they are already managed by CNS/CSI
-					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err := unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).ToNot(HaveOccurred())
 
 					// Verify no CRV was created for the FCD disk
@@ -3452,12 +3479,12 @@ var _ = Describe("Reconcile", func() {
 					}, crv)
 					Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
-					Expect(unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)).To(
+					Expect(unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)).To(
 						MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					createBatchAttachWithPVCVolumeIDCacheMiss(ctx, k8sClient, vm, "regular-pvc")
 
-					err = unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec)
+					err = unmanagedvolsreg.Reconcile(ctx, k8sClient, vimClient, vm, moVM, configSpec, nil)
 					Expect(err).To(MatchError(unmanagedvolsreg.ErrPendingRegister))
 
 					// Verify CRV was created

@@ -174,6 +174,13 @@ type Config struct {
 	// Please note, this field has no effect if a CRD is being installed for the
 	// first time.
 	CRDCleanupEnabled bool
+
+	// VCSessionInlineReloginEnabled causes the vCenter client to
+	// re-authenticate inline, on the call that observes the expired
+	// session, instead of waiting for the next keepalive tick.
+	//
+	// Defaults to false.
+	VCSessionInlineReloginEnabled bool
 }
 
 // GetMaxDeployThreadsOnProvider returns MaxDeployThreadsOnProvider if it is >0

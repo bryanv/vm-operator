@@ -51,6 +51,7 @@ const (
 	WebhookSecretName
 	WebhookSecretNamespace
 	CRDCleanupEnabled
+	VCSessionInlineReloginEnabled
 	FSSInstanceStorage
 	FSSK8sWorkloadMgmtAPI
 	FSSPodVMOnStretchedSupervisor
@@ -169,6 +170,8 @@ func (n VarName) String() string {
 		return "WEBHOOK_SECRET_NAMESPACE"
 	case CRDCleanupEnabled:
 		return "CRD_CLEANUP_ENABLED"
+	case VCSessionInlineReloginEnabled:
+		return "VC_SESSION_INLINE_RELOGIN_ENABLED"
 
 	//
 	// Features/Capabilities

@@ -34,6 +34,10 @@ type Config struct {
 	CAFilePath string
 	Insecure   bool
 	Datacenter string
+
+	// InlineReloginEnabled selects the inline re-login round trippers
+	// instead of the timer-driven keepalive handlers.
+	InlineReloginEnabled bool
 }
 
 type Client struct {

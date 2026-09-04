@@ -31,7 +31,7 @@ go test ./pkg/util/vsphere/client/... ./pkg/config/...
 
 - Copyright header on every new file, copied verbatim from `pkg/util/vsphere/client/client.go` lines 1-3.
 - Comments are complete sentences ending in a period (`architectural-standards.md`).
-- Test files are `package client_test` (external). The `depguard` linter forbids `testing`/ginkgo/gomega outside `_test.go`.
+- Test files are `package client_test` (external). The `depguard` linter forbids `testing`/ginkgo/gomega outside `_test.go`. Approved deviation: `relogin_test.go` is `package client` (internal) because the spy round tripper must splice and inspect the package-private wrapper wiring.
 - Never import `github.com/vmware/govmomi/vapi/internal` — Go's `internal` rule makes it uncompilable from this repo. Redeclare the constants you need.
 - Never call `pkgcfg.FromContext` from inside `pkg/util/vsphere/client`. It panics when the context has no config, and this package's own tests use a bare `context.Background()`.
 
@@ -219,6 +219,7 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
       *methods.WaitForUpdatesBody,
       *methods.CancelWaitForUpdatesBody,
       *methods.CreateFilterBody,
+      *methods.DestroyPropertyFilterBody,
       *methods.DestroyPropertyCollectorBody,
       *methods.DestroyViewBody,
       *methods.ModifyListViewBody:
@@ -468,7 +469,7 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
 ## Phase Final — Polish
 
 - [ ] **T025** Re-login logging: `Info` level, with the generation and the triggering method name, so a burst of logins is visible as a burst rather than as one line repeated.
-- [ ] **T026** Move `vc-client-retry-login.md` (repo root, untracked) into this directory as `reference-wcpsvc-retry-login.md`.
+- [x] **T026** Move `vc-client-retry-login.md` (repo root, untracked) into this directory as `reference-wcpsvc-retry-login.md`.
 - [ ] **T027** Update `docs/` if the capability is operator-facing, and write the release note per `pull-request-standards.md`.
 - [ ] **T028** WCP activates the `supports_vc_session_inline_relogin` capability — separate change, after soak. Record the soak criteria in this file before requesting activation.
 - [ ] **T029** Remove `SoapKeepAliveHandlerFn`, `RestKeepAliveHandlerFn`, and the `InlineReloginEnabled` field — separate spec, after the capability has been activated everywhere.

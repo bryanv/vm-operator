@@ -3,7 +3,7 @@
 - **Spec**: [`spec.md`](./spec.md)
 - **Date**: 2026-09-03
 
-Prior art: the wcpsvc "re-login and retry in place" pattern, written up in `vc-client-retry-login.md` (untracked, repo root at time of writing — move it to this directory as `reference-wcpsvc-retry-login.md` when this spec merges). That document was verified against **govmomi v0.55.0**. Everything below re-verifies its load-bearing claims against the version this repo actually builds with, **`github.com/vmware/govmomi v0.56.0-alpha.0.0.20260720221020-d993be43fe66`** (`go.mod:54`), and adds the VM Operator-specific findings the reference document could not know about.
+Prior art: the wcpsvc "re-login and retry in place" pattern, written up in [`reference-wcpsvc-retry-login.md`](./reference-wcpsvc-retry-login.md) (moved here from the repo root when this spec merged). That document was verified against **govmomi v0.55.0**. Everything below re-verifies its load-bearing claims against the version this repo actually builds with, **`github.com/vmware/govmomi v0.56.0-alpha.0.0.20260720221020-d993be43fe66`** (`go.mod:54`), and adds the VM Operator-specific findings the reference document could not know about.
 
 ---
 
@@ -60,7 +60,7 @@ Because `w.client` is the `*vim25.Client`, this traffic **does** go through the 
 
 Bodies bound to session-scoped MoRefs, i.e. re-login-but-do-not-replay:
 
-`WaitForUpdatesExBody`, `WaitForUpdatesBody`, `CancelWaitForUpdatesBody`, `CreateFilterBody`, `DestroyPropertyCollectorBody`, `DestroyViewBody`, `ModifyListViewBody`.
+`WaitForUpdatesExBody`, `WaitForUpdatesBody`, `CancelWaitForUpdatesBody`, `CreateFilterBody`, `DestroyPropertyFilterBody`, `DestroyPropertyCollectorBody`, `DestroyViewBody`, `ModifyListViewBody`.
 
 Creation calls (`CreatePropertyCollectorBody`, `CreateContainerViewBody`, `CreateListViewBody`) are safe to replay — they build fresh state on the new session.
 
@@ -98,7 +98,7 @@ Both arrangements require the handler to be **in the chain before the first logi
 
 ## 8. Gaps in the reference implementation this plan closes
 
-Numbered as in `vc-client-retry-login.md` §10:
+Numbered as in `reference-wcpsvc-retry-login.md` §10:
 
 1. **No serialization around `Login`** — N faulting goroutines produce N logins and N VC sessions. Closed here with a mutex plus a session generation counter, so late arrivals observe that someone already re-logged in and skip straight to the replay.
 2. **Login errors discarded** in favour of the original fault. Closed with `errors.Join`.

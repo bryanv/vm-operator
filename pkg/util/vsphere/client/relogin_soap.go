@@ -125,6 +125,7 @@ func classifyReloginAction(
 		*methods.WaitForUpdatesBody,
 		*methods.CancelWaitForUpdatesBody,
 		*methods.CreateFilterBody,
+		*methods.DestroyPropertyFilterBody,
 		*methods.DestroyPropertyCollectorBody,
 		*methods.DestroyViewBody,
 		*methods.ModifyListViewBody:

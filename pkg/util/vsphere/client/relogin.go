@@ -12,6 +12,8 @@ import (
 
 	"github.com/vmware/govmomi/session"
 	"github.com/vmware/govmomi/vapi/rest"
+	"github.com/vmware/govmomi/vim25/methods"
+	"github.com/vmware/govmomi/vim25/soap"
 
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
 )
@@ -140,6 +142,34 @@ func (k *sessionKeeper) reloginREST(
 	}
 	k.genREST.Add(1)
 	return nil
+}
+
+// soapKeepAlive returns the send func for the SOAP keepalive handler in
+// inline mode. It pings the session through the re-login wrapper rt, so a
+// dead session heals with no application traffic.
+//
+// Only a persistent credential failure returns an error: govmomi's keepalive
+// handler stops its goroutine permanently the first time send returns an
+// error, and a transport hiccup or a transient re-login failure is not worth
+// killing the ticker over. This mirrors the legacy SoapKeepAliveHandlerFn,
+// which tolerates non-auth errors and fails only on an invalid login.
+func (k *sessionKeeper) soapKeepAlive(rt soap.RoundTripper) func() error {
+	return func() error {
+		ctx := context.Background()
+		_, err := methods.GetCurrentTime(ctx, rt)
+		if err == nil {
+			return nil
+		}
+		if IsNotAuthenticatedError(err) && IsInvalidLogin(err) {
+			// The re-login inside the wrapper failed with invalid
+			// credentials. Let the handler stop its goroutine, as the
+			// legacy SoapKeepAliveHandlerFn does.
+			return err
+		}
+		pkglog.FromContextOrDefault(ctx).WithName("vcSessionRelogin").
+			Error(err, "Error in vim25 client's keepalive handler")
+		return nil
+	}
 }
 
 // restKeepAlive is the send func for the REST keepalive handler in inline

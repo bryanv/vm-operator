@@ -99,15 +99,33 @@ func isSessionPath(path string) bool {
 }
 
 // replayBody returns a func that produces a fresh body for a replayed request,
-// or nil when the body cannot be safely repeated. A request with no body, or
-// one built from a *bytes.Buffer -- which http.NewRequest equips with GetBody,
-// and which rest.Resource.Request produces via encode -- replays cleanly. A
-// streaming body, e.g. rest.Client.Upload of a content-library item, must not
-// be buffered into memory and is not retried.
+// or nil when the body cannot be safely repeated. The ordered rule:
+//
+//  1. GetBody != nil means the body is repeatable via GetBody; http.NewRequest
+//     populates it for the *bytes.Buffer that rest.Resource.Request's encode
+//     builds for JSON POST/PATCH/PUT bodies.
+//
+//  2. A provably empty body -- nil, http.NoBody, or ContentLength == 0 --
+//     replays as http.NoBody.
+//
+//  3. GET, HEAD, OPTIONS and DELETE replay with http.NoBody: govmomi's
+//     vapi/rest only ever puts the empty io.MultiReader() body on these verbs
+//     -- req.Body is a non-nil NopCloser with GetBody == nil -- and servers
+//     ignore request bodies on them, so dropping it on replay is semantically
+//     lossless. Without this rule a plain REST GET whose body arrived with a
+//     non-zero ContentLength would 401 unretried.
+//
+//  4. Anything else -- a streaming POST/PATCH/PUT with ContentLength > 0,
+//     i.e. rest.Client.Upload of a content-library item via soap.Client.Upload
+//     -- is not replayable. The body must not be buffered into memory, and the
+//     request is not retried.
+//
+// Note on action-style POSTs (?~action=): rest.Resource.Request gives them the
+// same empty io.MultiReader body with ContentLength == 0, so rule 2 replays
+// them. Only a streaming action POST with ContentLength > 0 falls to rule 4,
+// which is the desired upload behavior.
 func replayBody(req *http.Request) func() io.ReadCloser {
 	switch {
-	case req.Body == nil || req.Body == http.NoBody:
-		return func() io.ReadCloser { return req.Body }
 	case req.GetBody != nil:
 		return func() io.ReadCloser {
 			b, err := req.GetBody()
@@ -116,6 +134,15 @@ func replayBody(req *http.Request) func() io.ReadCloser {
 			}
 			return b
 		}
+	case req.Body == nil ||
+		req.Body == http.NoBody ||
+		req.ContentLength == 0:
+		return func() io.ReadCloser { return http.NoBody }
+	case req.Method == http.MethodGet ||
+		req.Method == http.MethodHead ||
+		req.Method == http.MethodOptions ||
+		req.Method == http.MethodDelete:
+		return func() io.ReadCloser { return http.NoBody }
 	}
 	return nil
 }

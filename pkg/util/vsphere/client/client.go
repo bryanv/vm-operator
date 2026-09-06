@@ -47,10 +47,6 @@ type Client struct {
 	sessionManager *session.Manager
 	config         Config
 
-	// reloginKeeper is non-nil only when inline re-login is enabled; it is
-	// shared by the vim25, REST and PBM re-login wrappers.
-	reloginKeeper *sessionKeeper
-
 	finder     *find.Finder
 	datacenter *object.Datacenter
 }
@@ -72,19 +68,9 @@ func NewClient(ctx context.Context, config Config) (*Client, error) {
 		return nil, err
 	}
 
-	pbmClient, err := pbm.NewClient(ctx, vimClient)
+	pbmClient, err := NewPbmClient(ctx, vimClient)
 	if err != nil {
 		return nil, err
-	}
-
-	if config.InlineReloginEnabled {
-		// pbmClient.Client is the derived raw *soap.Client and
-		// pbm.Client.RoundTrip dispatches through the RoundTripper field,
-		// so this is the correct injection point. Replay works because
-		// pbm.NewClient sets sc.Cookie to a method value that reads the
-		// vim25 client's cookie jar live on every request, so once the
-		// vim25 session is refreshed the replay carries the new cookie.
-		pbmClient.RoundTripper = newReloginSOAP(pbmClient.Client, keeper)
 	}
 
 	return &Client{
@@ -95,7 +81,6 @@ func NewClient(ctx context.Context, config Config) (*Client, error) {
 		pbmClient:      pbmClient,
 		sessionManager: sm,
 		config:         config,
-		reloginKeeper:  keeper,
 	}, nil
 }
 
@@ -188,9 +173,11 @@ func newRestClient(
 	// is keeper-aware: rest.Client.Session swallows a 401 and returns
 	// (nil, nil), which the wrapper never sees a failure to act on, so the
 	// probe must heal the session itself.
-	send := RestKeepAliveHandlerFn(ctx, restClient, userInfo)
+	var send func() error
 	if keeper != nil {
 		send = keeper.restKeepAlive
+	} else {
+		send = RestKeepAliveHandlerFn(ctx, restClient, userInfo)
 	}
 	restClient.Transport = keepalive.NewHandlerREST(
 		restClient,
@@ -255,12 +242,15 @@ func NewVimClient(
 		// transient ping errors so the ticker survives them. The chain is
 		// installed before the first login because the keepalive ticker is
 		// started only by a login body traversing the handler.
-		keeper := newSessionKeeper(sm, userInfo)
+		keeper := newSessionKeeper(ctx, sm, userInfo)
 		rt := newReloginSOAP(soapClient, keeper)
-		vimClient.RoundTripper = keepalive.NewHandlerSOAP(
-			rt,
-			keepAliveIdleTime,
-			keeper.soapKeepAlive(rt))
+		vimClient.RoundTripper = &keeperRoundTripper{
+			RoundTripper: keepalive.NewHandlerSOAP(
+				rt,
+				keepAliveIdleTime,
+				keeper.soapKeepAlive(rt)),
+			keeper: keeper,
+		}
 
 		// Initial login. This will also start the keepalive.
 		if err = sm.Login(ctx, userInfo); err != nil {
@@ -336,29 +326,43 @@ func (c *Client) PbmClient() *pbm.Client {
 	return c.pbmClient
 }
 
-// NewPbmClient returns a new PBM client that shares this client's vCenter
-// session, including its inline re-login behavior when enabled. Ad-hoc PBM
-// clients must be built through this constructor so they do not silently miss
-// the inline re-login wrapper.
-func (c *Client) NewPbmClient(
-	ctx context.Context) (*pbm.Client, error) {
+// NewPbmClient returns a new PBM client that shares the given vim25 client's
+// vCenter session, including its inline re-login behavior when that session
+// has it. Build every ad-hoc PBM client through this constructor rather than
+// pbm.NewClient, so none of them silently misses the inline re-login wrapper.
+//
+// Whether the wrapper applies is read off vimClient itself, so a caller that
+// only has a *vim25.Client -- a vmconfig.Reconciler, say -- needs nothing
+// handed down to it and cannot be given a keeper belonging to some other
+// session.
+func NewPbmClient(
+	ctx context.Context,
+	vimClient *vim25.Client) (*pbm.Client, error) {
 
-	pbmClient, err := pbm.NewClient(ctx, c.vimClient)
+	pbmClient, err := pbm.NewClient(ctx, vimClient)
 	if err != nil {
 		return nil, err
 	}
 
-	if c.config.InlineReloginEnabled {
+	if keeper := keeperFromVimClient(vimClient); keeper != nil {
 		// pbmClient.Client is the derived raw *soap.Client and
 		// pbm.Client.RoundTrip dispatches through the RoundTripper field,
 		// so this is the correct injection point. Replay works because
 		// pbm.NewClient sets the SOAP cookie to a method value that reads
 		// the vim25 client's cookie jar live on every request, so once the
 		// vim25 session is refreshed the replay carries the new cookie.
-		pbmClient.RoundTripper = newReloginSOAP(pbmClient.Client, c.reloginKeeper)
+		pbmClient.RoundTripper = newReloginSOAP(pbmClient.Client, keeper)
 	}
 
 	return pbmClient, nil
+}
+
+// NewPbmClient returns a new PBM client that shares this client's vCenter
+// session, including its inline re-login behavior when enabled.
+func (c *Client) NewPbmClient(
+	ctx context.Context) (*pbm.Client, error) {
+
+	return NewPbmClient(ctx, c.vimClient)
 }
 
 func (c *Client) RestClient() *rest.Client {

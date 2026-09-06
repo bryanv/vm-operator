@@ -77,8 +77,10 @@ pbmClient.RoundTripper  = <raw derived soap.Client>   // no wrapper at all
 With the flag on — arrangement **B**, keepalive outermost, per [`research.md`](./research.md) §6:
 
 ```
-vimClient.RoundTripper  = keepalive.NewHandlerSOAP(reloginSOAP(soapClient, keeper), 5m,
-                          keeper.soapKeepAlive(<the same reloginSOAP wrapper>))
+vimClient.RoundTripper  = keeperRoundTripper{                 // makes the keeper
+    keepalive.NewHandlerSOAP(reloginSOAP(soapClient, keeper), 5m,   // discoverable
+                             keeper.soapKeepAlive(<the same reloginSOAP wrapper>)),
+    keeper}
 pbmClient.RoundTripper  = reloginSOAP(pbmClient.Client, keeper)
 restClient.Transport    = keepalive.NewHandlerREST(restClient, 5m, keeper.restKeepAlive)
                           // where restClient.Transport was first set to
@@ -91,8 +93,9 @@ Three things this ordering buys, and one it demands:
 - The re-login wrapper wraps the **raw** `soap.Client`, never `vimClient.RoundTripper` — wrapping the latter is an infinite loop.
 - `session.Manager.Login` re-enters at the **top** of the chain (it holds the `*vim25.Client`), so the login body traverses the keepalive handler and (re)starts the ticker. That is desirable, and it is also the recursion hazard the deny-list below closes.
 - **Demanded**: the handler must be installed before the first login, or the ticker never starts.
+- `keeperRoundTripper` is a pass-through link whose only job is to make the keeper reachable from the `*vim25.Client` — see §5.
 
-REST needs its own `send` because `rest.Client.Session()` swallows a 401 and returns `(nil, nil)` — the wrapper never sees a failure to act on. `keeper.restKeepAlive` is today's `RestKeepAliveHandlerFn` routed through the shared mutex. SOAP needs its own `send` for the mirror reason: with a `nil` send, govmomi's default `keepAliveSOAP` returns any error from the ping, and the keepalive handler stops its goroutine permanently on the first error — so a transient transport hiccup would silently kill the keepalive. `keeper.soapKeepAlive` mirrors the legacy `SoapKeepAliveHandlerFn` tolerance instead.
+REST needs its own `send` because `rest.Client.Session()` swallows a 401 and returns `(nil, nil)` — the wrapper never sees a failure to act on. `keeper.restKeepAlive` is today's `RestKeepAliveHandlerFn` routed through the shared mutex, with the same tolerance as the SOAP send: it returns an error only when the login itself is answered `401` (`rest.IsStatusError`, the REST equivalent of `InvalidLogin`), and logs-and-continues on a transport hiccup or a transient re-login failure, so a vCenter that is answering but not yet fully up cannot kill the ticker for the life of the process. SOAP needs its own `send` for the mirror reason: with a `nil` send, govmomi's default `keepAliveSOAP` returns any error from the ping, and the keepalive handler stops its goroutine permanently on the first error — so a transient transport hiccup would silently kill the keepalive. `keeper.soapKeepAlive` mirrors the legacy `SoapKeepAliveHandlerFn` tolerance instead.
 
 ### 2. The session keeper
 
@@ -178,12 +181,15 @@ func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
     gen := r.keeper.genREST()
 
     res, err := r.rt.RoundTrip(req)
-    if err != nil || res.StatusCode != http.StatusUnauthorized || replay == nil {
+    if err != nil || res.StatusCode != http.StatusUnauthorized {
         return res, err
     }
-    drain(res)                           // read + close so the conn is reusable
+    drain(res)                           // read + close, then restore the body
     if lerr := r.keeper.reloginREST(req.Context(), gen); lerr != nil {
         return res, nil                  // surface the original 401
+    }
+    if replay == nil {
+        return res, nil                  // healed, but this one is not retried
     }
     req2 := req.Clone(req.Context())
     req2.Body = replay()
@@ -195,18 +201,22 @@ func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
 - `restSessionHeader = "vmware-api-session-id"` and the session path `"/rest/com/vmware/cis/session"` are **redeclared locally** — `github.com/vmware/govmomi/vapi/internal` is not importable from this repo. Comment each constant with its govmomi source.
 - The header rewrite is not optional: `rest.Client.Do` stamps the *old* session id before the transport sees the request.
 - `replayBody` implements an ordered rule and returns non-nil only when the body is safely repeatable: `req.GetBody != nil` (which `http.NewRequest` populates for the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()`); else a provably empty body (`req.Body == nil`, `http.NoBody`, or `ContentLength == 0`) replayed as `http.NoBody`; else `GET`/`HEAD`/`OPTIONS`/`DELETE` replayed as `http.NoBody` (govmomi's vapi/rest only ever puts the empty `io.MultiReader()` body on those verbs — `GetBody == nil` — and servers ignore bodies on them), with the stale `ContentLength` zeroed on any `http.NoBody` replay; else nil — streaming bodies with `ContentLength > 0` (`rest.Client.Upload`) are never buffered into memory and never retried. Action-style POSTs (`?~action=`) carry the empty MultiReader body with `ContentLength == 0`, so rule 2 replays them; only a streaming action POST with `ContentLength > 0` is excluded, which is the desired upload behavior.
+- **The re-login is decided before the replay is.** A request whose body cannot be repeated still re-authenticates; only its own 401 is surfaced unretried. Skipping the re-login there would leave the session dead until some later call happened to fault with a replayable body or the keepalive ticked — the latency this feature exists to remove.
+- **Draining restores the body.** `res` is handed back to the caller on every path that does not replay, so `drain` re-installs an equivalent reader over the bytes it read rather than leaving a consumed, closed body behind.
 - `http.RoundTripper`'s contract forbids mutating the request; hence `Clone`.
 - Path matching, not method matching, is what keeps login/logout/probe out of the retry — all three share the path.
 
 ### 5. Ad-hoc PBM clients
 
-Three call sites build a PBM client directly off the vim25 client and would silently miss the wrapper ([`research.md`](./research.md) §3). Add `func (c *Client) NewPbmClient(ctx) (*pbm.Client, error)` that constructs and wraps consistently, and route those three through it. In legacy mode it returns an unwrapped client, exactly as today.
+Three call sites build a PBM client directly off the vim25 client and would silently miss the wrapper ([`research.md`](./research.md) §3). Add a **package-level** `func NewPbmClient(ctx, vimClient *vim25.Client) (*pbm.Client, error)` that constructs and wraps consistently, and route those three through it. In legacy mode it returns an unwrapped client, exactly as today. `(*Client).NewPbmClient(ctx)` remains as a one-line convenience for callers that hold the `*Client`.
+
+Whether to wrap is read **off `vimClient` itself**, via `keeperFromVimClient`, which type-asserts the `keeperRoundTripper` at the top of the chain. That matters because one of the three sites — the unmanaged-volumes `vmconfig.Reconciler` — only ever receives a `*vim25.Client`; its interface gives it nothing else. Threading a `*client.Client` down to it instead would mean six extra parameters, a reconciler field, and a pointer-equality guard whose failure silently returns an unwrapped client. Reading the keeper from the client the PBM client is *derived from* cannot name the wrong session and has no fallback branch to get wrong.
 
 ## Controller / webhook impact
 
 - **Controllers**: none directly. `controllers/virtualmachineimagecache` consumes `c.RestClient()` and benefits transparently.
 - **Services**: `services/vm-watcher` keeps its `IsNotAuthenticatedError` / `IsInvalidLogin` restart loop unchanged — with this change it fires on a session that has *already* been re-authenticated, so the restart succeeds on the first try instead of racing the keepalive.
-- **Provider**: `pkg/providers/vsphere/client.NewClient` reads `pkgcfg.FromContext(ctx).Features.VCSessionInlineRelogin` and sets it on `client.Config`. Deliberately **not** read inside `pkg/util/vsphere/client` — that package must stay usable from contexts without a `pkgcfg` (its own `client_test.go` uses a bare `context.Background()`, which `pkgcfg.FromContext` would panic on).
+- **Provider**: `pkg/providers/vsphere/client.NewClient` reads `pkgcfg.FromContext(ctx).Features.VCSessionInlineRelogin` and sets it on `client.Config`. This is the only production site that reads the feature state, so it carries its own vcsim-backed spec asserting both directions; the mode-parameterized suites elsewhere set `client.Config.InlineReloginEnabled` directly and would not catch its loss. Deliberately **not** read inside `pkg/util/vsphere/client` — that package must stay usable from contexts without a `pkgcfg` (its own `client_test.go` uses a bare `context.Background()`, which `pkgcfg.FromContext` would panic on).
 - **Watcher**: `watcher.Start` wraps its goroutine ctx with `client.WithNoReplay`.
 - **New RBAC**: none.
 

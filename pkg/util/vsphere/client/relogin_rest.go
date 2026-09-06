@@ -5,6 +5,7 @@
 package client
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 )
@@ -41,11 +42,13 @@ func newReloginREST(
 	}
 }
 
-// RoundTrip implements http.RoundTripper. On a 401 for a request with a
-// safely repeatable body, it re-authenticates the session and replays the
-// request exactly once with a rewritten vmware-api-session-id header. Requests
-// to the session path -- login, logout and the session probe -- are never
-// retried, which is the re-entrancy guard.
+// RoundTrip implements http.RoundTripper. On a 401 it re-authenticates the
+// session and, when the request has a safely repeatable body, replays it
+// exactly once with a rewritten vmware-api-session-id header. A request whose
+// body cannot be repeated still triggers the re-login, so the session is
+// healed for the next caller; only its own 401 is surfaced unretried.
+// Requests to the session path -- login, logout and the session probe -- are
+// never retried, which is the re-entrancy guard.
 func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Exclude the session path first, before anything else. This preserves
 	// rest.Client.Session's documented contract of returning (nil, nil) on
@@ -56,7 +59,7 @@ func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	// Decide repeatability before the first attempt. replayBody returns nil
 	// when the body cannot be re-read, in which case a 401 is surfaced to
-	// the caller instead of being retried.
+	// the caller instead of being retried. The re-login below still runs.
 	replay := replayBody(req)
 
 	// Read the generation before the first attempt, not after the 401: a
@@ -65,17 +68,29 @@ func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
 	gen := r.keeper.restGeneration()
 
 	res, err := r.rt.RoundTrip(req)
-	if err != nil || res.StatusCode != http.StatusUnauthorized || replay == nil {
+	if err != nil || res.StatusCode != http.StatusUnauthorized {
 		return res, err
 	}
 
-	// Drain and close the 401 response so the connection is reusable.
+	// Drain and close the 401 response so the connection is reusable. The
+	// body is restored from the drained bytes because res is handed back
+	// to the caller on every path below that does not replay.
 	drainResponse(res)
 
+	// Re-login before considering the replay, so that a request whose body
+	// cannot be repeated -- a streaming upload, say -- still heals the
+	// session instead of leaving it dead until another call happens to
+	// fault with a replayable body or the keepalive ticks.
 	trigger := req.Method + " " + req.URL.Path
 	if lerr := r.keeper.reloginREST(req.Context(), gen, trigger); lerr != nil {
 		// Re-login failed. Surface the original 401; there is nothing
 		// better to return.
+		return res, nil
+	}
+
+	if replay == nil {
+		// The body cannot be safely repeated, so this request is not
+		// retried. The session is authenticated again for the next caller.
 		return res, nil
 	}
 
@@ -94,7 +109,7 @@ func (r *reloginREST) RoundTrip(req *http.Request) (*http.Response, error) {
 		// ContentLength from the original request must go with it.
 		req2.ContentLength = 0
 	}
-	req2.Header.Set(restSessionHeader, r.keeper.rest.SessionID())
+	req2.Header.Set(restSessionHeader, r.keeper.restClient().SessionID())
 	return r.rt.RoundTrip(req2)
 }
 
@@ -153,10 +168,16 @@ func replayBody(req *http.Request) func() io.ReadCloser {
 }
 
 // drainResponse reads and closes the response body so the underlying
-// connection can be reused.
+// connection can be reused, then replaces it with an equivalent reader over
+// the bytes just read. Restoring the body matters because the caller may be
+// handed this response when the request is not replayed, and a consumed,
+// closed body would give it no error detail to report.
 func drainResponse(res *http.Response) {
-	if res.Body != nil {
-		_, _ = io.Copy(io.Discard, res.Body)
-		_ = res.Body.Close()
+	if res.Body == nil {
+		return
 	}
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, res.Body)
+	_ = res.Body.Close()
+	res.Body = io.NopCloser(bytes.NewReader(buf.Bytes()))
 }

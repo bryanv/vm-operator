@@ -79,6 +79,7 @@ No behavior change. At the end of this phase the feature state exists and is rea
     InlineReloginEnabled bool
     ```
   - `test/builder/vcsim_test_context.go` around line 783: the `pkgclient.Config{...}` literal gains `InlineReloginEnabled: false,` so tests can flip it per-suite.
+  - Add `pkg/providers/vsphere/client/client_test.go` (plus its `client_suite_test.go`) once T017 wires the feature state: a vcsim-backed spec asserting `c.Client.Config().InlineReloginEnabled` in both directions. This is the only production read of the feature state, and every other suite sets `client.Config.InlineReloginEnabled` directly, so nothing else would catch its loss.
   - **Verify**: `go build ./... && go vet ./pkg/util/vsphere/client/...`
 
 ---
@@ -106,8 +107,8 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
 
   Methods:
 
-  - `func newSessionKeeper(sm *session.Manager, userInfo *url.Userinfo) *sessionKeeper`
-  - `func (k *sessionKeeper) setRestClient(c *rest.Client)`
+  - `func newSessionKeeper(ctx context.Context, sm *session.Manager, userInfo *url.Userinfo) *sessionKeeper` — capture `log: pkglog.FromContextOrDefault(ctx)` here. The keepalive send funcs run on a background context and would otherwise log through the global default sink instead of the manager's logger.
+  - `func (k *sessionKeeper) setRestClient(c *rest.Client)` / `func (k *sessionKeeper) restClient() *rest.Client` — both under `muREST`. Read the field directly only where the lock is already held.
   - `func (k *sessionKeeper) soapGeneration() uint64` / `restGeneration() uint64` — plain `Load()`.
   - `func (k *sessionKeeper) reloginSOAP(ctx context.Context, gen uint64) error`
   - `func (k *sessionKeeper) reloginREST(ctx context.Context, gen uint64) error`
@@ -137,16 +138,24 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
   `restKeepAlive` is the `send` func for `keepalive.NewHandlerREST`. It probes and heals, because `rest.Client.Session` swallows a 401 and returns `(nil, nil)` — the wrapper never sees a failure to act on:
 
   ```go
-  ctx := context.Background()
+  ctx := k.backgroundContext() // context.Background() + the captured logger
   gen := k.restGeneration()
-  s, err := k.rest.Session(ctx)
+  s, err := k.restClient().Session(ctx)
   if err != nil {
       return nil // Transport hiccup; do not kill the ticker.
   }
   if s != nil {
       return nil
   }
-  return k.reloginREST(ctx, gen)
+  if err := k.reloginREST(ctx, gen); err != nil {
+      if rest.IsStatusError(err, http.StatusUnauthorized) {
+          return err // Invalid credentials; let the handler stop.
+      }
+      k.log.WithName("vcSessionRelogin").
+          Error(err, "Error in rest client's keepalive handler")
+      return nil
+  }
+  return nil
   ```
 
   Also in this file, the context opt-out:
@@ -164,7 +173,7 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
   func isNoReplay(ctx context.Context) bool
   ```
 
-  **Do not** return an error from `restKeepAlive` for a transport failure — govmomi's handler calls `Stop()` and the goroutine exits permanently on any error (`session/keepalive/handler.go`).
+  **Do not** return an error from `restKeepAlive` for a transport failure *or a transient re-login failure* — govmomi's handler calls `Stop()` and the goroutine exits permanently on any error (`session/keepalive/handler.go`). Only a `401` on the login itself is persistent. Note `rest.Client.Login` fails with govmomi's `*statusError`, not a vim `InvalidLogin` fault, so `IsInvalidLogin` would never match here; use `rest.IsStatusError(err, http.StatusUnauthorized)`.
 
   **Verify**: `go build ./pkg/util/vsphere/client/...`
 
@@ -260,15 +269,20 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
   Replace the single `vimClient.RoundTripper = keepalive.NewHandlerSOAP(...)` assignment with a branch on `config.InlineReloginEnabled`. The inline arm:
 
   ```go
-  keeper := newSessionKeeper(sm, userInfo)
+  keeper := newSessionKeeper(ctx, sm, userInfo)
   rt := newReloginSOAP(soapClient, keeper)
-  vimClient.RoundTripper = keepalive.NewHandlerSOAP(
-      rt,
-      keepAliveIdleTime,
-      keeper.soapKeepAlive(rt))
+  vimClient.RoundTripper = &keeperRoundTripper{
+      RoundTripper: keepalive.NewHandlerSOAP(
+          rt,
+          keepAliveIdleTime,
+          keeper.soapKeepAlive(rt)),
+      keeper: keeper,
+  }
   ```
 
-  Four things this ordering depends on. Changing any of them breaks recovery silently:
+  `keeperRoundTripper` forwards every request untouched; it exists so `keeperFromVimClient` can find the keeper from the `*vim25.Client` alone (T009). Keep it outermost — that is where the lookup reads it.
+
+  Five things this ordering depends on. Changing any of them breaks recovery silently:
 
   - The re-login wrapper wraps **`soapClient`**, the raw `*soap.Client` — never `vimClient.RoundTripper`, which would be an infinite loop.
   - The keepalive handler is **outermost**, so its ping travels through the wrapper and a dead session heals with no application traffic (`research.md` §6, arrangement B).
@@ -281,34 +295,40 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
 
   **Verify**: `go build ./... && go test ./pkg/util/vsphere/client/...` — the existing keepalive specs must still pass, since the default is `InlineReloginEnabled: false`.
 
-- [ ] **T009** Wrap PBM, and add a constructor for ad-hoc PBM clients.
+- [ ] **T009** Add the PBM constructor, and make the keeper discoverable.
 
-  In `NewClient` (`pkg/util/vsphere/client/client.go`), after `pbm.NewClient`:
+  In `relogin.go`, alongside the `keeperRoundTripper` from T008:
 
   ```go
-  if config.InlineReloginEnabled {
-      pbmClient.RoundTripper = newReloginSOAP(pbmClient.Client, keeper)
-  }
+  // keeperFromVimClient returns the session keeper driving the given vim25
+  // client's session, or nil when that client is in legacy keepalive mode.
+  func keeperFromVimClient(c *vim25.Client) *sessionKeeper
   ```
+
+  It type-asserts `c.RoundTripper` to `*keeperRoundTripper` and returns that link's keeper. In `client.go`:
+
+  ```go
+  // NewPbmClient returns a new PBM client that shares the given vim25
+  // client's vCenter session, including its inline re-login behavior when
+  // that session has it.
+  func NewPbmClient(ctx context.Context, vimClient *vim25.Client) (*pbm.Client, error)
+
+  // Convenience for callers holding the *Client; one line, delegates.
+  func (c *Client) NewPbmClient(ctx context.Context) (*pbm.Client, error)
+  ```
+
+  The package-level form wraps when `keeperFromVimClient(vimClient) != nil`. Use it inside `NewClient` too, replacing the inline `pbm.NewClient` + `if config.InlineReloginEnabled` block, so there is exactly one construction path.
 
   `pbmClient.Client` is the derived raw `*soap.Client`; `pbm.Client.RoundTrip` dispatches through the `RoundTripper` field, so this is the correct injection point. Replay works because `pbm.NewClient` sets `sc.Cookie = c.SessionCookie`, a method value that reads the vim25 client's cookie jar **live** on every request — so once the vim25 session is refreshed the replay carries the new cookie (`research.md` §3).
 
-  Then add:
-
-  ```go
-  // NewPbmClient returns a new PBM client that shares this client's vCenter
-  // session, including its inline re-login behavior when enabled.
-  func (c *Client) NewPbmClient(ctx context.Context) (*pbm.Client, error)
-  ```
+  **Why the lookup and not a parameter**: see `plan.md` §5. Do **not** thread a `*client.Client` down to callers that only have a `*vim25.Client` — that costs six signature changes and a pointer-equality guard that silently returns an unwrapped client when it misses.
 
   **Verify**: `go build ./pkg/util/vsphere/client/...`
 
 - [ ] **T010** `[P]` Route the ad-hoc PBM constructions through `NewPbmClient`.
-  - `pkg/providers/vsphere/vmprovider_vm.go:733`
-  - `pkg/providers/vsphere/storage/provisioning.go:70`
-  - `pkg/vmconfig/volumes/unmanaged/register/unmanagedvolumes_register.go:351`
-
-  Each currently calls `pbm.NewClient(ctx, <vim25 client>)`. Where a `*client.Client` is in scope, call `NewPbmClient` on it. Where only a `*vim25.Client` is in scope (check each site), thread the `*client.Client` through instead of adding a second construction path.
+  - `pkg/providers/vsphere/vmprovider_vm.go:733` — `*client.Client` in scope; use the method.
+  - `pkg/providers/vsphere/storage/provisioning.go:70` — `*client.Client` in scope; use the method.
+  - `pkg/vmconfig/volumes/unmanaged/register/unmanagedvolumes_register.go:351` — only a `*vim25.Client` (the `vmconfig.Reconciler` interface gives it nothing else); use the package-level `pkgclient.NewPbmClient(ctx, vimClient)`. Nothing else in the file or its callers changes.
 
   **Verify**: `go build ./... && go test ./pkg/providers/... ./pkg/vmconfig/...`
 
@@ -385,8 +405,8 @@ The shared object all three wrappers depend on. Nothing wires it up yet.
   1. **Exclude the session path first**, before anything else. That is the re-entrancy guard, and it also preserves `rest.Client.Session`'s documented `(nil, nil)`-on-401 contract.
   2. **Rewrite the header on the replay.** `rest.Client.Do` stamps the *old* session id before the transport sees the request; without `req2.Header.Set(restSessionHeader, k.rest.SessionID())` the replay fails identically.
   3. **Clone the request.** `http.RoundTripper`'s contract forbids mutating the one you were given.
-  4. **Drain and close the 401 response body** before replaying, so the connection can be reused.
-  5. **Only replay a safely repeatable body.** `replayBody` implements an ordered rule and returns non-nil only then: `req.GetBody != nil` — the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()` for JSON POST/PATCH/PUT; else a provably empty body (`req.Body == nil`, `http.NoBody`, or `ContentLength == 0`) replayed as `http.NoBody` — this covers the empty `io.MultiReader()` body (`GetBody == nil`, `ContentLength == 0`) that `rest.Resource.Request` puts on no-body requests, including action POSTs; else GET/HEAD/OPTIONS/DELETE replayed as `http.NoBody`, because servers ignore bodies on these verbs; else nil, so streaming POST/PATCH/PUT with `ContentLength > 0` — `rest.Client.Upload` of a content-library item — is neither buffered into memory nor retried.
+  4. **Drain the 401 response body** before replaying, so the connection can be reused — and restore it with a reader over the drained bytes, because `res` is returned to the caller on every path that does not replay.
+  5. **Only replay a safely repeatable body.** `replayBody` implements an ordered rule and returns non-nil only then: `req.GetBody != nil` — the `*bytes.Buffer` that `rest.Resource.Request` produces via `encode()` for JSON POST/PATCH/PUT; else a provably empty body (`req.Body == nil`, `http.NoBody`, or `ContentLength == 0`) replayed as `http.NoBody` — this covers the empty `io.MultiReader()` body (`GetBody == nil`, `ContentLength == 0`) that `rest.Resource.Request` puts on no-body requests, including action POSTs; else GET/HEAD/OPTIONS/DELETE replayed as `http.NoBody`, because servers ignore bodies on these verbs; else nil, so streaming POST/PATCH/PUT with `ContentLength > 0` — `rest.Client.Upload` of a content-library item — is neither buffered into memory nor retried. Decide the replay **after** the re-login, not before: a body that cannot be repeated must still heal the session, or an upload-only workload stays 401'ing until the keepalive ticks.
 
   **Verify**: `go build ./pkg/util/vsphere/client/... && make lint-go`
 

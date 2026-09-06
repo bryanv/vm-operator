@@ -23,9 +23,9 @@ import (
 
 	backupapi "github.com/vmware-tanzu/vm-operator/pkg/backup/api"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
-	pkgclient "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/client"
 	pkgnil "github.com/vmware-tanzu/vm-operator/pkg/util/nil"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
+	pkgclient "github.com/vmware-tanzu/vm-operator/pkg/util/vsphere/client"
 )
 
 const (

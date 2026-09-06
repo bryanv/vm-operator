@@ -6,12 +6,15 @@ package client
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"sync"
 	"sync/atomic"
 
+	"github.com/go-logr/logr"
 	"github.com/vmware/govmomi/session"
 	"github.com/vmware/govmomi/vapi/rest"
+	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/methods"
 	"github.com/vmware/govmomi/vim25/soap"
 
@@ -47,8 +50,16 @@ func isNoReplay(ctx context.Context) bool {
 // sessions with separate lifetimes.
 type sessionKeeper struct {
 	sm       *session.Manager
-	rest     *rest.Client // set after the REST client is built.
 	userInfo *url.Userinfo
+
+	// log is captured at construction so the keepalive send funcs, which
+	// run on a background context with no logger of their own, still log
+	// through the manager's logger rather than the global default.
+	log logr.Logger
+
+	// rest is set after the REST client is built. Read it with restClient,
+	// never directly: muREST is what makes attaching it safe.
+	rest *rest.Client
 
 	muSOAP  sync.Mutex
 	genSOAP atomic.Uint64
@@ -58,13 +69,17 @@ type sessionKeeper struct {
 
 // newSessionKeeper returns a session keeper for the given session manager and
 // login credentials. The REST client is attached later, with setRestClient.
+// The logger is taken from ctx once, here, because the keepalive paths below
+// have no request context to carry one.
 func newSessionKeeper(
+	ctx context.Context,
 	sm *session.Manager,
 	userInfo *url.Userinfo) *sessionKeeper {
 
 	return &sessionKeeper{
 		sm:       sm,
 		userInfo: userInfo,
+		log:      pkglog.FromContextOrDefault(ctx),
 	}
 }
 
@@ -73,6 +88,16 @@ func (k *sessionKeeper) setRestClient(c *rest.Client) {
 	k.muREST.Lock()
 	defer k.muREST.Unlock()
 	k.rest = c
+}
+
+// restClient returns the attached REST client. Reads go through muREST, the
+// same lock setRestClient writes under, so attaching or replacing the client
+// after the keeper is live stays safe. Callers already holding muREST use the
+// field directly.
+func (k *sessionKeeper) restClient() *rest.Client {
+	k.muREST.Lock()
+	defer k.muREST.Unlock()
+	return k.rest
 }
 
 // soapGeneration returns the current SOAP session generation. Callers read it
@@ -144,6 +169,30 @@ func (k *sessionKeeper) reloginREST(
 	return nil
 }
 
+// keeperRoundTripper is the outermost link of the inline re-login chain. It
+// forwards every request untouched; its only job is to make the session
+// keeper reachable from the *vim25.Client it is installed on, so a derived
+// client -- PBM, say -- can find the keeper of the session it shares without
+// the owner having to hand it down through every intervening call.
+type keeperRoundTripper struct {
+	soap.RoundTripper
+	keeper *sessionKeeper
+}
+
+// keeperFromVimClient returns the session keeper driving the given vim25
+// client's session, or nil when that client is in legacy keepalive mode.
+// The answer comes from the client itself, so it cannot go stale or name the
+// keeper of some other session.
+func keeperFromVimClient(c *vim25.Client) *sessionKeeper {
+	if c == nil {
+		return nil
+	}
+	if rt, ok := c.RoundTripper.(*keeperRoundTripper); ok {
+		return rt.keeper
+	}
+	return nil
+}
+
 // soapKeepAlive returns the send func for the SOAP keepalive handler in
 // inline mode. It pings the session through the re-login wrapper rt, so a
 // dead session heals with no application traffic.
@@ -155,7 +204,7 @@ func (k *sessionKeeper) reloginREST(
 // which tolerates non-auth errors and fails only on an invalid login.
 func (k *sessionKeeper) soapKeepAlive(rt soap.RoundTripper) func() error {
 	return func() error {
-		ctx := context.Background()
+		ctx := k.backgroundContext()
 		_, err := methods.GetCurrentTime(ctx, rt)
 		if err == nil {
 			return nil
@@ -166,7 +215,7 @@ func (k *sessionKeeper) soapKeepAlive(rt soap.RoundTripper) func() error {
 			// legacy SoapKeepAliveHandlerFn does.
 			return err
 		}
-		pkglog.FromContextOrDefault(ctx).WithName("vcSessionRelogin").
+		k.log.WithName("vcSessionRelogin").
 			Error(err, "Error in vim25 client's keepalive handler")
 		return nil
 	}
@@ -175,15 +224,18 @@ func (k *sessionKeeper) soapKeepAlive(rt soap.RoundTripper) func() error {
 // restKeepAlive is the send func for the REST keepalive handler in inline
 // mode. It probes the session and re-authenticates when it is gone.
 //
-// A transport failure returns nil on purpose: govmomi's keepalive handler
-// stops its goroutine permanently the first time send returns an error, and a
-// transport hiccup is not worth killing the ticker over. A re-login failure is
-// returned, matching the behavior of the legacy RestKeepAliveHandlerFn.
+// Only a persistent credential failure returns an error, mirroring
+// soapKeepAlive above: govmomi's keepalive handler stops its goroutine
+// permanently the first time send returns an error, and neither a transport
+// hiccup nor a transient re-login failure -- vCenter answering but not yet
+// fully up after a vpxd restart, say -- is worth killing the ticker over. A
+// 401 on the login itself is the REST equivalent of an invalid login: the
+// credentials are wrong, not the moment.
 func (k *sessionKeeper) restKeepAlive() error {
-	ctx := context.Background()
+	ctx := k.backgroundContext()
 	gen := k.restGeneration()
 
-	s, err := k.rest.Session(ctx)
+	s, err := k.restClient().Session(ctx)
 	if err != nil {
 		// Transport hiccup; do not kill the ticker.
 		return nil
@@ -191,5 +243,24 @@ func (k *sessionKeeper) restKeepAlive() error {
 	if s != nil {
 		return nil
 	}
-	return k.reloginREST(ctx, gen, "keepalive")
+
+	if err := k.reloginREST(ctx, gen, "keepalive"); err != nil {
+		if rest.IsStatusError(err, http.StatusUnauthorized) {
+			// Invalid credentials. Let the handler stop its goroutine, as
+			// the legacy RestKeepAliveHandlerFn does.
+			return err
+		}
+		k.log.WithName("vcSessionRelogin").
+			Error(err, "Error in rest client's keepalive handler")
+		return nil
+	}
+	return nil
+}
+
+// backgroundContext returns the context the keepalive paths run on. The
+// keepalive ticker has no caller context, so the logger captured at
+// construction is attached here and the re-login helpers pick it up through
+// pkglog.FromContextOrDefault just as they do on an application call.
+func (k *sessionKeeper) backgroundContext() context.Context {
+	return logr.NewContext(context.Background(), k.log)
 }

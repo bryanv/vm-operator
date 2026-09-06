@@ -207,9 +207,12 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 	}
 
 	// assertManagerNotCrashLooped asserts the manager deployment's ready
-	// replicas and pod restart counts are unchanged from the baseline.
+	// replicas and pod restart counts stay unchanged from the baseline.
+	// Consistently, not Eventually: this is a stability claim, and
+	// Eventually would return on its first matching poll and never see a
+	// restart that happens a few seconds later.
 	assertManagerNotCrashLooped := func(baseline managerBaseline) {
-		Eventually(func(g Gomega) {
+		Consistently(func(g Gomega) {
 			current := managerBaselineOf()
 			g.Expect(current.restartCount).To(Equal(baseline.restartCount))
 			g.Expect(current.readyReplicas).To(Equal(baseline.readyReplicas))
@@ -272,12 +275,19 @@ func VCSessionRecoverySpec(ctx context.Context, inputGetter func() VCSessionReco
 			vm := &vmopv1.VirtualMachine{}
 			g.Expect(svClusterClient.Get(ctx, vmKey, vm)).To(Succeed())
 
-			if vm.Status.PowerState == vmopv1.VirtualMachinePowerStateOff {
-				return
+			// Request the change once. On later polls the spec already
+			// carries it and only the status is still catching up.
+			if vm.Spec.PowerState != vmopv1.VirtualMachinePowerStateOff {
+				vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+				g.Expect(svClusterClient.Update(ctx, vm)).To(Succeed())
 			}
 
-			vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
-			g.Expect(svClusterClient.Update(ctx, vm)).To(Succeed())
+			// Assert on the status, never on the update: the poll must not
+			// succeed until VM Operator has actually reached vCenter and
+			// reported the new power state back. Succeeding on the update
+			// alone would make the timing bound measure a Kubernetes write.
+			g.Expect(vm.Status.PowerState).To(
+				Equal(vmopv1.VirtualMachinePowerStateOff))
 		}, vcSessionRecoveryTimeout, 3*time.Second).Should(Succeed(),
 			"Timed out waiting for the VM %s power-state change to complete within %s",
 			vmKey.Name, vcSessionRecoveryTimeout)

@@ -218,7 +218,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 				spy := &spyRT{inner: c.RoundTripper}
 				c.RoundTripper = spy
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 
 				// vcsim rejects Login while a valid session cookie is
 				// attached, so terminate the session first.
@@ -243,7 +243,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 				spy := &spyRT{inner: c.RoundTripper}
 				c.RoundTripper = spy
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 
 				admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
 				terminateSession(ctx, sm, admin)
@@ -281,7 +281,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			spy := &spyRT{inner: c.RoundTripper}
 			c.RoundTripper = spy
 			sm := session.NewManager(c)
-			keeper := newSessionKeeper(
+			keeper := newSessionKeeper(ctx,
 				sm,
 				url.UserPassword(reloginSimUsername, reloginSimPassword))
 			Expect(sm.Login(ctx, url.UserPassword(reloginSimUsername, reloginSimPassword))).To(Succeed())
@@ -298,7 +298,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 		It("soapKeepAlive tolerates a transient ping error", func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 
 				// A transport failure on the ping is swallowed so the
 				// keepalive handler's ticker survives it.
@@ -317,7 +317,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 
 			spy := &spyRT{inner: c.RoundTripper}
 			sm := session.NewManager(c)
-			keeper := newSessionKeeper(
+			keeper := newSessionKeeper(ctx,
 				sm,
 				url.UserPassword(reloginSimUsername, reloginSimPassword))
 			rt := newReloginSOAP(spy, keeper)
@@ -346,7 +346,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
 				admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
@@ -370,7 +370,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
 				admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
@@ -392,7 +392,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 
 			spy := &spyRT{inner: c.RoundTripper}
 			sm := session.NewManager(c)
-			keeper := newSessionKeeper(
+			keeper := newSessionKeeper(ctx,
 				sm,
 				url.UserPassword(reloginSimUsername, reloginSimPassword))
 			c.RoundTripper = newReloginSOAP(spy, keeper)
@@ -423,7 +423,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
 				admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
@@ -452,7 +452,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
 				// Create the property filter on the current session. CreateFilter
@@ -497,7 +497,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
 				admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
@@ -521,7 +521,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
 				admin := reloginAdminSession(ctx, c.URL(), reloginSimUsername, reloginSimPassword)
@@ -566,7 +566,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			spy := &spyRT{inner: c.RoundTripper}
-			keeper := newSessionKeeper(session.NewManager(c), simulator.DefaultLogin)
+			keeper := newSessionKeeper(ctx, session.NewManager(c), simulator.DefaultLogin)
 			c.RoundTripper = newReloginSOAP(spy, keeper)
 
 			// The client is unauthenticated; log in so the injected fault is
@@ -600,7 +600,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			spy := &spyRT{inner: c.RoundTripper}
-			keeper := newSessionKeeper(session.NewManager(c), simulator.DefaultLogin)
+			keeper := newSessionKeeper(ctx, session.NewManager(c), simulator.DefaultLogin)
 			c.RoundTripper = newReloginSOAP(spy, keeper)
 
 			Expect(session.NewManager(c).Login(
@@ -622,7 +622,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			spy := &spyRT{inner: c.RoundTripper}
-			keeper := newSessionKeeper(session.NewManager(c), simulator.DefaultLogin)
+			keeper := newSessionKeeper(ctx, session.NewManager(c), simulator.DefaultLogin)
 			c.RoundTripper = newReloginSOAP(spy, keeper)
 
 			server.Close()
@@ -639,7 +639,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			simulator.Test(func(ctx context.Context, c *vim25.Client) {
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = newReloginSOAP(spy, keeper)
 
 				pbmClient, err := pbm.NewClient(ctx, c)
@@ -680,7 +680,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			*spyHTTPRT, *rest.Client, *sessionKeeper, *reloginREST) {
 
 			restClient := rest.NewClient(vc)
-			keeper := newSessionKeeper(session.NewManager(vc), simulator.DefaultLogin)
+			keeper := newSessionKeeper(ctx, session.NewManager(vc), simulator.DefaultLogin)
 			keeper.setRestClient(restClient)
 
 			spy := &spyHTTPRT{inner: restClient.Transport}
@@ -795,6 +795,13 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(res.StatusCode).To(Equal(http.StatusUnauthorized))
 				Expect(spy.countPath(reloginSimCategoryPath + "/id:test")).To(Equal(1))
+
+				// The re-login still runs, so the session is healed for the
+				// next caller rather than staying dead until the keepalive
+				// ticks.
+				sess, err := restClient.Session(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(sess).NotTo(BeNil())
 			})
 		})
 
@@ -924,7 +931,7 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 
 				spy := &spyRT{inner: c.RoundTripper}
 				sm := session.NewManager(c)
-				keeper := newSessionKeeper(sm, simulator.DefaultLogin)
+				keeper := newSessionKeeper(ctx, sm, simulator.DefaultLogin)
 				c.RoundTripper = keepalive.NewHandlerSOAP(newReloginSOAP(spy, keeper), keepAliveIdle, nil)
 
 				// vcsim rejects Login while a valid session cookie is
@@ -999,10 +1006,37 @@ var _ = Describe("Relogin", Label(testlabels.VCSim), func() {
 			_, err := methods.GetCurrentTime(ctx, vc)
 			Expect(err).NotTo(HaveOccurred())
 
-			// The keepalive handler is outermost and wraps the re-login
-			// wrapper, which wraps the raw soap client.
-			h := reflect.ValueOf(vc.RoundTripper).Elem().FieldByName("roundTripper")
+			// The keeper wrapper is outermost, the keepalive handler sits
+			// under it, and that wraps the re-login wrapper over the raw
+			// soap client.
+			keeper := keeperFromVimClient(vc)
+			Expect(keeper).NotTo(BeNil())
+			h := reflect.ValueOf(vc.RoundTripper.(*keeperRoundTripper).RoundTripper).
+				Elem().FieldByName("roundTripper")
 			Expect(h.Elem().Type().String()).To(Equal("*client.reloginSOAP"))
+		})
+
+		It("with the flag on wires a derived PBM client for re-login", func() {
+			ctx := context.Background()
+			c := newAssembledClient(ctx, true)
+
+			// NewPbmClient reads the keeper off the vim25 client it is
+			// given, so a caller holding only a *vim25.Client -- a
+			// vmconfig.Reconciler, say -- still gets the wrapper.
+			pbmClient, err := NewPbmClient(ctx, c.VimClient())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pbmClient.RoundTripper).To(BeAssignableToTypeOf(&reloginSOAP{}))
+		})
+
+		It("with the flag off leaves a derived PBM client unwrapped", func() {
+			ctx := context.Background()
+			c := newAssembledClient(ctx, false)
+
+			Expect(keeperFromVimClient(c.VimClient())).To(BeNil())
+
+			pbmClient, err := NewPbmClient(ctx, c.VimClient())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pbmClient.RoundTripper).NotTo(BeAssignableToTypeOf(&reloginSOAP{}))
 		})
 
 		It("with the flag on recovers a dead REST session inline", func() {

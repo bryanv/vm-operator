@@ -15,6 +15,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachine/volumebatch"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
+	pkgmetrics "github.com/vmware-tanzu/vm-operator/pkg/metrics"
 )
 
 // AddToManager adds the controllers to the provided manager.
@@ -24,6 +25,9 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 	}
 	if err := storagepolicyusage.AddToManager(ctx, mgr); err != nil {
 		return fmt.Errorf("failed to initialize virtualmachine storagepolicyusage controller: %w", err)
+	}
+	if err := pkgmetrics.AddVMCollectorToManager(mgr); err != nil {
+		return fmt.Errorf("failed to initialize virtualmachine metrics collector: %w", err)
 	}
 
 	if pkgcfg.FromContext(ctx).Features.VMSharedDisks {

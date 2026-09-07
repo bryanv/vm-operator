@@ -26,7 +26,7 @@ import (
 )
 
 // NICConfigFromMoVM populates per-NIC spec fields from the live vSphere
-// VM configuration during schema upgrade. For each zipped (spec interface,
+// VM configuration during schema upgrade. For each (spec interface,
 // ethernet device) pair:
 //
 //   - spec.network.interfaces[i].type: set from the device type when empty,
@@ -37,11 +37,21 @@ import (
 //   - spec.network.interfaces[i].vmxnet3.UPTv2Enabled: filled from
 //     VirtualVmxnet3.Uptv2Enabled.
 //
-// Spec interfaces are zipped by position to ethernet devices. Spec interfaces
-// beyond the device count are not modified.
+// Interfaces are paired with devices per interface, in two passes:
 //
-// TODO(BV): Do actual matching between the spec and devices, but for
-// now just zip together.
+//  1. An interface with a UnitNumber is matched ONLY by exact unit-number
+//     lookup against the observed ethernet devices. It must never be paired
+//     positionally with some other device's slot, or its type/ExtraConfig/
+//     vNUMA/UPTv2 fields would be backfilled from the wrong NIC. A numbered
+//     interface whose unit has no device gets no device at all (only the
+//     Type default below).
+//  2. An interface without a UnitNumber is paired positionally with the
+//     next unclaimed device, preserving the previous all-positional
+//     behaviour for unnumbered interfaces.
+//
+// A paired interface gets the full backfill above. An unpaired interface
+// (numbered miss, or no unclaimed device left) only has its Type defaulted
+// to VMXNet3 when unset; its other fields are not modified.
 //
 // Spec wins: only nil/zero fields are written.
 // Returns true if any field was mutated.
@@ -60,11 +70,66 @@ func NICConfigFromMoVM(
 	ethDevs := collectEthernetDevicesFromMoVM(moVM)
 	mutated := false
 
+	// Unit-number -> device index over the collected ethernet devices.
+	// Devices with a nil UnitNumber are not in the map: they are reachable
+	// only through the positional zip below, never through unit-number
+	// lookup.
+	unitToDevIdx := make(map[int32]int, len(ethDevs))
+	for j, dev := range ethDevs {
+		if u := dev.GetVirtualDevice().UnitNumber; u != nil {
+			unitToDevIdx[*u] = j
+		}
+	}
+
+	var (
+		devIdx  = make([]int, len(vm.Spec.Network.Interfaces))
+		hasDev  = make([]bool, len(vm.Spec.Network.Interfaces))
+		claimed = make([]bool, len(ethDevs))
+	)
+
+	// Pass 1: numbered interfaces claim their exact device by lookup.
+	// A numbered interface whose unit has no device is left unpaired rather
+	// than zipping onto some other device's slot: the identity model makes
+	// its declared unit the only device it can describe.
+	for i := range vm.Spec.Network.Interfaces {
+		iface := &vm.Spec.Network.Interfaces[i]
+		if iface.UnitNumber == nil {
+			continue
+		}
+		if j, ok := unitToDevIdx[*iface.UnitNumber]; ok {
+			devIdx[i] = j
+			hasDev[i] = true
+			claimed[j] = true
+		}
+	}
+
+	// Pass 2: unnumbered interfaces zip positionally, in spec order, against
+	// the remaining unclaimed devices. All-unnumbered is therefore identical
+	// to the previous all-positional behaviour; a mixed VM never re-pairs an
+	// already-claimed (numbered) interface.
+	next := 0
+	for i := range vm.Spec.Network.Interfaces {
+		if vm.Spec.Network.Interfaces[i].UnitNumber != nil {
+			continue
+		}
+		for next < len(ethDevs) && claimed[next] {
+			next++
+		}
+		if next >= len(ethDevs) {
+			break
+		}
+		devIdx[i] = next
+		hasDev[i] = true
+		claimed[next] = true
+	}
+
 	for i := range vm.Spec.Network.Interfaces {
 		iface := &vm.Spec.Network.Interfaces[i]
 
-		if i >= len(ethDevs) {
-			// No matching hardware device: default Type to VMXNet3 if unset.
+		if !hasDev[i] {
+			// No matching hardware device (a numbered interface whose unit has
+			// no device, or no unclaimed device left for an unnumbered one):
+			// default Type to VMXNet3 if unset.
 			if iface.Type == "" {
 				iface.Type = vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3
 				mutated = true
@@ -72,7 +137,7 @@ func NICConfigFromMoVM(
 			continue
 		}
 
-		dev := ethDevs[i]
+		dev := ethDevs[devIdx[i]]
 
 		if iface.Type == "" {
 			t := mapVimEthernetToNetworkInterfaceType(dev)

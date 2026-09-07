@@ -9,12 +9,15 @@ import (
 	"strings"
 
 	"github.com/vmware/govmomi/object"
+	vimtypes "github.com/vmware/govmomi/vim25/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
+	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 )
@@ -33,6 +36,7 @@ var (
 	_ IssueReporter = (*ControllerIssues)(nil)
 	_ IssueReporter = (*VolumeIssues)(nil)
 	_ IssueReporter = (*CDROMIssues)(nil)
+	_ IssueReporter = (*NICIssues)(nil)
 	_ IssueReporter = (*HardwareConfigIssues)(nil)
 )
 
@@ -123,13 +127,15 @@ type HardwareConfigIssues struct {
 	ControllerIssues ControllerIssues
 	VolumeIssues     VolumeIssues
 	CDROMIssues      CDROMIssues
+	NICIssues        NICIssues
 }
 
 // HasIssues returns true if there are any issues to report.
 func (h *HardwareConfigIssues) HasIssues() bool {
 	return h.ControllerIssues.HasIssues() ||
 		h.VolumeIssues.HasIssues() ||
-		h.CDROMIssues.HasIssues()
+		h.CDROMIssues.HasIssues() ||
+		h.NICIssues.HasIssues()
 }
 
 // Message formats all issues into a concise summary message.
@@ -148,6 +154,9 @@ func (h *HardwareConfigIssues) Message() string {
 	}
 	if h.CDROMIssues.HasIssues() {
 		conditionTypes = append(conditionTypes, vmopv1.VirtualMachineHardwareCDROMVerified)
+	}
+	if h.NICIssues.HasIssues() {
+		conditionTypes = append(conditionTypes, vmopv1.VirtualMachineHardwareNICsVerified)
 	}
 
 	if len(conditionTypes) == 0 {
@@ -192,6 +201,35 @@ func formatStrings(items []string, label string) string {
 	return fmt.Sprintf("%s: %s", label, strings.Join(items, ", "))
 }
 
+// NICIssues stores network interface placement issues found during
+// verification of the interfaces that carry a unit number. Interface names
+// are appended in order when looping through the spec list.
+type NICIssues struct {
+	// Missing holds the names of interfaces whose declared unit number has no
+	// device at that slot (the G13 state: an admitted-but-not-yet-applied
+	// renumber on a powered-on VM, or a G7-skipped backfill write).
+	Missing []string
+	// Mismatched holds the names of interfaces whose declared unit number has
+	// a device that disagrees with the interface's desired state.
+	Mismatched []string
+}
+
+// HasIssues returns true if there are any issues to report.
+func (n *NICIssues) HasIssues() bool {
+	return len(n.Missing) > 0 ||
+		len(n.Mismatched) > 0
+}
+
+// Message formats all issues into a human-readable message.
+// Each issue type is on a separate line, and items are formatted as
+// comma-separated lists for better readability.
+func (n *NICIssues) Message() string {
+	return formatIssues(
+		formatStrings(n.Missing, "network interfaces with no device at their declared unit number"),
+		formatStrings(n.Mismatched, "network interfaces whose device at the declared unit number does not match the desired state"),
+	)
+}
+
 // reconcileHardwareCondition updates the hardware device configuration conditions
 // by verifying that the VM's hardware device configuration matches the desired
 // state specified in the spec. It sets individual conditions for controllers,
@@ -210,9 +248,23 @@ func reconcileHardwareCondition(
 		hwInfo = pkgutil.BuildHardwareInfo(vmCtx.MoVM)
 	)
 
-	checkControllers(vmCtx.VM, hwInfo, &issues.ControllerIssues)
-	checkVolumes(vmCtx.VM, hwInfo, &issues.VolumeIssues)
-	checkCDROMDevices(vmCtx, k8sClient, hwInfo, &issues.CDROMIssues)
+	// The disk/CD-ROM/controller placement checks are gated on the
+	// VMSharedDisks capability, which backfills and verifies those fields;
+	// they must not run for VMs whose specs were never disk-backfilled just
+	// because the NIC capability widened the outer gate.
+	if pkgcfg.FromContext(vmCtx).Features.VMSharedDisks {
+		checkControllers(vmCtx.VM, hwInfo, &issues.ControllerIssues)
+		checkVolumes(vmCtx.VM, hwInfo, &issues.VolumeIssues)
+		checkCDROMDevices(vmCtx, k8sClient, hwInfo, &issues.CDROMIssues)
+	}
+
+	// The NIC check runs only when the VMNetworkUnitNumbers capability is
+	// enabled: without a declared unit number there is no slot to verify and
+	// un-numbered interfaces keep their pre-existing MAC/ExternalID/backing
+	// matching, so there is nothing to report for them.
+	if pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers {
+		checkNICPlacement(vmCtx, k8sClient, &issues.NICIssues)
+	}
 
 	if issues.HasIssues() {
 		conditions.MarkFalse(
@@ -419,4 +471,105 @@ func checkCDROMDevices(
 	}
 
 	conditions.MarkTrue(vmCtx.VM, vmopv1.VirtualMachineHardwareCDROMVerified)
+}
+
+// checkNICPlacement verifies, for every spec.network.interfaces entry
+// carrying a unit number, that the declared PCI unit slot is occupied by a
+// device that agrees with the interface's desired state. It sets the
+// VirtualMachineHardwareNICsVerified condition.
+//
+// This is a steady-state condition rather than an Event (spec.md G8.1): an
+// explicit spec value disagreeing with the observed hardware, and an
+// interface the schema-upgrade backfill deliberately skipped (G7), are both
+// re-observable on every reconcile, and the condition additionally covers a
+// slot the mutating webhook invented (I18) — a one-shot Event structurally
+// cannot. Only the "value came from a positional zip" fact stays an Event
+// (the backfill's NICUnitNumberBackfillAmbiguous), because nothing in the
+// resulting spec records it.
+//
+// The check runs regardless of the VM's power state: a renumber is admitted
+// on a powered-on VM but its device change is not applied until the next
+// powered-off reconcile (I5), so an interface can legitimately declare an
+// unoccupied slot for days (G13). Reporting that as a condition — never an
+// error — is the not-yet-converged signal the boot-order reconciler also
+// relies on.
+//
+// The desired-state comparison deliberately reuses the provider-dispatched
+// matcher (network.FindMatchingEthCardForInterfaceSpec) evaluated over a
+// single-card list holding only the device at the declared slot. That is the
+// same criteria the reconcile-time compare-then-replace applies — backing
+// per provider, MAC only when the interface specifies one, ExternalID only
+// when non-empty — so the two can never drift, and device type is excluded
+// on the same basis as reconcile (I2). The single-card list is essential:
+// running the matcher over the full card list could return some OTHER
+// interface's device (matched by backing), which would misreport.
+func checkNICPlacement(
+	vmCtx pkgctx.VirtualMachineContext,
+	k8sClient ctrlclient.Client,
+	issues *NICIssues) {
+
+	vm := vmCtx.VM
+
+	if vmCtx.MoVM.Config == nil {
+		// Nothing observed: callers do not run hardware verification without
+		// a vSphere config; do not touch the condition.
+		return
+	}
+
+	if vm.Spec.Network == nil {
+		conditions.MarkTrue(vm, vmopv1.VirtualMachineHardwareNICsVerified)
+		return
+	}
+
+	// Observed ethernet devices (includes SR-IOV cards, which embed
+	// VirtualEthernetCard), keyed lookup by declared unit number.
+	ethCards := object.VirtualDeviceList(vmCtx.MoVM.Config.Hardware.Device).
+		SelectByType((*vimtypes.VirtualEthernetCard)(nil))
+
+	for i := range vm.Spec.Network.Interfaces {
+		iface := &vm.Spec.Network.Interfaces[i]
+		if iface.UnitNumber == nil {
+			// Un-numbered interfaces are matched by MAC/ExternalID/backing at
+			// reconcile time and have no declared slot to verify; they are
+			// never reported here.
+			continue
+		}
+
+		locatedIdx := -1
+		for j, dev := range ethCards {
+			if u := dev.GetVirtualDevice().UnitNumber; u != nil && *u == *iface.UnitNumber {
+				locatedIdx = j
+				break
+			}
+		}
+
+		if locatedIdx < 0 {
+			// The G13 state: the declared slot holds no device.
+			issues.Missing = append(issues.Missing, iface.Name)
+			continue
+		}
+
+		// Compare the device at the declared slot against the interface's
+		// desired state with the provider-dispatched matcher over a
+		// single-card list (see the doc comment for why).
+		if network.FindMatchingEthCardForInterfaceSpec(
+			vmCtx,
+			k8sClient,
+			*iface,
+			object.VirtualDeviceList{ethCards[locatedIdx]}) < 0 {
+			issues.Mismatched = append(issues.Mismatched, iface.Name)
+		}
+	}
+
+	if issues.HasIssues() {
+		conditions.MarkFalse(
+			vm,
+			vmopv1.VirtualMachineHardwareNICsVerified,
+			vmopv1.VirtualMachineHardwareNICsMismatchReason,
+			"%s",
+			issues.Message())
+		return
+	}
+
+	conditions.MarkTrue(vm, vmopv1.VirtualMachineHardwareNICsVerified)
 }

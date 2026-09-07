@@ -104,7 +104,12 @@ func ReconcileStatus(
 		errs = append(errs, reconcileStatusNetworkExtraConfig(vmCtx, k8sClient, vcVM, data)...)
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.VMSharedDisks {
+	if f := pkgcfg.FromContext(vmCtx).Features; f.VMSharedDisks || f.VMNetworkUnitNumbers {
+		// VMSharedDisks gates the pre-existing hardware placement verification.
+		// VMNetworkUnitNumbers widens the gate so the NIC placement condition
+		// (checkNICPlacement) is computed for VMs carrying unit numbers even
+		// when the disks capability is off; with the NIC capability off and
+		// VMSharedDisks off, no hardware verification runs at all.
 		errs = append(errs, reconcileHardwareCondition(vmCtx, k8sClient, vcVM, data)...)
 	}
 

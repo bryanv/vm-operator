@@ -87,6 +87,12 @@ var nicFields = []nicFieldDef{
 		},
 		apply: func(_ vmopv1.VirtualMachine, iface vmopv1.VirtualMachineNetworkInterfaceSpec, dev vimtypes.BaseVirtualDevice, _ vimtypes.VirtualMachineConfigInfo, cs *vimtypes.VirtualMachineConfigSpec) {
 			mutable := findOrCreateDeviceEdit(cs, dev)
+			if mutable == nil {
+				// The same ConfigSpec removes this device (a unit-number
+				// replace): nothing to edit, and the replacement Add is built
+				// fresh from the interface's own desired state.
+				return
+			}
 			v := desiredUPTv2Enabled(iface)
 			mutable.(*vimtypes.VirtualVmxnet3).Uptv2Enabled = &v
 		},
@@ -122,6 +128,12 @@ var nicFields = []nicFieldDef{
 		},
 		apply: func(_ vmopv1.VirtualMachine, iface vmopv1.VirtualMachineNetworkInterfaceSpec, dev vimtypes.BaseVirtualDevice, _ vimtypes.VirtualMachineConfigInfo, cs *vimtypes.VirtualMachineConfigSpec) {
 			mutable := findOrCreateDeviceEdit(cs, dev)
+			if mutable == nil {
+				// The same ConfigSpec removes this device (a unit-number
+				// replace): nothing to edit, and the replacement Add is built
+				// fresh from the interface's own desired state.
+				return
+			}
 			mutable.GetVirtualDevice().NumaNode = desiredVNUMANodeID(iface)
 		},
 	},
@@ -208,8 +220,25 @@ func desiredVNUMANodeID(iface vmopv1.VirtualMachineNetworkInterfaceSpec) *int32 
 // a new Edit entry. Returns the mutable device in the (found or new) entry,
 // ensuring at most one Edit entry per device key regardless of how many fields
 // need updating or whether another reconciler already added an entry.
+//
+// Returns nil when cs.DeviceChange already carries a Remove entry for the
+// device's key — the ConfigSpec is shared with the ethernet device changes,
+// and a unit-number replace emits Remove(located device) + Add(new device at
+// the same unit) in one Reconfigure: a device being replaced has nothing to
+// edit, and appending an Edit for its key would produce Remove + Add + Edit
+// of the removed key in a single ReconfigVM_Task. The replacement Add is
+// built fresh from the claiming interface's own desired state. Callers must
+// skip the field write on a nil return.
 func findOrCreateDeviceEdit(cs *vimtypes.VirtualMachineConfigSpec, dev vimtypes.BaseVirtualDevice) vimtypes.BaseVirtualDevice {
 	key := dev.GetVirtualDevice().Key
+	for _, dc := range cs.DeviceChange {
+		if spec, ok := dc.(*vimtypes.VirtualDeviceConfigSpec); ok {
+			if spec.Operation == vimtypes.VirtualDeviceConfigSpecOperationRemove &&
+				spec.Device != nil && spec.Device.GetVirtualDevice().Key == key {
+				return nil
+			}
+		}
+	}
 	for _, dc := range cs.DeviceChange {
 		if spec, ok := dc.(*vimtypes.VirtualDeviceConfigSpec); ok {
 			if spec.Operation == vimtypes.VirtualDeviceConfigSpecOperationEdit &&

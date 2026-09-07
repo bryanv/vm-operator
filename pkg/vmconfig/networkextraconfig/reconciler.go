@@ -84,7 +84,10 @@ func (r reconciler) Reconcile(
 	ci := *moVM.Config
 	observed := pkgutil.OptionValues(ci.ExtraConfig)
 	poweredOn := vm.Status.PowerState == vmopv1.VirtualMachinePowerStateOn
-	matcher := networkextraconfig.DefaultNICMatcher(ci.Hardware.Device)
+	matcher := networkextraconfig.DefaultNICMatcher(
+		ci.Hardware.Device,
+		vm.Spec.Network.Interfaces,
+		pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers)
 
 	var overlay pkgutil.OptionValues
 	log := pkglog.FromContextOrDefault(ctx)

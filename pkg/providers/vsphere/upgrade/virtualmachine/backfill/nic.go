@@ -26,7 +26,7 @@ import (
 )
 
 // NICConfigFromMoVM populates per-NIC spec fields from the live vSphere
-// VM configuration during schema upgrade. For each zipped (spec interface,
+// VM configuration during schema upgrade. For each (spec interface,
 // ethernet device) pair:
 //
 //   - spec.network.interfaces[i].type: set from the device type when empty,
@@ -37,11 +37,24 @@ import (
 //   - spec.network.interfaces[i].vmxnet3.UPTv2Enabled: filled from
 //     VirtualVmxnet3.Uptv2Enabled.
 //
-// Spec interfaces are zipped by position to ethernet devices. Spec interfaces
-// beyond the device count are not modified.
+// Interfaces are paired with devices per interface, in two passes:
 //
-// TODO(BV): Do actual matching between the spec and devices, but for
-// now just zip together.
+//  0. An interface with a UnitNumber is matched ONLY by its unit number, to
+//     the unclaimed device at exactly that slot (claimByUnitNumber, the same
+//     pass 0 NICUnitNumbersFromMoVM runs). It must never be paired
+//     positionally with some other device's slot, or its type/ExtraConfig/
+//     vNUMA/UPTv2 fields would be backfilled from the wrong NIC. A numbered
+//     interface whose unit has no device gets no device at all (only the
+//     Type default below). This includes a numbered SR-IOV interface: SR-IOV
+//     cards sit outside the NICUnitNumberFirst..NICUnitNumberMax range an
+//     interface's unit number is validated against, so its lookup misses.
+//  1. An interface without a UnitNumber is paired positionally with the
+//     next unclaimed device, preserving the previous all-positional
+//     behaviour for unnumbered interfaces.
+//
+// A paired interface gets the full backfill above. An unpaired interface
+// (numbered miss, or no unclaimed device left) only has its Type defaulted
+// to VMXNet3 when unset; its other fields are not modified.
 //
 // Spec wins: only nil/zero fields are written.
 // Returns true if any field was mutated.
@@ -60,11 +73,39 @@ func NICConfigFromMoVM(
 	ethDevs := collectEthernetDevicesFromMoVM(moVM)
 	mutated := false
 
+	// Pass 0: numbered interfaces claim their exact device by unit number.
+	// A numbered interface whose unit has no device is left unpaired rather
+	// than zipping onto some other device's slot: the identity model makes
+	// its declared unit the only device it can describe.
+	claimed := make([]bool, len(ethDevs))
+	devIdx := claimByUnitNumber(vm.Spec.Network.Interfaces, ethDevs, claimed)
+
+	// Pass 1: unnumbered interfaces zip positionally, in spec order, against
+	// the remaining unclaimed devices. All-unnumbered is therefore identical
+	// to the previous all-positional behaviour; a mixed VM never re-pairs an
+	// already-claimed (numbered) interface.
+	next := 0
+	for i := range vm.Spec.Network.Interfaces {
+		if vm.Spec.Network.Interfaces[i].UnitNumber != nil {
+			continue
+		}
+		for next < len(ethDevs) && claimed[next] {
+			next++
+		}
+		if next >= len(ethDevs) {
+			break
+		}
+		devIdx[i] = next
+		claimed[next] = true
+	}
+
 	for i := range vm.Spec.Network.Interfaces {
 		iface := &vm.Spec.Network.Interfaces[i]
 
-		if i >= len(ethDevs) {
-			// No matching hardware device: default Type to VMXNet3 if unset.
+		if devIdx[i] < 0 {
+			// No matching hardware device (a numbered interface whose unit has
+			// no device, or no unclaimed device left for an unnumbered one):
+			// default Type to VMXNet3 if unset.
 			if iface.Type == "" {
 				iface.Type = vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3
 				mutated = true
@@ -72,7 +113,7 @@ func NICConfigFromMoVM(
 			continue
 		}
 
-		dev := ethDevs[i]
+		dev := ethDevs[devIdx[i]]
 
 		if iface.Type == "" {
 			t := mapVimEthernetToNetworkInterfaceType(dev)
@@ -371,7 +412,10 @@ func NICUnitNumbersFromMoVM(
 		zipMatched    []string
 	)
 
-	claimByUnitNumber(vm.Spec.Network.Interfaces, ethDevs, claimedDevs, hodgepodgeIdx)
+	// Pass 0's per-interface matches need no tracking here: every interface
+	// it can match is numbered, and passes 1 and 2 already skip numbered
+	// interfaces. Only its device claims matter.
+	_ = claimByUnitNumber(vm.Spec.Network.Interfaces, ethDevs, claimedDevs)
 
 	// Pass 1: provider-dispatched hodgepodge matching for unnumbered
 	// interfaces. A nil client cannot resolve provider CRs; skip the pass
@@ -491,18 +535,21 @@ func NICUnitNumbersFromMoVM(
 	return mutated
 }
 
-// claimByUnitNumber is pass 0 of NICUnitNumbersFromMoVM. Each numbered
-// interface claims the unclaimed device at exactly its spec unit number, and
-// is marked as matched in matchedIdx. An interface with no device at its unit
-// is left unmatched: it does not fall back to hodgepodge matching, and the zip
-// never pairs it either.
+// claimByUnitNumber is pass 0 of NICUnitNumbersFromMoVM and NICConfigFromMoVM.
+// Each numbered interface claims the unclaimed device at exactly its spec unit
+// number. It returns, per interface, the index into ethDevs of the claimed
+// device, or -1 when the interface is unnumbered or no device sits at its
+// unit. A numbered interface with no device at its unit is left unmatched: it
+// does not fall back to hodgepodge matching, and the zip never pairs it
+// either.
 func claimByUnitNumber(
 	ifaces []vmopv1.VirtualMachineNetworkInterfaceSpec,
 	ethDevs object.VirtualDeviceList,
-	claimedDevs []bool,
-	matchedIdx []bool) {
+	claimedDevs []bool) []int {
 
+	devIdx := make([]int, len(ifaces))
 	for i := range ifaces {
+		devIdx[i] = -1
 		if ifaces[i].UnitNumber == nil {
 			continue
 		}
@@ -512,11 +559,12 @@ func claimByUnitNumber(
 			}
 			if u := ethDevs[j].GetVirtualDevice().UnitNumber; u != nil && *u == *ifaces[i].UnitNumber {
 				claimedDevs[j] = true
-				matchedIdx[i] = true
+				devIdx[i] = j
 				break
 			}
 		}
 	}
+	return devIdx
 }
 
 // recordEthDeviceUnitNumber records the device's observed unit number onto

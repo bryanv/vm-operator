@@ -735,6 +735,114 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			Expect(ifaces[2].VNUMANodeID).To(BeNil())
 		})
 	})
+
+	Context("unit-number-aware pairing", func() {
+		// unitDev builds an ethernet device carrying an explicit observed unit
+		// number, with NumaNode/Uptv2Enabled properties that identify it in
+		// assertions.
+		unitDev := func(key, unit int32, numa *int32, uptv2 *bool) vimtypes.BaseVirtualDevice {
+			dev := &vimtypes.VirtualVmxnet3{Uptv2Enabled: uptv2}
+			dev.NumaNode = numa
+			dev.Key = key
+			dev.UnitNumber = ptr.To(unit)
+			return dev
+		}
+
+		nilUnitDev := func(key int32, numa *int32) vimtypes.BaseVirtualDevice {
+			dev := &vimtypes.VirtualVmxnet3{}
+			dev.NumaNode = numa
+			dev.Key = key
+			return dev
+		}
+
+		It("all-numbered: lookup only, devices in a different order than spec", func() {
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0", UnitNumber: ptr.To(int32(8))},
+				{Name: "eth1", UnitNumber: ptr.To(int32(7))},
+			}
+			moVM = moVMWithEthernet(
+				unitDev(4000, 7, ptr.To(int32(1)), ptr.To(true)),
+				unitDev(4001, 8, ptr.To(int32(2)), ptr.To(false)),
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			Expect(mutated).To(BeTrue())
+
+			// Fields land on the interface whose unit matches the device's
+			// slot, not on the positionally-aligned interface.
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(2))))
+			Expect(vm.Spec.Network.Interfaces[0].VMXNet3.UPTv2Enabled).To(Equal(ptr.To(false)))
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+			Expect(vm.Spec.Network.Interfaces[1].VMXNet3.UPTv2Enabled).To(Equal(ptr.To(true)))
+		})
+
+		It("all-unnumbered: positional zip, existing behaviour preserved", func() {
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0"},
+				{Name: "eth1"},
+			}
+			moVM = moVMWithEthernet(
+				nilUnitDev(4000, ptr.To(int32(1))),
+				nilUnitDev(4001, ptr.To(int32(2))),
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			Expect(mutated).To(BeTrue())
+
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(2))))
+		})
+
+		It("mixed: numbered claims by lookup; unnumbered zips against the remainder", func() {
+			// Device order is deliberately different from spec order: eth1 is
+			// numbered 7 (the first device), and eth0/eth2 are unnumbered. The
+			// I9 regression: the numbered interface must claim its own device,
+			// and the unnumbered interfaces must zip only with what remains —
+			// never positionally onto the numbered interface's device.
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0"},
+				{Name: "eth1", UnitNumber: ptr.To(int32(7))},
+				{Name: "eth2"},
+			}
+			moVM = moVMWithEthernet(
+				unitDev(4000, 7, ptr.To(int32(1)), nil),
+				nilUnitDev(4001, ptr.To(int32(2))),
+				nilUnitDev(4002, ptr.To(int32(3))),
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			Expect(mutated).To(BeTrue())
+
+			// The numbered interface gets its exact device.
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+			// The unnumbered interfaces zip with the remaining devices in
+			// order, never touching the numbered interface's device.
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(2))))
+			Expect(vm.Spec.Network.Interfaces[2].VNUMANodeID).To(Equal(ptr.To(int32(3))))
+		})
+
+		It("numbered interface whose unit has no device: no device backfill, Type defaults; unnumbered still zip", func() {
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0", UnitNumber: ptr.To(int32(16))},
+				{Name: "eth1"},
+			}
+			moVM = moVMWithEthernet(
+				nilUnitDev(4000, ptr.To(int32(1))),
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			Expect(mutated).To(BeTrue())
+
+			// eth0 declares slot 16; no device there, so it gets no device:
+			// Type defaults, no device properties. It must NOT pair with the
+			// slot-less device by position.
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(BeNil())
+			// eth1 still zips with the remaining device.
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+		})
+	})
 })
 
 var _ = Describe("NICUnitNumbersFromMoVM", func() {

@@ -726,6 +726,162 @@ var _ = Describe("Reconcile", Label(testlabels.V1Alpha4), func() {
 				})
 			})
 
+			When("a numbered interface has a device at its declared slot", func() {
+				BeforeEach(func() {
+					pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+						config.Features.VMNetworkUnitNumbers = true
+					})
+
+					vm.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+
+					ethDevice := &vimtypes.VirtualVmxnet3{}
+					ethDevice.Key = 4000
+					ethDevice.UnitNumber = ptr.To(int32(9))
+					moVM = mo.VirtualMachine{
+						Config: &vimtypes.VirtualMachineConfigInfo{
+							Hardware: vimtypes.VirtualHardware{
+								Device: []vimtypes.BaseVirtualDevice{
+									&vimtypes.VirtualCdrom{},
+									&vimtypes.VirtualDisk{
+										VirtualDevice: vimtypes.VirtualDevice{
+											Key: 2000,
+											Backing: &vimtypes.VirtualDiskFlatVer2BackingInfo{
+												Uuid: "6000C298-df15-fe89-ddcb-8ea33329595d",
+											},
+										},
+									},
+									ethDevice,
+								},
+							},
+						},
+					}
+
+					vm.Spec.BootOptions = &vmopv1.VirtualMachineBootOptions{
+						BootOrder: []vmopv1.VirtualMachineBootOptionsBootableDevice{
+							{
+								Type: vmopv1.VirtualMachineBootOptionsBootableNetworkDevice,
+								Name: "eth0",
+							},
+						},
+					}
+				})
+
+				It("should resolve the boot entry by unit number (unchanged behavior)", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(configSpec.BootOptions).NotTo(BeNil())
+					Expect(configSpec.BootOptions.BootOrder).To(HaveLen(1))
+					ethDevice := configSpec.BootOptions.BootOrder[0].(*vimtypes.VirtualMachineBootOptionsBootableEthernetDevice)
+					Expect(ethDevice.DeviceKey).To(Equal(int32(4000)))
+				})
+			})
+
+			When("a numbered interface has no device at its declared slot yet", func() {
+				// G13/I15: the declared unit resolves exact-only, so an
+				// admitted-but-not-yet-applied unitNumber change leaves the
+				// slot empty until the next power-off. The entry is skipped
+				// and the rest of the boot order is left intact; the
+				// divergence is surfaced by the T036 hardware condition, not
+				// by this reconciler.
+				BeforeEach(func() {
+					pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+						config.Features.VMNetworkUnitNumbers = true
+					})
+
+					vm.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+
+					ethDevice := &vimtypes.VirtualVmxnet3{}
+					ethDevice.Key = 4000
+					ethDevice.UnitNumber = ptr.To(int32(7))
+					moVM = mo.VirtualMachine{
+						Config: &vimtypes.VirtualMachineConfigInfo{
+							Hardware: vimtypes.VirtualHardware{
+								Device: []vimtypes.BaseVirtualDevice{
+									&vimtypes.VirtualCdrom{},
+									&vimtypes.VirtualDisk{
+										VirtualDevice: vimtypes.VirtualDevice{
+											Key: 2000,
+											Backing: &vimtypes.VirtualDiskFlatVer2BackingInfo{
+												Uuid: "6000C298-df15-fe89-ddcb-8ea33329595d",
+											},
+										},
+									},
+									ethDevice,
+								},
+							},
+						},
+					}
+
+					vm.Spec.BootOptions = &vmopv1.VirtualMachineBootOptions{
+						BootOrder: []vmopv1.VirtualMachineBootOptionsBootableDevice{
+							{
+								Type: vmopv1.VirtualMachineBootOptionsBootableCDRomDevice,
+							},
+							{
+								Type: vmopv1.VirtualMachineBootOptionsBootableDiskDevice,
+								Name: "disk-0",
+							},
+							{
+								Type: vmopv1.VirtualMachineBootOptionsBootableNetworkDevice,
+								Name: "eth0",
+							},
+						},
+					}
+				})
+
+				It("should not error and should skip only the ethernet entry", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(configSpec.BootOptions).NotTo(BeNil())
+					Expect(configSpec.BootOptions.BootOrder).To(HaveLen(2))
+					Expect(configSpec.BootOptions.BootOrder[0]).To(BeAssignableToTypeOf(&vimtypes.VirtualMachineBootOptionsBootableCdromDevice{}))
+					Expect(configSpec.BootOptions.BootOrder[1]).To(BeAssignableToTypeOf(&vimtypes.VirtualMachineBootOptionsBootableDiskDevice{}))
+					diskDevice := configSpec.BootOptions.BootOrder[1].(*vimtypes.VirtualMachineBootOptionsBootableDiskDevice)
+					Expect(diskDevice.DeviceKey).To(Equal(int32(2000)))
+				})
+			})
+
+			When("an un-numbered interface cannot be mapped to a device", func() {
+				// The G13 skip only covers numbered interfaces: an un-numbered
+				// interface's miss is not explainable by an in-flight
+				// unitNumber change, so the hard error is kept.
+				BeforeEach(func() {
+					pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+						config.Features.VMNetworkUnitNumbers = true
+					})
+
+					moVM = mo.VirtualMachine{
+						Config: &vimtypes.VirtualMachineConfigInfo{
+							Hardware: vimtypes.VirtualHardware{
+								Device: []vimtypes.BaseVirtualDevice{
+									&vimtypes.VirtualCdrom{},
+									&vimtypes.VirtualDisk{
+										VirtualDevice: vimtypes.VirtualDevice{
+											Key: 2000,
+											Backing: &vimtypes.VirtualDiskFlatVer2BackingInfo{
+												Uuid: "6000C298-df15-fe89-ddcb-8ea33329595d",
+											},
+										},
+									},
+								},
+							},
+						},
+					}
+
+					vm.Spec.BootOptions = &vmopv1.VirtualMachineBootOptions{
+						BootOrder: []vmopv1.VirtualMachineBootOptionsBootableDevice{
+							{
+								Type: vmopv1.VirtualMachineBootOptionsBootableNetworkDevice,
+								Name: "eth0",
+							},
+						},
+					}
+				})
+
+				It("should return an error (unchanged behavior)", func() {
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("unable to locate network interface matching name"))
+				})
+			})
+
 			When("CD-ROM device is not found", func() {
 				BeforeEach(func() {
 					vm.Spec.BootOptions = &vmopv1.VirtualMachineBootOptions{

@@ -255,11 +255,12 @@ var _ = Describe("UpdateVMClassEthCardFromDevice", Label(testlabels.VCSim), func
 var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 	var (
-		client      ctrlclient.Client
-		initObjs    []ctrlclient.Object
-		vmCtx       pkgctx.VirtualMachineContext
-		devices     object.VirtualDeviceList
-		devKeyToIdx map[int32]int
+		client            ctrlclient.Client
+		initObjs          []ctrlclient.Object
+		vmCtx             pkgctx.VirtualMachineContext
+		devices           object.VirtualDeviceList
+		devKeyToIdx       map[int32]int
+		devKeyToIdxNaming map[int32]int
 	)
 
 	BeforeEach(func() {
@@ -290,7 +291,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 				},
 			},
 		}
-		devKeyToIdx = network.MapEthernetDevicesToSpecIdx(vmCtx, client, vmMo)
+		devKeyToIdx, devKeyToIdxNaming = network.MapEthernetDevicesToSpecIdx(vmCtx, client, vmMo)
 	})
 
 	AfterEach(func() {
@@ -327,6 +328,8 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 				Expect(devKeyToIdx).To(HaveLen(2))
 				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
 				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+				// With the flag off both maps are identical.
+				Expect(devKeyToIdxNaming).To(Equal(devKeyToIdx))
 			})
 		})
 	})
@@ -842,11 +845,12 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 var _ = Describe("MapEthernetDevicesToSpecIdx unit numbers", func() {
 
 	var (
-		client      ctrlclient.Client
-		initObjs    []ctrlclient.Object
-		vmCtx       pkgctx.VirtualMachineContext
-		devices     object.VirtualDeviceList
-		devKeyToIdx map[int32]int
+		client            ctrlclient.Client
+		initObjs          []ctrlclient.Object
+		vmCtx             pkgctx.VirtualMachineContext
+		devices           object.VirtualDeviceList
+		devKeyToIdx       map[int32]int
+		devKeyToIdxNaming map[int32]int
 	)
 
 	BeforeEach(func() {
@@ -877,7 +881,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx unit numbers", func() {
 				},
 			},
 		}
-		devKeyToIdx = network.MapEthernetDevicesToSpecIdx(vmCtx, client, vmMo)
+		devKeyToIdx, devKeyToIdxNaming = network.MapEthernetDevicesToSpecIdx(vmCtx, client, vmMo)
 	})
 
 	AfterEach(func() {
@@ -974,6 +978,13 @@ var _ = Describe("MapEthernetDevicesToSpecIdx unit numbers", func() {
 			It("gives a numbered miss no entry and never zips it; un-numbered still zips", func() {
 				Expect(devKeyToIdx).To(HaveLen(1))
 				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 1))
+
+				// The name-resolution map keeps the authoritative entries and
+				// additionally zip-falls the numbered miss onto the leftover
+				// device — it only labels status entries, never moves hardware.
+				Expect(devKeyToIdxNaming).To(HaveLen(2))
+				Expect(devKeyToIdxNaming).To(HaveKeyWithValue(int32(4000), 1))
+				Expect(devKeyToIdxNaming).To(HaveKeyWithValue(int32(4001), 0))
 			})
 		})
 
@@ -995,6 +1006,8 @@ var _ = Describe("MapEthernetDevicesToSpecIdx unit numbers", func() {
 				Expect(devKeyToIdx).To(HaveLen(2))
 				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
 				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+				// With the flag off both maps are identical.
+				Expect(devKeyToIdxNaming).To(Equal(devKeyToIdx))
 			})
 		})
 	})
@@ -1107,6 +1120,12 @@ var _ = Describe("MapEthernetDevicesToSpecIdx unit numbers", func() {
 			It("the miss is unmapped and the un-numbered interface still CR-matches", func() {
 				Expect(devKeyToIdx).To(HaveLen(1))
 				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4005), 1))
+
+				// The name-resolution map additionally CR-falls the numbered
+				// miss onto the leftover device — status labeling only.
+				Expect(devKeyToIdxNaming).To(HaveLen(2))
+				Expect(devKeyToIdxNaming).To(HaveKeyWithValue(int32(4005), 1))
+				Expect(devKeyToIdxNaming).To(HaveKeyWithValue(int32(4006), 0))
 			})
 		})
 

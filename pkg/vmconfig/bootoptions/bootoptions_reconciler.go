@@ -15,6 +15,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
@@ -251,6 +252,33 @@ func reconcileBootOrder(
 			}
 
 			if bed == nil {
+				// G13/I15: an interface carrying a unit number (feature enabled)
+				// resolves only at its declared slot (MapEthernetDevicesToSpecIdx
+				// is exact-only for numbered interfaces), so a miss means the
+				// declared slot holds no device yet. That is the
+				// admitted-but-not-yet-applied state of an in-flight unitNumber
+				// change on a powered-on VM: treat it as not-yet-converged by
+				// skipping this boot-order entry — leaving the rest of the boot
+				// order intact — rather than failing every reconcile for the
+				// whole window. The steady-state divergence is already surfaced
+				// by the T036 VirtualMachineHardwareNICsVerified condition; no
+				// boot-options-specific Event or condition is added here.
+				//
+				// An UN-numbered interface's miss is not explainable by an
+				// in-flight unitNumber change (it resolves via CR/zip fallback
+				// exactly as before this feature), so it remains a hard error:
+				// its device should exist, and booting an entry that cannot be
+				// located is a real configuration problem.
+				if u := vm.Spec.Network.Interfaces[ifaceIdx].UnitNumber; u != nil &&
+					pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
+
+					pkglog.FromContextOrDefault(ctx).V(4).Info(
+						"Skipping boot order entry: no device at the interface's declared unit number yet",
+						"interface", bd.Name,
+						"unitNumber", *u)
+					continue
+				}
+
 				return nil, fmt.Errorf("unable to locate network interface matching name %q", bd.Name)
 			}
 			bootOrder = append(bootOrder, bed)

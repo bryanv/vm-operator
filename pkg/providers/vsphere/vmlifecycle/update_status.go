@@ -50,7 +50,26 @@ import (
 type ReconcileStatusData struct {
 	// NetworkDeviceKeysToSpecIdx maps the network device's DeviceKey to its
 	// corresponding index in the VM's Spec.Network.Interfaces[].
+	//
+	// This is the authoritative, exact-only mapping: an interface carrying a
+	// unit number resolves only to the device at its declared slot, and gets
+	// no entry on a miss. Anything that moves hardware or selects boot
+	// devices must use this map exclusively.
 	NetworkDeviceKeysToSpecIdx map[int32]int
+
+	// NetworkDeviceKeysToSpecIdxNaming is the name-resolution counterpart of
+	// NetworkDeviceKeysToSpecIdx: the same mapping plus relaxed fallback
+	// entries for numbered interfaces that missed their exact slot. It is
+	// used ONLY to label status entries with their spec name — a wrong entry
+	// can mislabel a status entry but can never move hardware (spec.md G13,
+	// I15). It must never be used for hardware changes or boot selection.
+	NetworkDeviceKeysToSpecIdxNaming map[int32]int
+
+	// NetworkDeviceKeysToUnitNumber maps the network device's DeviceKey to
+	// its observed vSphere PCI unit number. Populated only when the
+	// VMNetworkUnitNumbers feature is enabled; when nil,
+	// status.network.interfaces[i].unitNumber is not written.
+	NetworkDeviceKeysToUnitNumber map[int32]int32
 }
 
 func ReconcileStatus(
@@ -530,7 +549,8 @@ func reconcileStatusGuest(
 		vmCtx.VM,
 		vmCtx.MoVM.Guest,
 		extraConfig,
-		data.NetworkDeviceKeysToSpecIdx)
+		data.NetworkDeviceKeysToSpecIdxNaming,
+		data.NetworkDeviceKeysToUnitNumber)
 
 	if vmCtx.MoVM.Summary.Guest != nil && vmCtx.MoVM.Summary.Guest.HostName != "" {
 		if vmCtx.VM.Status.Network == nil {
@@ -1197,12 +1217,20 @@ func UpdateNetworkStatusConfig(vm *vmopv1.VirtualMachine, args BootstrapArgs) {
 // updateGuestNetworkStatus updates the provided VM's status.network
 // field with information from the guestInfo.
 //
+// deviceKeyToSpecIdx must be the NAME-RESOLUTION map (ReconcileStatusData.
+// NetworkDeviceKeysToSpecIdxNaming), not the authoritative one: its relaxed
+// fallback entries keep a Tools-reported entry named when its spec interface
+// is a numbered miss (G13). A wrong entry here can only mislabel a status
+// entry. deviceKeysToUnitNumber is nil when VMNetworkUnitNumbers is off, in
+// which case the status unitNumber field is never written.
+//
 //nolint:gocyclo
 func updateGuestNetworkStatus(
 	vm *vmopv1.VirtualMachine,
 	gi *vimtypes.GuestInfo,
 	extraConfig map[string]string,
-	deviceKeyToSpecIdx map[int32]int) {
+	deviceKeyToSpecIdx map[int32]int,
+	deviceKeysToUnitNumber map[int32]int32) {
 
 	var (
 		primaryIP4      string
@@ -1256,12 +1284,20 @@ func updateGuestNetworkStatus(
 					ifaceName = ifaceSpecs[idx].Name
 				}
 
+				ifaceStatus := guestNicInfoToInterfaceStatus(
+					ifaceName,
+					deviceKey,
+					&gi.Net[i])
+
+				// Observed unit number for this entry's device; only written
+				// when the capability is enabled (non-nil map).
+				if u, ok := deviceKeysToUnitNumber[deviceKey]; ok {
+					ifaceStatus.UnitNumber = ptr.To(u)
+				}
+
 				ifaceStatuses = append(
 					ifaceStatuses,
-					guestNicInfoToInterfaceStatus(
-						ifaceName,
-						deviceKey,
-						&gi.Net[i]))
+					ifaceStatus)
 			}
 		}
 

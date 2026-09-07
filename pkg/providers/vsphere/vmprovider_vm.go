@@ -1270,10 +1270,29 @@ func (vs *vSphereVMProvider) reconcileStatus(
 
 	vmCtx.Logger.V(4).Info("Reconciling status")
 
-	var networkDeviceKeysToSpecIdx map[int32]int
+	var (
+		networkDeviceKeysToSpecIdx       map[int32]int
+		networkDeviceKeysToSpecIdxNaming map[int32]int
+		networkDeviceKeysToUnitNumber    map[int32]int32
+	)
 	if vmCtx.MoVM.Config != nil {
-		networkDeviceKeysToSpecIdx = network.MapEthernetDevicesToSpecIdx(
+		networkDeviceKeysToSpecIdx, networkDeviceKeysToSpecIdxNaming = network.MapEthernetDevicesToSpecIdx(
 			vmCtx, vs.k8sClient, vmCtx.MoVM)
+
+		// Observed NIC unit numbers, keyed by device key, for the status
+		// path. Gated on the capability: when disabled the map stays nil and
+		// status.network.interfaces[i].unitNumber is never written.
+		if pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers {
+			networkDeviceKeysToUnitNumber = make(map[int32]int32)
+			for _, dev := range vmCtx.MoVM.Config.Hardware.Device {
+				if !pkgutil.IsEthernetCard(dev) {
+					continue
+				}
+				if u := dev.GetVirtualDevice().UnitNumber; u != nil {
+					networkDeviceKeysToUnitNumber[dev.GetVirtualDevice().Key] = *u
+				}
+			}
+		}
 	}
 
 	return vmlifecycle.ReconcileStatus(
@@ -1281,7 +1300,9 @@ func (vs *vSphereVMProvider) reconcileStatus(
 		vs.k8sClient,
 		vcVM,
 		vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: networkDeviceKeysToSpecIdx,
+			NetworkDeviceKeysToSpecIdx:       networkDeviceKeysToSpecIdx,
+			NetworkDeviceKeysToSpecIdxNaming: networkDeviceKeysToSpecIdxNaming,
+			NetworkDeviceKeysToUnitNumber:    networkDeviceKeysToUnitNumber,
 		})
 }
 

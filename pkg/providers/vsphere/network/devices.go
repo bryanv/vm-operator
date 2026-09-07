@@ -7,6 +7,7 @@ package network
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -104,15 +105,31 @@ func UpdateVMClassEthCardFromDevice(
 	return nil
 }
 
-// MapEthernetDevicesToSpecIdx maps the VM's ethernet devices to the corresponding
-// entry in the VM's Spec.
+// MapEthernetDevicesToSpecIdx maps the VM's ethernet devices to the
+// corresponding entry in the VM's Spec. It returns two maps:
+//
+//   - The first (authoritative) map is the exact-only mapping: an interface
+//     carrying a unit number (when VMNetworkUnitNumbers is enabled) resolves
+//     only to the device at its declared slot, and gets NO entry on a miss.
+//     Anything that moves hardware or selects boot devices must use this map
+//     exclusively (the boot-options reconciler does).
+//
+//   - The second (name-resolution) map is the authoritative map plus entries
+//     for numbered interfaces that missed their exact slot, resolved through
+//     the ordinary CR-based/zip fallback against leftover devices. It exists
+//     only so the status path can keep labeling a Tools-reported interface
+//     entry with its spec name (and keep the vnumaNodeID/vmxnet3 status
+//     joins via that name; the networkextraconfig status path matches with
+//     its own DefaultNICMatcher and is unaffected). A wrong entry here can
+//     mislabel a status entry but can never move hardware, which is why the
+//     relaxed fallback is acceptable for this map only (spec.md G13, I15).
 func MapEthernetDevicesToSpecIdx(
 	vmCtx pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
-	vmMO mo.VirtualMachine) map[int32]int {
+	vmMO mo.VirtualMachine) (map[int32]int, map[int32]int) {
 
 	if vmCtx.VM.Spec.Network == nil || vmMO.Config == nil || vmMO.Config.Hardware.Device == nil {
-		return nil
+		return nil, nil
 	}
 
 	var (
@@ -124,6 +141,12 @@ func MapEthernetDevicesToSpecIdx(
 
 	unitNumbersEnabled := pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers
 	claimed := make([]bool, len(ethCards))
+
+	// Track which spec interfaces the authoritative pass failed to map, so
+	// the name-resolution pass can run the fallback for exactly those. Only
+	// meaningful when unitNumbersEnabled; with the flag off both maps are
+	// identical.
+	authoritativeMiss := make([]bool, len(interfaces))
 
 	// Pass 1: exact unit-number claim for numbered interfaces. A declared
 	// unit number is the interface's identity for its device (spec.md G11):
@@ -150,6 +173,8 @@ func MapEthernetDevicesToSpecIdx(
 			if j, ok := unitToIdx[*interfaces[i].UnitNumber]; ok && !claimed[j] {
 				claimed[j] = true
 				devKeyToSpecIdx[ethCards[j].GetVirtualDevice().Key] = i
+			} else {
+				authoritativeMiss[i] = true
 			}
 		}
 	}
@@ -161,7 +186,7 @@ func MapEthernetDevicesToSpecIdx(
 			for i := range min(len(ethCards), len(interfaces)) {
 				devKeyToSpecIdx[ethCards[i].GetVirtualDevice().Key] = i
 			}
-			return devKeyToSpecIdx
+			return devKeyToSpecIdx, devKeyToSpecIdx
 		}
 
 		// Zip the un-numbered interfaces against the remaining unclaimed
@@ -182,7 +207,25 @@ func MapEthernetDevicesToSpecIdx(
 			claimed[next] = true
 			next++
 		}
-		return devKeyToSpecIdx
+
+		// Name-resolution fallback: numbered misses zip against whatever the
+		// authoritative passes left unclaimed. Labels status entries only.
+		devKeyToSpecIdxForNaming := maps.Clone(devKeyToSpecIdx)
+		for i := range interfaces {
+			if !authoritativeMiss[i] {
+				continue
+			}
+			for next < len(ethCards) && claimed[next] {
+				next++
+			}
+			if next >= len(ethCards) {
+				break
+			}
+			devKeyToSpecIdxForNaming[ethCards[next].GetVirtualDevice().Key] = i
+			claimed[next] = true
+			next++
+		}
+		return devKeyToSpecIdx, devKeyToSpecIdxForNaming
 	}
 
 	// Mutable: per-interface provider-dispatched matching for the un-numbered
@@ -211,7 +254,25 @@ func MapEthernetDevicesToSpecIdx(
 		}
 	}
 
-	return devKeyToSpecIdx
+	if !unitNumbersEnabled {
+		return devKeyToSpecIdx, devKeyToSpecIdx
+	}
+
+	// Name-resolution fallback: numbered misses CR-match against the devices
+	// the authoritative pass left unclaimed. Labels status entries only.
+	devKeyToSpecIdxForNaming := maps.Clone(devKeyToSpecIdx)
+	for i, interfaceSpec := range interfaces {
+		if !authoritativeMiss[i] {
+			continue
+		}
+		matchingIdx := FindMatchingEthCardForInterfaceSpec(vmCtx, client, interfaceSpec, ethCards)
+		if matchingIdx >= 0 {
+			devKeyToSpecIdxForNaming[ethCards[matchingIdx].GetVirtualDevice().Key] = i
+			ethCards = slices.Delete(ethCards, matchingIdx, matchingIdx+1)
+		}
+	}
+
+	return devKeyToSpecIdx, devKeyToSpecIdxForNaming
 }
 
 // FindMatchingEthCardForInterfaceSpec resolves a spec interface to the index

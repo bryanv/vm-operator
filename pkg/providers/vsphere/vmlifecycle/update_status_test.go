@@ -88,7 +88,8 @@ var _ = Describe("UpdateStatus", func() {
 			&vmCtx.MoVM)).To(Succeed())
 
 		data = vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: map[int32]int{},
+			NetworkDeviceKeysToSpecIdx:       map[int32]int{},
+			NetworkDeviceKeysToSpecIdxNaming: map[int32]int{},
 		}
 	})
 
@@ -526,6 +527,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate PrimaryIP6 from the same interface", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -556,6 +558,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate PrimaryIP4 from the same interface", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -586,6 +589,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate both PrimaryIP4 and PrimaryIP6 from that interface", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -626,6 +630,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate PrimaryIP6 from the same interface", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -666,6 +671,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate PrimaryIP4 from the same interface", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -700,6 +706,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate both PrimaryIP4 and PrimaryIP6 from that interface", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -726,6 +733,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate only PrimaryIP4", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -752,6 +760,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate only PrimaryIP6", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -786,6 +795,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should not populate PrimaryIP6", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -820,6 +830,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should not populate PrimaryIP4", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -854,6 +865,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate only PrimaryIP4", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -888,6 +900,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should populate only PrimaryIP6", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -926,6 +939,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should leave both PrimaryIP fields empty", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -968,6 +982,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 						data.NetworkDeviceKeysToSpecIdx[4001] = 1
 					})
 					It("should leave both PrimaryIP fields empty", func() {
@@ -995,6 +1010,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should not populate PrimaryIP6", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -1025,6 +1041,7 @@ var _ = Describe("UpdateStatus", func() {
 							},
 						}
 						data.NetworkDeviceKeysToSpecIdx[4000] = 0
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 					})
 					It("should extract IPs correctly, stripping CIDR notation", func() {
 						Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
@@ -1058,6 +1075,7 @@ var _ = Describe("UpdateStatus", func() {
 					}
 
 					data.NetworkDeviceKeysToSpecIdx[4000] = 0
+					data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 				})
 
 				It("Skips pseudo devices", func() {
@@ -1068,6 +1086,70 @@ var _ = Describe("UpdateStatus", func() {
 					Expect(network.Interfaces[0].Name).To(Equal("eth42"))
 					Expect(network.Interfaces[0].IP).ToNot(BeNil())
 					Expect(network.Interfaces[0].IP.MACAddr).To(Equal("mac-4000"))
+				})
+			})
+
+			Context("interface unit numbers", func() {
+				BeforeEach(func() {
+					vmCtx.MoVM.Guest = &vimtypes.GuestInfo{
+						Net: []vimtypes.GuestNicInfo{
+							{
+								DeviceConfigId: 4000,
+								MacAddress:     "mac-4000",
+							},
+						},
+					}
+
+					vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{Name: "eth42"},
+					}
+
+					data.NetworkDeviceKeysToSpecIdx[4000] = 0
+					data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
+				})
+
+				When("VMNetworkUnitNumbers is enabled (unit map populated)", func() {
+					BeforeEach(func() {
+						data.NetworkDeviceKeysToUnitNumber = map[int32]int32{4000: 9}
+					})
+
+					It("populates the status unitNumber for the entry's device", func() {
+						network := vmCtx.VM.Status.Network
+						Expect(network).ToNot(BeNil())
+						Expect(network.Interfaces).To(HaveLen(1))
+						Expect(network.Interfaces[0].Name).To(Equal("eth42"))
+						Expect(network.Interfaces[0].UnitNumber).To(Equal(ptr.To(int32(9))))
+					})
+				})
+
+				When("VMNetworkUnitNumbers is disabled (unit map nil)", func() {
+					It("never writes the status unitNumber field", func() {
+						network := vmCtx.VM.Status.Network
+						Expect(network).ToNot(BeNil())
+						Expect(network.Interfaces).To(HaveLen(1))
+						Expect(network.Interfaces[0].UnitNumber).To(BeNil())
+					})
+				})
+
+				When("the spec interface is a numbered miss (naming map only)", func() {
+					BeforeEach(func() {
+						// Authoritative map deliberately omits the device (the
+						// interface's declared unit has no device); only the
+						// name-resolution map carries the entry, so the status
+						// entry keeps its name (G13/I15). The unit still comes
+						// from the observed-device map.
+						data.NetworkDeviceKeysToSpecIdx = map[int32]int{}
+						data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
+						data.NetworkDeviceKeysToUnitNumber = map[int32]int32{4000: 9}
+					})
+
+					It("keeps the interface name and still reports the observed unit", func() {
+						network := vmCtx.VM.Status.Network
+						Expect(network).ToNot(BeNil())
+						Expect(network.Interfaces).To(HaveLen(1))
+						Expect(network.Interfaces[0].Name).To(Equal("eth42"))
+						Expect(network.Interfaces[0].UnitNumber).To(Equal(ptr.To(int32(9))))
+					})
 				})
 			})
 
@@ -1093,6 +1175,7 @@ var _ = Describe("UpdateStatus", func() {
 					}
 
 					data.NetworkDeviceKeysToSpecIdx[4000] = 0
+					data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 				})
 
 				It("Reports all interfaces", func() {
@@ -1135,6 +1218,8 @@ var _ = Describe("UpdateStatus", func() {
 
 					data.NetworkDeviceKeysToSpecIdx[4000] = 1
 					data.NetworkDeviceKeysToSpecIdx[4001] = 0
+					data.NetworkDeviceKeysToSpecIdxNaming[4000] = 1
+					data.NetworkDeviceKeysToSpecIdxNaming[4001] = 0
 				})
 
 				It("Reports all interfaces", func() {
@@ -1415,6 +1500,7 @@ var _ = Describe("UpdateStatus", func() {
 						},
 					}
 					data.NetworkDeviceKeysToSpecIdx[4000] = 0
+					data.NetworkDeviceKeysToSpecIdxNaming[4000] = 0
 				})
 
 				It("should set VirtualMachineGuestNetworkConfigSynced condition to False", func() {
@@ -5595,7 +5681,8 @@ var _ = Describe("Group status", func() {
 			&vmCtx.MoVM)).To(Succeed())
 
 		data = vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: map[int32]int{},
+			NetworkDeviceKeysToSpecIdx:       map[int32]int{},
+			NetworkDeviceKeysToSpecIdxNaming: map[int32]int{},
 		}
 	})
 
@@ -5714,7 +5801,8 @@ var _ = Describe("Hardware status", func() {
 			&vmCtx.MoVM)).To(Succeed())
 
 		data = vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: map[int32]int{},
+			NetworkDeviceKeysToSpecIdx:       map[int32]int{},
+			NetworkDeviceKeysToSpecIdxNaming: map[int32]int{},
 		}
 	})
 
@@ -6438,7 +6526,8 @@ var _ = Describe("ExtraConfig status", func() {
 			&vmCtx.MoVM)).To(Succeed())
 
 		data = vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: map[int32]int{},
+			NetworkDeviceKeysToSpecIdx:       map[int32]int{},
+			NetworkDeviceKeysToSpecIdxNaming: map[int32]int{},
 		}
 	})
 
@@ -7034,7 +7123,8 @@ var _ = Describe("Guest status", func() {
 			&vmCtx.MoVM)).To(Succeed())
 
 		data = vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: map[int32]int{},
+			NetworkDeviceKeysToSpecIdx:       map[int32]int{},
+			NetworkDeviceKeysToSpecIdxNaming: map[int32]int{},
 		}
 	})
 
@@ -7135,7 +7225,8 @@ var _ = Describe("Snapshot status", func() {
 			&vmCtx.MoVM)).To(Succeed())
 
 		data = vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: map[int32]int{},
+			NetworkDeviceKeysToSpecIdx:       map[int32]int{},
+			NetworkDeviceKeysToSpecIdxNaming: map[int32]int{},
 		}
 	})
 

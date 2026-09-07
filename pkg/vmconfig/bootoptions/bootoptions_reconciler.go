@@ -231,8 +231,11 @@ func reconcileBootOrder(
 				VM:      vm,
 			}
 
-			// Get map which maps device keys to index in vm.spec.network.interfaces
-			networkDeviceKeysToSpecIdx := network.MapEthernetDevicesToSpecIdx(vmCtx, k8sClient, moVM)
+			// Get map which maps device keys to index in vm.spec.network.interfaces.
+			// Boot-order device selection must use the authoritative exact-only map
+			// only: the second (name-resolution) return may carry relaxed fallback
+			// entries for numbered interfaces and must never point boot at hardware.
+			networkDeviceKeysToSpecIdx, _ := network.MapEthernetDevicesToSpecIdx(vmCtx, k8sClient, moVM)
 
 			// Search map for index matching the one found above. If found, then we
 			// have our target deviceKey. We can then append the correct

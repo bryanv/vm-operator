@@ -3493,7 +3493,7 @@ func (v validator) validateImmutableVMAffinity(
 // - vm.Spec.Bootstrap.CloudInit.InstanceID (immutable if set)
 // - vm.Spec.Hardware.*Controllers
 // - vm.Spec.Advanced.{vmx-tagged first-class fields} (TelcoVMServiceAPI)
-// - vm.Spec.Network.Interfaces[i].{Type,VMXNet3,VNUMANodeID} (TelcoVMServiceAPI)
+// - vm.Spec.Network.Interfaces[i] (TelcoVMServiceAPI or VMNetworkUnitNumbers)
 // Fields that are immutable will not be validated.
 func (v validator) validateFieldsDuringSchemaUpgrade(
 	ctx *pkgctx.WebhookRequestContext,
@@ -3514,9 +3514,16 @@ func (v validator) validateFieldsDuringSchemaUpgrade(
 		allErrs = append(allErrs,
 			validateAdvancedVMXFieldsNotChanged(specPath, vm.Spec.Advanced, oldVM.Spec.Advanced)...)
 		allErrs = append(allErrs,
-			validateNICBackfilledFieldsNotChanged(specPath, vm, oldVM)...)
-		allErrs = append(allErrs,
 			validateComputeConfigBackfilledFieldsNotChanged(specPath, vm, oldVM)...)
+	}
+
+	// The schema upgrade records a VM's observed NIC unit numbers into
+	// spec.network.interfaces when VMNetworkUnitNumbers is enabled, so the
+	// interfaces guard applies under that capability too (G16), not only
+	// under TelcoVMServiceAPI, which backfills the same fields.
+	if features := pkgcfg.FromContext(ctx).Features; features.TelcoVMServiceAPI || features.VMNetworkUnitNumbers {
+		allErrs = append(allErrs,
+			validateNICBackfilledFieldsNotChanged(specPath, vm, oldVM)...)
 	}
 
 	if !pkgcfg.FromContext(ctx).Features.VMSharedDisks {

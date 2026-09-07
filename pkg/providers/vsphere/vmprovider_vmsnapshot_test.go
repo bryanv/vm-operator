@@ -5,6 +5,8 @@
 package vsphere_test
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"time"
 
@@ -17,17 +19,25 @@ import (
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
+	vimtypes "github.com/vmware/govmomi/vim25/types"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
 	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
+	ctxop "github.com/vmware-tanzu/vm-operator/pkg/context/operation"
 	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere"
+	upgradevm "github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/upgrade/virtualmachine"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine"
 	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/kube/cource"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ovfcache"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	vmconfunmanagedvolsfil "github.com/vmware-tanzu/vm-operator/pkg/vmconfig/volumes/unmanaged/backfill"
 	vmconfunmanagedvolsreg "github.com/vmware-tanzu/vm-operator/pkg/vmconfig/volumes/unmanaged/register"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
@@ -656,6 +666,333 @@ var _ = Describe(
 					Entry("Spec.VMName belongs to this VM but the label is stale/wrong", false, true, true),
 					Entry("label belongs to this VM but Spec.VMName belongs elsewhere", true, false, false),
 				)
+			})
+		})
+	})
+
+// This Describe covers the NIC unit-number interplay with snapshot revert
+// (spec 006 Q8, T031):
+//
+//   - restoreVMSpecFromSnapshot swaps the VM's spec AND annotations from the
+//     backup YAML stored in the snapshot's ExtraConfig, so backfilled unit
+//     numbers and the FeatureVersionNICUnitNumbers bit travel with the
+//     snapshot. Reverting to a snapshot taken before the backfill drops the
+//     bit, IsObjectUpgraded fails again, and the schema-upgrade backfill
+//     re-records the observed slots.
+//   - The imported-snapshot fallback (no backup YAML + ImportedSnapshotAnnotation)
+//     synthesizes interfaces from the observed hardware; with
+//     VMNetworkUnitNumbers enabled it now records the observed unit numbers
+//     directly (I29) instead of leaving them nil for the mutator to invent.
+var _ = Describe(
+	"VirtualMachineSnapshot Unit Number Revert",
+	Label(testlabels.VCSim),
+	Label(testlabels.Snapshot), func() {
+
+		var (
+			parentCtx   context.Context
+			initObjects []ctrlclient.Object
+			testConfig  builder.VCSimTestConfig
+			ctx         *builder.TestContextForVCSim
+			vmProvider  providers.VirtualMachineProviderInterface
+			nsInfo      builder.WorkloadNamespaceInfo
+
+			vm      *vmopv1.VirtualMachine
+			vmClass *vmopv1.VirtualMachineClass
+			vcVM    *object.VirtualMachine
+
+			vmSnapshot *vmopv1.VirtualMachineSnapshot
+
+			reconcileUntilRevert func(
+				testCtx *builder.TestContextForVCSim,
+				provider providers.VirtualMachineProviderInterface,
+				vm *vmopv1.VirtualMachine) error
+		)
+
+		BeforeEach(func() {
+			parentCtx = pkgcfg.NewContextWithDefaultConfig()
+			parentCtx = ctxop.WithContext(parentCtx)
+			parentCtx = ovfcache.WithContext(parentCtx)
+			parentCtx = cource.WithContext(parentCtx)
+			pkgcfg.SetContext(parentCtx, func(config *pkgcfg.Config) {
+				config.AsyncCreateEnabled = false
+				config.AsyncSignalEnabled = false
+			})
+			testConfig = builder.VCSimTestConfig{
+				WithContentLibrary: true,
+				WithVMSnapshots:    true,
+				WithNetworkEnv:     builder.NetworkEnvNamed,
+			}
+
+			vmClass = builder.DummyVirtualMachineClassGenName()
+			vm = builder.DummyBasicVirtualMachine("test-vm", "")
+			vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+				Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:    "eth0",
+						Network: &vmopv1common.PartialObjectRef{Name: "VM Network"},
+					},
+				},
+			}
+		})
+
+		JustBeforeEach(func() {
+			ctx = suite.NewTestContextForVCSimWithParentContext(
+				parentCtx, testConfig, initObjects...)
+			pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+				config.MaxDeployThreadsOnProvider = 1
+			})
+			vmProvider = vsphere.NewVSphereVMProviderFromClient(
+				ctx, ctx.Client, ctx.Recorder)
+			nsInfo = ctx.CreateWorkloadNamespace()
+
+			vmClass.Namespace = nsInfo.Namespace
+			Expect(ctx.Client.Create(ctx, vmClass)).To(Succeed())
+
+			clusterVMI1 := &vmopv1.ClusterVirtualMachineImage{}
+			Expect(ctx.Client.Get(
+				ctx, ctrlclient.ObjectKey{Name: ctx.ContentLibraryItem1Name},
+				clusterVMI1)).To(Succeed())
+
+			vm.Namespace = nsInfo.Namespace
+			vm.Spec.ClassName = vmClass.Name
+			vm.Spec.ImageName = clusterVMI1.Name
+			vm.Spec.Image.Kind = cvmiKind
+			vm.Spec.Image.Name = clusterVMI1.Name
+			vm.Spec.StorageClass = ctx.StorageClassName
+
+			Expect(ctx.Client.Create(ctx, vm)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			vmClass = nil
+			vm = nil
+			vcVM = nil
+			vmSnapshot = nil
+
+			ctx.AfterEach()
+			ctx = nil
+			initObjects = nil
+			vmProvider = nil
+			nsInfo = builder.WorkloadNamespaceInfo{}
+		})
+
+		// createSnapshotOnVcVM creates a vSphere snapshot plus a ready snapshot
+		// CR (marked Created/Ready so the snapshot workflow will not touch it),
+		// optionally annotated as an imported snapshot.
+		createSnapshotOnVcVM := func(imp bool) {
+			GinkgoHelper()
+
+			task, err := vcVM.CreateSnapshot(
+				ctx, vmSnapshot.Name, "unit-number snapshot", false, false)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task.Wait(ctx)).To(Succeed())
+
+			conditions.MarkTrue(vmSnapshot, vmopv1.VirtualMachineSnapshotCreatedCondition)
+			conditions.MarkTrue(vmSnapshot, vmopv1.VirtualMachineSnapshotReadyCondition)
+			vmSnapshot.Namespace = nsInfo.Namespace
+			if imp {
+				vmSnapshot.Annotations[vmopv1.ImportedSnapshotAnnotation] = ""
+			}
+			Expect(ctx.Client.Create(ctx, vmSnapshot)).To(Succeed())
+
+			// Snapshot should be owned by the VM resource.
+			o := vmopv1.VirtualMachine{}
+			Expect(ctx.Client.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), &o)).To(Succeed())
+			Expect(controllerutil.SetOwnerReference(&o, vmSnapshot, ctx.Scheme)).To(Succeed())
+			Expect(ctx.Client.Update(ctx, vmSnapshot)).To(Succeed())
+		}
+
+		// observedNICUnitNumber returns the observed unit number of the VM's
+		// first ethernet device.
+		observedNICUnitNumber := func() int32 {
+			GinkgoHelper()
+
+			var moVM mo.VirtualMachine
+			Expect(vcVM.Properties(ctx, vcVM.Reference(), []string{"config"}, &moVM)).To(Succeed())
+			devList := object.VirtualDeviceList(moVM.Config.Hardware.Device)
+			ethCards := devList.SelectByType((*vimtypes.VirtualEthernetCard)(nil))
+			Expect(ethCards).ToNot(BeEmpty())
+			unit := ethCards[0].GetVirtualDevice().UnitNumber
+			Expect(unit).ToNot(BeNil())
+			return *unit
+		}
+
+		// reconcileUntilRevert drives CreateOrUpdateVirtualMachine until the
+		// snapshot revert runs (returning ErrSnapshotRevert), tolerating the
+		// pre-revert no-requeue errors (backup/schema/object re-upgrades) that
+		// exit the reconcile before step 9.
+		reconcileUntilRevert = func(
+			testCtx *builder.TestContextForVCSim,
+			provider providers.VirtualMachineProviderInterface,
+			vm *vmopv1.VirtualMachine) error {
+
+			var err error
+			for i := 0; i < 10; i++ {
+				err = provider.CreateOrUpdateVirtualMachine(ctxop.WithContext(testCtx), vm)
+				switch {
+				case errors.Is(err, vsphere.ErrSnapshotRevert):
+					return err
+				case err == nil,
+					errors.Is(err, vsphere.ErrUpgradeSchema),
+					errors.Is(err, vsphere.ErrUpgradeObject),
+					errors.Is(err, vsphere.ErrBackup):
+					// Pre-revert no-requeues: keep driving.
+				default:
+					return err
+				}
+			}
+			return err
+		}
+
+		Context("revert to a snapshot taken before the unit-number backfill", func() {
+
+			BeforeEach(func() {
+				vmSnapshot = builder.DummyVirtualMachineSnapshot(
+					"", "test-pre-backfill-snap", vm.Name)
+			})
+
+			It("drops the feature-version bit on revert and the backfill re-records the slots", func() {
+				By("creating and fully reconciling the VM with the feature disabled")
+				Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+				vcVM = ctx.GetVMFromMoID(vm.Status.UniqueID)
+				Expect(vcVM).ToNot(BeNil())
+
+				// Feature version is base only: the VM is upgraded, but no NIC
+				// unit numbers were backfilled while the flag was off.
+				Expect(vm.Annotations).To(HaveKeyWithValue(
+					pkgconst.UpgradedToFeatureVersionAnnotationKey, "1"))
+				Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+
+				By("snapshotting the pre-backfill state")
+				createSnapshotOnVcVM(false)
+
+				By("enabling the feature and letting the schema upgrade backfill run")
+				pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+				// The feature-version-only upgrade runs the backfill inline,
+				// then the config reconcile no-requeues with ErrUpgradeObject
+				// to re-reconcile the upgraded object on the next call.
+				err := vmProvider.CreateOrUpdateVirtualMachine(ctxop.WithContext(ctx), vm)
+				Expect(err == nil ||
+					errors.Is(err, vsphere.ErrUpgradeSchema) ||
+					errors.Is(err, vsphere.ErrUpgradeObject)).To(BeTrue())
+
+				// The backfill recorded the observed slot and stamped the bit.
+				Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+					To(Equal(ptr.To(observedNICUnitNumber())))
+				Expect(vm.Annotations).To(HaveKeyWithValue(
+					pkgconst.UpgradedToFeatureVersionAnnotationKey, "17"))
+
+				By("reverting to the pre-backfill snapshot")
+				vm.Spec.CurrentSnapshotName = vmSnapshot.Name
+				err = reconcileUntilRevert(ctx, vmProvider, vm)
+				Expect(errors.Is(err, vsphere.ErrSnapshotRevert)).To(BeTrue())
+
+				// The revert swapped in the snapshot's spec AND annotations:
+				// no unit numbers, and the feature-version bit is gone (the
+				// snapshot predates the feature).
+				Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+				Expect(vm.Annotations).To(HaveKeyWithValue(
+					pkgconst.UpgradedToFeatureVersionAnnotationKey, "1"))
+
+				By("re-running the schema upgrade on the reverted VM")
+				var moVM mo.VirtualMachine
+				Expect(vcVM.Properties(ctx, vcVM.Reference(), []string{"config"}, &moVM)).To(Succeed())
+				// ReconcileSchemaUpgrade no-requeues with ErrUpgradeObject
+				// whenever it modified the object.
+				Expect(upgradevm.ReconcileSchemaUpgrade(
+					ctx, ctx.Client, vm, moVM)).To(
+					MatchError(upgradevm.ErrUpgradeObject))
+
+				// IsObjectUpgraded failed (feature version 1 vs target 17), so
+				// the NIC backfill re-ran and recorded the observed slot again.
+				Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+					To(Equal(ptr.To(observedNICUnitNumber())))
+				Expect(vm.Annotations).To(HaveKeyWithValue(
+					pkgconst.UpgradedToFeatureVersionAnnotationKey, "17"))
+			})
+		})
+
+		Context("revert to an imported snapshot with no backup YAML", func() {
+
+			BeforeEach(func() {
+				vmSnapshot = builder.DummyVirtualMachineSnapshot(
+					"", "test-imported-snap", vm.Name)
+
+				// Skip the backup YAML write (reconcileBackupState returns
+				// early for CAPI-labeled VMs) so the snapshot's ExtraConfig
+				// lacks VMResourceYAMLExtraConfigKey and the revert takes the
+				// synthesized-spec path. The label is removed before the
+				// revert so the revert flow itself is not skipped.
+				vm.Labels[kubeutil.CAPVClusterRoleLabelKey] = ""
+			})
+
+			It("synthesizes interfaces that carry the observed unit numbers", func() {
+				pkgcfg.SetContext(parentCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+
+				By("creating the VM on vSphere (first call creates it, then fails schema upgrade)")
+				var err error
+				for i := 0; i < 10 && vm.Status.UniqueID == ""; i++ {
+					err = vmProvider.CreateOrUpdateVirtualMachine(ctxop.WithContext(ctx), vm)
+					if vm.Status.UniqueID != "" {
+						break
+					}
+					Expect(err).To(HaveOccurred())
+				}
+				Expect(vm.Status.UniqueID).ToNot(BeEmpty())
+				vcVM = ctx.GetVMFromMoID(vm.Status.UniqueID)
+				Expect(vcVM).ToNot(BeNil())
+
+				By("snapshotting the VM before any backup YAML exists")
+				createSnapshotOnVcVM(true)
+
+				By("reconciling the VM to a settled state (backup YAML now written, snapshot unaffected)")
+				Expect(vm.Labels).ToNot(BeNil())
+				delete(vm.Labels, kubeutil.CAPVClusterRoleLabelKey)
+				Expect(ctx.Client.Update(ctx, vm)).To(Succeed())
+				Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+
+				By("reverting to the imported snapshot")
+				vm.Spec.CurrentSnapshotName = vmSnapshot.Name
+				err = reconcileUntilRevert(ctx, vmProvider, vm)
+				Expect(errors.Is(err, vsphere.ErrSnapshotRevert)).To(BeTrue())
+
+				// The synthesized spec approximates the VM from the snapshot's
+				// hardware: one interface, eth0, carrying the observed unit
+				// number directly (I29) — the spec matches the hardware as
+				// soon as the revert lands, with no window for the mutator to
+				// invent a slot. Annotations are synthesized empty.
+				Expect(vm.Annotations).To(BeEmpty())
+				Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+				Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth0"))
+				Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+					To(Equal(ptr.To(observedNICUnitNumber())))
+
+				By("re-running the schema upgrade on the reverted VM")
+				var moVM mo.VirtualMachine
+				Expect(vcVM.Properties(ctx, vcVM.Reference(), []string{"config"}, &moVM)).To(Succeed())
+
+				// The synthesized annotations are empty, so the first pass
+				// stamps the build/schema annotations and no-requeues; the
+				// second pass runs the feature backfills.
+				Expect(upgradevm.ReconcileSchemaUpgrade(
+					ctx, ctx.Client, vm, moVM)).To(
+					MatchError(upgradevm.ErrUpgradeSchema))
+				// The second pass runs the feature backfills and, having made
+				// modifications, no-requeues with ErrUpgradeObject.
+				Expect(upgradevm.ReconcileSchemaUpgrade(
+					ctx, ctx.Client, vm, moVM)).To(
+					MatchError(upgradevm.ErrUpgradeObject))
+
+				// Spec wins: the synthesized unit number is already correct,
+				// so the backfill leaves it untouched and only stamps the bit.
+				Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+					To(Equal(ptr.To(observedNICUnitNumber())))
+				Expect(vm.Annotations).To(HaveKeyWithValue(
+					pkgconst.UpgradedToFeatureVersionAnnotationKey, "17"))
 			})
 		})
 	})

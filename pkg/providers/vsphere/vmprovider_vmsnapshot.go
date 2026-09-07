@@ -35,6 +35,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/vmlifecycle"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	kubeutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 	vmconfunmanagedvolsfil "github.com/vmware-tanzu/vm-operator/pkg/vmconfig/volumes/unmanaged/backfill"
 	vmconfunmanagedvolsreg "github.com/vmware-tanzu/vm-operator/pkg/vmconfig/volumes/unmanaged/register"
@@ -716,9 +717,24 @@ func getVMYamlFromSnapshotFromSynthesizedSpec(
 			len(vNICs))
 
 		for i := range vNICs {
-			interfaces[i] = vmopv1.VirtualMachineNetworkInterfaceSpec{
+			iface := vmopv1.VirtualMachineNetworkInterfaceSpec{
 				Name: fmt.Sprintf("eth%d", i),
 			}
+
+			// Record the observed PCI unit number so the reverted VM's spec
+			// matches its hardware immediately (I29). Leaving it nil would let
+			// the mutation webhook invent a slot for the interface on the next
+			// admission, and under the unit-number identity model an invented
+			// slot can cost the interface its device. Like every other
+			// unitNumber write path, this is gated on the feature flag so the
+			// field does not appear while the feature is disabled.
+			if pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers {
+				if u := vNICs[i].GetVirtualDevice().UnitNumber; u != nil {
+					iface.UnitNumber = ptr.To(*u)
+				}
+			}
+
+			interfaces[i] = iface
 		}
 		vm.Spec.Network.Interfaces = interfaces
 	}

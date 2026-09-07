@@ -115,20 +115,95 @@ func MapEthernetDevicesToSpecIdx(
 		return nil
 	}
 
-	devices := object.VirtualDeviceList(vmMO.Config.Hardware.Device)
-	ethCards := devices.SelectByType((*vimtypes.VirtualEthernetCard)(nil))
-	devKeyToSpecIdx := make(map[int32]int)
+	var (
+		devices         = object.VirtualDeviceList(vmMO.Config.Hardware.Device)
+		ethCards        = devices.SelectByType((*vimtypes.VirtualEthernetCard)(nil))
+		interfaces      = vmCtx.VM.Spec.Network.Interfaces
+		devKeyToSpecIdx = make(map[int32]int)
+	)
+
+	unitNumbersEnabled := pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers
+	claimed := make([]bool, len(ethCards))
+
+	// Pass 1: exact unit-number claim for numbered interfaces. A declared
+	// unit number is the interface's identity for its device (spec.md G11):
+	// on a hit the card is claimed so the fallback passes cannot reuse it;
+	// on a miss the interface gets NO entry at all — it must not fall
+	// through to CR-based/positional matching, because a wrong match here
+	// feeds boot-order device selection (bootoptions reconciler) and could
+	// point network boot at the wrong physical NIC. The miss is not
+	// transient (G13): a unitNumber change is admitted on a powered-on VM
+	// but not applied until the next power-off, so callers tolerate the
+	// absence rather than this mapping relaxing.
+	if unitNumbersEnabled {
+		unitToIdx := make(map[int32]int, len(ethCards))
+		for i, dev := range ethCards {
+			if u := dev.GetVirtualDevice().UnitNumber; u != nil {
+				unitToIdx[*u] = i
+			}
+		}
+
+		for i := range interfaces {
+			if interfaces[i].UnitNumber == nil {
+				continue
+			}
+			if j, ok := unitToIdx[*interfaces[i].UnitNumber]; ok && !claimed[j] {
+				claimed[j] = true
+				devKeyToSpecIdx[ethCards[j].GetVirtualDevice().Key] = i
+			}
+		}
+	}
 
 	if !pkgcfg.FromContext(vmCtx).Features.MutableNetworks {
-		// For immutable, just zip these lists together. This assumes that the
-		// devices are in the same order as the VM Spec.Network.Interfaces.
-		for i := range min(len(ethCards), len(vmCtx.VM.Spec.Network.Interfaces)) {
-			devKeyToSpecIdx[ethCards[i].GetVirtualDevice().Key] = i
+		if !unitNumbersEnabled {
+			// For immutable, just zip these lists together. This assumes that the
+			// devices are in the same order as the VM Spec.Network.Interfaces.
+			for i := range min(len(ethCards), len(interfaces)) {
+				devKeyToSpecIdx[ethCards[i].GetVirtualDevice().Key] = i
+			}
+			return devKeyToSpecIdx
+		}
+
+		// Zip the un-numbered interfaces against the remaining unclaimed
+		// devices, in device order. Numbered interfaces are skipped: they
+		// resolve exclusively by their declared unit number above.
+		next := 0
+		for i := range interfaces {
+			if interfaces[i].UnitNumber != nil {
+				continue
+			}
+			for next < len(ethCards) && claimed[next] {
+				next++
+			}
+			if next >= len(ethCards) {
+				break
+			}
+			devKeyToSpecIdx[ethCards[next].GetVirtualDevice().Key] = i
+			claimed[next] = true
+			next++
 		}
 		return devKeyToSpecIdx
 	}
 
-	for i, interfaceSpec := range vmCtx.VM.Spec.Network.Interfaces {
+	// Mutable: per-interface provider-dispatched matching for the un-numbered
+	// interfaces only, consuming each matched card (numbered interfaces'
+	// claims are already carved out below so the matcher cannot reuse them).
+	if unitNumbersEnabled {
+		remaining := make(object.VirtualDeviceList, 0, len(ethCards))
+		for i, dev := range ethCards {
+			if !claimed[i] {
+				remaining = append(remaining, dev)
+			}
+		}
+		ethCards = remaining
+	}
+
+	for i, interfaceSpec := range interfaces {
+		if unitNumbersEnabled && interfaceSpec.UnitNumber != nil {
+			// Exact-only: claimed above, or deliberately unmapped on a miss —
+			// never eligible for CR-based matching.
+			continue
+		}
 		matchingIdx := FindMatchingEthCardForInterfaceSpec(vmCtx, client, interfaceSpec, ethCards)
 		if matchingIdx >= 0 {
 			devKeyToSpecIdx[ethCards[matchingIdx].GetVirtualDevice().Key] = i

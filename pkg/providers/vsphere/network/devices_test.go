@@ -25,6 +25,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
 
@@ -658,6 +659,389 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 					Expect(devKeyToIdx).To(HaveLen(1))
 					Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
 				})
+			})
+		})
+	})
+})
+
+var _ = Describe("MapEthernetDevicesToSpecIdx unit numbers", func() {
+
+	var (
+		client      ctrlclient.Client
+		initObjs    []ctrlclient.Object
+		vmCtx       pkgctx.VirtualMachineContext
+		devices     object.VirtualDeviceList
+		devKeyToIdx map[int32]int
+	)
+
+	BeforeEach(func() {
+		vm := &vmopv1.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "map-eth-dev-unit-test",
+				Namespace: "map-eth-dev-unit-test",
+			},
+			Spec: vmopv1.VirtualMachineSpec{
+				Network: &vmopv1.VirtualMachineNetworkSpec{},
+			},
+		}
+
+		vmCtx = pkgctx.VirtualMachineContext{
+			Context: pkgcfg.NewContextWithDefaultConfig(),
+			Logger:  suite.GetLogger().WithName("map_eth_devices_unit_numbers"),
+			VM:      vm,
+		}
+	})
+
+	JustBeforeEach(func() {
+		client = builder.NewFakeClient(initObjs...)
+
+		vmMo := mo.VirtualMachine{
+			Config: &vimtypes.VirtualMachineConfigInfo{
+				Hardware: vimtypes.VirtualHardware{
+					Device: devices,
+				},
+			},
+		}
+		devKeyToIdx = network.MapEthernetDevicesToSpecIdx(vmCtx, client, vmMo)
+	})
+
+	AfterEach(func() {
+		initObjs = nil
+		devices = nil
+	})
+
+	// dvpBacking builds a DVP-backed device like the mutable VDS fixtures
+	// above, optionally carrying a unit number.
+	dvpDevice := func(key int32, portgroup string, unit *int32) *vimtypes.VirtualVmxnet3 {
+		dev := &vimtypes.VirtualVmxnet3{}
+		dev.Key = key
+		dev.UnitNumber = unit
+		dev.Backing = &vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo{
+			Port: vimtypes.DistributedVirtualSwitchPortConnection{
+				PortgroupKey: portgroup,
+			},
+		}
+		return dev
+	}
+
+	Context("immutable networks (MutableNetworks off)", func() {
+		BeforeEach(func() {
+			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				config.Features.MutableNetworks = false
+			})
+		})
+
+		Context("flag enabled: numbered claims and zip remainder", func() {
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+				devices = append(devices,
+					dvpDevice(4000, "dvpg-1", ptr.To(int32(9))),
+					dvpDevice(4001, "dvpg-1", nil))
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+					{Name: "eth1"},
+				}
+			})
+
+			It("claims numbered interfaces by unit and zips the un-numbered remainder", func() {
+				Expect(devKeyToIdx).To(HaveLen(2))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+			})
+		})
+
+		Context("flag enabled: device order differs from spec order", func() {
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+				// A positional zip would pair eth0 with the unit-less device;
+				// the unit claim must win instead.
+				devices = append(devices,
+					dvpDevice(4001, "dvpg-1", nil),
+					dvpDevice(4000, "dvpg-1", ptr.To(int32(9))))
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+					{Name: "eth1"},
+				}
+			})
+
+			It("matches by unit when device order differs from spec order", func() {
+				Expect(devKeyToIdx).To(HaveLen(2))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+			})
+		})
+
+		Context("flag enabled: numbered miss", func() {
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+				// No device carries unit 12, so eth0 gets no entry at all —
+				// not a positional-zip fallback. eth1 zips the first
+				// unclaimed device (nil-unit devices are invisible to the
+				// unit map, so eth1's zip is the only way it maps).
+				devices = append(devices,
+					dvpDevice(4000, "dvpg-1", nil),
+					dvpDevice(4001, "dvpg-1", ptr.To(int32(9))))
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{Name: "eth0", UnitNumber: ptr.To(int32(12))},
+					{Name: "eth1"},
+				}
+			})
+
+			It("gives a numbered miss no entry and never zips it; un-numbered still zips", func() {
+				Expect(devKeyToIdx).To(HaveLen(1))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 1))
+			})
+		})
+
+		Context("flag disabled ignores unit numbers (original zip)", func() {
+			BeforeEach(func() {
+				// Default config: VMNetworkUnitNumbers is false.
+				devices = append(devices,
+					dvpDevice(4000, "dvpg-1", ptr.To(int32(9))),
+					dvpDevice(4001, "dvpg-1", ptr.To(int32(10))))
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{Name: "eth0", UnitNumber: ptr.To(int32(10))},
+					{Name: "eth1", UnitNumber: ptr.To(int32(9))},
+				}
+			})
+
+			It("zips positionally without consulting unit numbers", func() {
+				// Original behavior: position, not unit, decides.
+				Expect(devKeyToIdx).To(HaveLen(2))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+			})
+		})
+	})
+
+	Context("mutable networks (MutableNetworks on, VDS)", func() {
+		BeforeEach(func() {
+			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				config.Features.MutableNetworks = true
+				config.NetworkProviderType = pkgcfg.NetworkProviderTypeVDS
+				config.Features.VMNetworkUnitNumbers = true
+			})
+		})
+
+		const networkName = "network-1"
+
+		Context("a numbered interface claims by unit even when its CR matches another device", func() {
+			BeforeEach(func() {
+				// eth0's CR (dvpg-1) would CR-match dX, but eth0 declares unit
+				// 9 which is dY: the unit claim must win, and eth0's CR must
+				// not consume dX. eth1 (un-numbered, same network) then
+				// CR-matches dX.
+				devices = append(devices,
+					dvpDevice(4005, "dvpg-1", nil),
+					dvpDevice(4006, "dvpg-2", ptr.To(int32(9))))
+
+				initObjs = append(initObjs,
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth0", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-1",
+						},
+					},
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth1", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-1",
+						},
+					})
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: networkName},
+						UnitNumber: ptr.To(int32(9)),
+					},
+					{
+						Name:    "eth1",
+						Network: &vmopv1common.PartialObjectRef{Name: networkName},
+					},
+				}
+			})
+
+			It("claims by unit and leaves the CR device for the un-numbered interface", func() {
+				Expect(devKeyToIdx).To(HaveLen(2))
+				// eth0 claimed dY by unit (not dX by CR).
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4006), 0))
+				// eth1's CR match was not consumed by eth0.
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4005), 1))
+			})
+		})
+
+		Context("a numbered miss gets no entry and does not consume devices from CR matching", func() {
+			BeforeEach(func() {
+				// eth0 declares unit 12, which no device carries: no entry for
+				// eth0, and its miss must not block eth1's CR match. dY (unit
+				// 9) is unclaimed by any spec interface and stays unmapped.
+				devices = append(devices,
+					dvpDevice(4005, "dvpg-1", nil),
+					dvpDevice(4006, "dvpg-1", ptr.To(int32(9))))
+
+				initObjs = append(initObjs,
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth0", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-1",
+						},
+					},
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth1", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-1",
+						},
+					})
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: networkName},
+						UnitNumber: ptr.To(int32(12)),
+					},
+					{
+						Name:    "eth1",
+						Network: &vmopv1common.PartialObjectRef{Name: networkName},
+					},
+				}
+			})
+
+			It("the miss is unmapped and the un-numbered interface still CR-matches", func() {
+				Expect(devKeyToIdx).To(HaveLen(1))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4005), 1))
+			})
+		})
+
+		Context("the unit-claimed card is also the un-numbered interface's first CR match", func() {
+			BeforeEach(func() {
+				// Discriminates the claim order: dX (4006, dvpg-1) is the FIRST
+				// CR match for eth1's dvpg-1 CR, but eth0's unit 9 claims dX
+				// first, so without the remainder carve eth1's CR match would
+				// overwrite 4006 -> 1. eth0's own CR (dvpg-9) matches nothing,
+				// isolating the unit claim.
+				devices = append(devices,
+					dvpDevice(4006, "dvpg-1", ptr.To(int32(9))),
+					dvpDevice(4005, "dvpg-1", nil))
+
+				initObjs = append(initObjs,
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth0", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-9",
+						},
+					},
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth1", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-1",
+						},
+					})
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: networkName},
+						UnitNumber: ptr.To(int32(9)),
+					},
+					{
+						Name:    "eth1",
+						Network: &vmopv1common.PartialObjectRef{Name: networkName},
+					},
+				}
+			})
+
+			It("keeps the numbered claim over the later CR match", func() {
+				Expect(devKeyToIdx).To(HaveLen(2))
+				// eth0's unit claim on 4006 wins over eth1's first CR match.
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4006), 0))
+				// eth1 CR-matches the remaining device.
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4005), 1))
+			})
+		})
+
+		Context("flag off: unit numbers present but ignored in favor of CR matching", func() {
+			// G10 makes flag-off + backfilled unit numbers reachable; the
+			// mapping must follow the CRs exactly as before this feature.
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.MutableNetworks = true
+					config.NetworkProviderType = pkgcfg.NetworkProviderTypeVDS
+					config.Features.VMNetworkUnitNumbers = false
+				})
+
+				// eth0 declares unit 9 (device 4005) but its CR matches dvpg-2
+				// (device 4006); eth1's CR matches dvpg-1 (4005). With the flag
+				// off the CR matches must win.
+				devices = append(devices,
+					dvpDevice(4005, "dvpg-1", ptr.To(int32(9))),
+					dvpDevice(4006, "dvpg-2", ptr.To(int32(8))))
+
+				initObjs = append(initObjs,
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth0", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-2",
+						},
+					},
+					&netopv1alpha1.NetworkInterface{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      network.NetOPCRName(vmCtx.VM.Name, networkName, "eth1", false),
+							Namespace: vmCtx.VM.Namespace,
+						},
+						Status: netopv1alpha1.NetworkInterfaceStatus{
+							NetworkID: "dvpg-1",
+						},
+					})
+
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: networkName},
+						UnitNumber: ptr.To(int32(9)),
+					},
+					{
+						Name:    "eth1",
+						Network: &vmopv1common.PartialObjectRef{Name: networkName},
+					},
+				}
+			})
+
+			It("CR matching wins when the flag is off", func() {
+				Expect(devKeyToIdx).To(HaveLen(2))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4006), 0))
+				Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4005), 1))
 			})
 		})
 	})

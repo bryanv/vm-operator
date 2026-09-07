@@ -2398,7 +2398,10 @@ func reconcileStatusNetworkExtraConfig(
 	configInfo := *moVM.Config
 	observed := pkgutil.OptionValues(configInfo.ExtraConfig)
 	poweredOn := vm.Status.PowerState == vmopv1.VirtualMachinePowerStateOn
-	matcher := networkextraconfig.DefaultNICMatcher(configInfo.Hardware.Device)
+	matcher := networkextraconfig.DefaultNICMatcher(
+		configInfo.Hardware.Device,
+		vm.Spec.Network.Interfaces,
+		pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers)
 
 	overlay, blocked, blockedPowerOff := reconcileStatusNetworkExtraConfigInterfaces(
 		vmCtx, moVM, configInfo, observed, matcher)

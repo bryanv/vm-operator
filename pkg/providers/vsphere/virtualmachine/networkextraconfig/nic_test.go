@@ -25,6 +25,12 @@ func newVMXNet3Dev(key int32) *vimtypes.VirtualVmxnet3 {
 	return d
 }
 
+func newVMXNet3DevWithUnit(key, unit int32) *vimtypes.VirtualVmxnet3 {
+	d := newVMXNet3Dev(key)
+	d.UnitNumber = ptr.To(unit)
+	return d
+}
+
 func getVal(ov pkgutil.OptionValues, key string) (string, bool) {
 	return ov.GetString(key)
 }
@@ -34,7 +40,7 @@ var _ = Describe("DefaultNICMatcher / EthernetDeviceIndex", func() {
 		matcher := networkextraconfig.DefaultNICMatcher([]vimtypes.BaseVirtualDevice{
 			newVMXNet3Dev(4000),
 			newVMXNet3Dev(4001),
-		})
+		}, nil, false)
 
 		dev0 := matcher(vmopv1.VirtualMachineNetworkInterfaceSpec{Name: "eth0"}, 0)
 		Expect(dev0).ToNot(BeNil())
@@ -50,7 +56,7 @@ var _ = Describe("DefaultNICMatcher / EthernetDeviceIndex", func() {
 	})
 
 	It("returns nil for SR-IOV interface types", func() {
-		matcher := networkextraconfig.DefaultNICMatcher([]vimtypes.BaseVirtualDevice{newVMXNet3Dev(4000)})
+		matcher := networkextraconfig.DefaultNICMatcher([]vimtypes.BaseVirtualDevice{newVMXNet3Dev(4000)}, nil, false)
 		dev := matcher(vmopv1.VirtualMachineNetworkInterfaceSpec{
 			Name: "eth0",
 			Type: vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV,
@@ -59,7 +65,7 @@ var _ = Describe("DefaultNICMatcher / EthernetDeviceIndex", func() {
 	})
 
 	It("returns nil when no more hardware devices are available", func() {
-		matcher := networkextraconfig.DefaultNICMatcher(nil)
+		matcher := networkextraconfig.DefaultNICMatcher(nil, nil, false)
 		Expect(matcher(vmopv1.VirtualMachineNetworkInterfaceSpec{Name: "eth0"}, 0)).To(BeNil())
 	})
 
@@ -67,11 +73,11 @@ var _ = Describe("DefaultNICMatcher / EthernetDeviceIndex", func() {
 	// matching has no notion of interface identity, so reordering
 	// spec.network.interfaces (same Names/props, swapped slice positions)
 	// cross-wires each interface's ExtraConfig onto the wrong physical
-	// device — no hardware change required. See the TODO on
-	// DefaultNICMatcher: this must be revisited (and this test rewritten
-	// to assert the opposite) once matching moves to a stable per-NIC
-	// identity (e.g. the NIC unit-number feature).
-	It("cross-wires ExtraConfig when spec interfaces are reordered (documents current positional-matching limitation)", func() {
+	// device — no hardware change required. This now pins the zip for
+	// UN-NUMBERED interfaces (and the flag-off path); numbered interfaces
+	// resolve by unit number instead, so this limitation applies only to
+	// interfaces the feature cannot identify.
+	It("cross-wires ExtraConfig when un-numbered spec interfaces are reordered (documents positional-matching limitation)", func() {
 		hwDevs := []vimtypes.BaseVirtualDevice{newVMXNet3Dev(4000), newVMXNet3Dev(4001)}
 		ctx := context.Background()
 
@@ -86,7 +92,7 @@ var _ = Describe("DefaultNICMatcher / EthernetDeviceIndex", func() {
 
 		// Before: spec call order [eth1, eth2] lines up with hardware order
 		// [4000, 4001] — device 4000 (ethernet0) gets eth1's value.
-		before := networkextraconfig.DefaultNICMatcher(hwDevs)
+		before := networkextraconfig.DefaultNICMatcher(hwDevs, nil, false)
 		dev := before(eth1, 0)
 		ec := networkextraconfig.DesiredNICExtraConfig(ctx, eth1, dev.GetVirtualDevice().Key, nil)
 		v, _ := getVal(ec, "ethernet0.rssoffload")
@@ -101,7 +107,7 @@ var _ = Describe("DefaultNICMatcher / EthernetDeviceIndex", func() {
 		// second — while the hardware device list is untouched. Matching
 		// is purely call-order based, so it silently swaps which
 		// interface's properties reach which physical device.
-		after := networkextraconfig.DefaultNICMatcher(hwDevs)
+		after := networkextraconfig.DefaultNICMatcher(hwDevs, nil, false)
 		dev = after(eth2, 0)
 		ec = networkextraconfig.DesiredNICExtraConfig(ctx, eth2, dev.GetVirtualDevice().Key, nil)
 		v, _ = getVal(ec, "ethernet0.rssoffload")
@@ -111,6 +117,166 @@ var _ = Describe("DefaultNICMatcher / EthernetDeviceIndex", func() {
 		ec = networkextraconfig.DesiredNICExtraConfig(ctx, eth1, dev.GetVirtualDevice().Key, nil)
 		v, _ = getVal(ec, "ethernet1.rssoffload")
 		Expect(v).To(Equal("TRUE"), "device 4001 (ethernet1) now gets eth1's value instead of eth2's")
+	})
+})
+
+var _ = Describe("DefaultNICMatcher unit numbers", func() {
+
+	It("matches numbered interfaces by unit number when device order differs from spec order", func() {
+		hwDevs := []vimtypes.BaseVirtualDevice{
+			newVMXNet3DevWithUnit(4000, 8),
+			newVMXNet3DevWithUnit(4001, 9),
+		}
+		interfaces := []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+			{Name: "eth1", UnitNumber: ptr.To(int32(8))},
+		}
+		matcher := networkextraconfig.DefaultNICMatcher(hwDevs, interfaces, true)
+
+		// Spec order deliberately differs from device order.
+		dev0 := matcher(interfaces[0], 0)
+		Expect(dev0).ToNot(BeNil())
+		Expect(dev0.GetVirtualDevice().Key).To(Equal(int32(4001)))
+
+		dev1 := matcher(interfaces[1], 1)
+		Expect(dev1).ToNot(BeNil())
+		Expect(dev1.GetVirtualDevice().Key).To(Equal(int32(4000)))
+	})
+
+	It("returns nil for a numbered interface with no device at its slot", func() {
+		hwDevs := []vimtypes.BaseVirtualDevice{newVMXNet3DevWithUnit(4000, 8)}
+		interfaces := []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+		}
+		matcher := networkextraconfig.DefaultNICMatcher(hwDevs, interfaces, true)
+
+		// Exact-only: no device at the declared slot means no match — never
+		// a zip onto some other device's slot.
+		Expect(matcher(interfaces[0], 0)).To(BeNil())
+	})
+
+	It("zips un-numbered interfaces positionally against unclaimed devices", func() {
+		hwDevs := []vimtypes.BaseVirtualDevice{
+			newVMXNet3DevWithUnit(4000, 8),
+			newVMXNet3DevWithUnit(4001, 9),
+		}
+		interfaces := []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			{Name: "eth0"},
+			{Name: "eth1", UnitNumber: ptr.To(int32(9))},
+		}
+		matcher := networkextraconfig.DefaultNICMatcher(hwDevs, interfaces, true)
+
+		// The numbered interface claims 4001 by unit, even when consulted
+		// out of spec order.
+		dev1 := matcher(interfaces[1], 1)
+		Expect(dev1).ToNot(BeNil())
+		Expect(dev1.GetVirtualDevice().Key).To(Equal(int32(4001)))
+
+		// The un-numbered interface zips onto the remaining unclaimed device.
+		dev0 := matcher(interfaces[0], 0)
+		Expect(dev0).ToNot(BeNil())
+		Expect(dev0.GetVirtualDevice().Key).To(Equal(int32(4000)))
+	})
+
+	It("does not let an un-numbered interface steal a numbered interface's device (pre-claim)", func() {
+		// Device 4000 sits at the unit eth1 declares; without the pre-claim,
+		// the un-numbered eth0 consulted first would zip onto 4000.
+		hwDevs := []vimtypes.BaseVirtualDevice{
+			newVMXNet3DevWithUnit(4000, 9),
+			newVMXNet3DevWithUnit(4001, 8),
+		}
+		interfaces := []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			{Name: "eth0"},
+			{Name: "eth1", UnitNumber: ptr.To(int32(9))},
+		}
+		matcher := networkextraconfig.DefaultNICMatcher(hwDevs, interfaces, true)
+
+		dev0 := matcher(interfaces[0], 0)
+		Expect(dev0).ToNot(BeNil())
+		Expect(dev0.GetVirtualDevice().Key).To(Equal(int32(4001)), "un-numbered zip must skip the pre-claimed device")
+
+		dev1 := matcher(interfaces[1], 1)
+		Expect(dev1).ToNot(BeNil())
+		Expect(dev1.GetVirtualDevice().Key).To(Equal(int32(4000)))
+	})
+
+	It("ignores unit numbers entirely when the flag is off", func() {
+		hwDevs := []vimtypes.BaseVirtualDevice{
+			newVMXNet3DevWithUnit(4000, 8),
+			newVMXNet3DevWithUnit(4001, 9),
+		}
+		interfaces := []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+			{Name: "eth1"},
+		}
+		matcher := networkextraconfig.DefaultNICMatcher(hwDevs, interfaces, false)
+
+		// Pure positional zip: eth0 gets device 4000 despite declaring 9.
+		dev0 := matcher(interfaces[0], 0)
+		Expect(dev0.GetVirtualDevice().Key).To(Equal(int32(4000)))
+		dev1 := matcher(interfaces[1], 1)
+		Expect(dev1.GetVirtualDevice().Key).To(Equal(int32(4001)))
+	})
+})
+
+var _ = Describe("findOrCreateDeviceEdit via ReconcileNICFields", func() {
+	var (
+		vm vmopv1.VirtualMachine
+		ci vimtypes.VirtualMachineConfigInfo
+	)
+
+	BeforeEach(func() {
+		vm = vmopv1.VirtualMachine{}
+		vm.Status.PowerState = vmopv1.VirtualMachinePowerStateOff
+		vm.Spec.MemoryAdvanced = &vmopv1.VirtualMachineMemoryAdvancedSpec{ReservationLockedToMax: ptr.To(true)}
+		ci = vimtypes.VirtualMachineConfigInfo{Version: "vmx-21"}
+	})
+
+	ifaceWithUPTv2 := func() vmopv1.VirtualMachineNetworkInterfaceSpec {
+		return vmopv1.VirtualMachineNetworkInterfaceSpec{
+			VMXNet3: &vmopv1.VirtualMachineNetworkInterfaceVMXNet3Spec{UPTv2Enabled: ptr.To(true)},
+		}
+	}
+
+	It("does not Edit a device the same ConfigSpec Removes", func() {
+		dev := newVMXNet3Dev(4000)
+		removed := newVMXNet3Dev(4000)
+		cs := &vimtypes.VirtualMachineConfigSpec{
+			DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+				&vimtypes.VirtualDeviceConfigSpec{
+					Device:    removed,
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationRemove,
+				},
+			},
+		}
+
+		blocked, _ := networkextraconfig.ReconcileNICFields(vm, ifaceWithUPTv2(), dev, ci, cs, false)
+		Expect(blocked).To(BeEmpty())
+		// No Edit appended for the removed key: Remove + Add + Edit of the
+		// same key must not land in one ReconfigVM_Task.
+		Expect(cs.DeviceChange).To(HaveLen(1))
+		Expect(cs.DeviceChange[0].GetVirtualDeviceConfigSpec().Operation).
+			To(Equal(vimtypes.VirtualDeviceConfigSpecOperationRemove))
+		// The field was not written onto the device being replaced.
+		Expect(dev.Uptv2Enabled).To(BeNil())
+	})
+
+	It("reuses an existing Edit entry for the same key (dedupe preserved)", func() {
+		dev := newVMXNet3Dev(4000)
+		existing := newVMXNet3Dev(4000)
+		cs := &vimtypes.VirtualMachineConfigSpec{
+			DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+				&vimtypes.VirtualDeviceConfigSpec{
+					Device:    existing,
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationEdit,
+				},
+			},
+		}
+
+		_, _ = networkextraconfig.ReconcileNICFields(vm, ifaceWithUPTv2(), dev, ci, cs, false)
+		// No second Edit entry; the pre-existing entry's device is mutated.
+		Expect(cs.DeviceChange).To(HaveLen(1))
+		Expect(existing.Uptv2Enabled).To(Equal(ptr.To(true)))
 	})
 })
 

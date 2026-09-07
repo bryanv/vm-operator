@@ -967,7 +967,16 @@ func (s *Session) fixupMacAddressMutableNetworks(
 			continue
 		}
 
-		matchingIdx := network.FindMatchingEthCard(networkDevices, dev.EthCard.(vimtypes.BaseVirtualEthernetCard))
+		// Pass the result's unit number so the fixup re-identifies devices
+		// with the same exact-slot-only semantics as the reconcile pass. For
+		// a replaced device (EthCardKey zero, UpdatedEthCards set), this is how
+		// the NEWLY-added device — not the removed one — is located by its
+		// unit number, and its MAC learned.
+		var unitNumber *int32
+		if pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
+			unitNumber = dev.UnitNumber
+		}
+		matchingIdx := network.FindMatchingEthCard(networkDevices, dev.EthCard.(vimtypes.BaseVirtualEthernetCard), unitNumber)
 		if matchingIdx >= 0 {
 			matchDev := networkDevices[matchingIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
 			networkResults.Devices[idx].EthCardKey = matchDev.Key

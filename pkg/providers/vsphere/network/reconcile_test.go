@@ -6,11 +6,13 @@ package network_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/task"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -517,7 +519,7 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 		})
 
 		It("flag off: a unit number on the result is ignored (fallback matching)", func() {
-			// With the feature off, r.UnitNumber is nil in production (the
+			// With the feature off, dev.UnitNumber is nil in production (the
 			// population is flag-gated); a directly-constructed result with a
 			// unit number must likewise not trigger the exact-only path. The
 			// desired card backing-matches a device at a DIFFERENT slot, so
@@ -539,6 +541,83 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 			Expect(results.Devices[0].EthCardKey).To(Equal(int32(4000)))
 			Expect(results.Devices[0].MacAddress).To(Equal("aa:bb:cc:dd:ee:08"))
 			Expect(results.UpdatedEthCards).To(BeFalse())
+		})
+
+		It("flag off: an unmatched Add carries no unit number", func() {
+			// With the feature off the stamping path never runs: the Add is
+			// emitted exactly as before this feature, without a UnitNumber.
+			ctx := pkgcfg.NewContextWithDefaultConfig() // default config: flag off
+			dev := ethCard(0, nil, generated, "", "", netBacking(netB))
+			cards = object.VirtualDeviceList{
+				ethCard(4000, ptr.To(int32(8)), generated, "aa:bb:cc:dd:ee:08", "", netBacking(netA)),
+			}
+			results.Devices = []network.Device{
+				result("eth0", dev, ptr.To(int32(12))),
+			}
+
+			dcs, err := network.ReconcileNetworkInterfaces(ctx, results, cards)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(ops(dcs)).To(ConsistOf(
+				vimtypes.VirtualDeviceConfigSpecOperationRemove,
+				vimtypes.VirtualDeviceConfigSpecOperationAdd,
+			))
+			addDC := dcs[1].GetVirtualDeviceConfigSpec()
+			Expect(addDC.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
+			Expect(addDC.Device.GetVirtualDevice().UnitNumber).To(BeNil())
+		})
+
+		Describe("IsNICUnitNumberCollisionFault", func() {
+
+			It("classifies an InvalidDeviceSpec fault carrying the unitNumber property", func() {
+				// A BaseMethodFault is not itself an error: the fault always
+				// arrives wrapped, minimally in task.Error's
+				// LocalizedMethodFault as returned by a faulted task.
+				collision := &vimtypes.InvalidDeviceSpec{}
+				collision.Property = "unitNumber" // promoted field of InvalidVmConfig
+				Expect(network.IsNICUnitNumberCollisionFault(task.Error{
+					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{Fault: collision},
+				})).To(BeTrue())
+			})
+
+			It("classifies the fault the way govmomi surfaces task errors", func() {
+				// Mirror govmomi's own fault_test.go shape: task.Error carrying
+				// a LocalizedMethodFault, as returned by a faulted ReconfigVM_Task.
+				collision := &vimtypes.InvalidDeviceSpec{}
+				collision.Property = "unitNumber" // promoted field of InvalidVmConfig
+				taskErr := task.Error{
+					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{
+						LocalizedMessage: "A specified parameter was not correct: unitNumber",
+						Fault:            collision,
+					},
+				}
+				Expect(network.IsNICUnitNumberCollisionFault(taskErr)).To(BeTrue())
+
+				// And wrapped by intermediate layers with %w.
+				wrapped := fmt.Errorf("failed to reconfigure vm: %w", taskErr)
+				Expect(network.IsNICUnitNumberCollisionFault(wrapped)).To(BeTrue())
+			})
+
+			It("does not classify a different InvalidDeviceSpec property", func() {
+				other := &vimtypes.InvalidDeviceSpec{}
+				other.Property = "slotInfo"
+				Expect(network.IsNICUnitNumberCollisionFault(task.Error{
+					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{Fault: other},
+				})).To(BeFalse())
+			})
+
+			It("does not classify an out-of-range InvalidArgument fault (T001 E19)", func() {
+				invalidArg := &vimtypes.InvalidArgument{}
+				invalidArg.InvalidProperty = "unitNumber"
+				Expect(network.IsNICUnitNumberCollisionFault(task.Error{
+					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{Fault: invalidArg},
+				})).To(BeFalse())
+			})
+
+			It("does not classify nil or non-fault errors", func() {
+				Expect(network.IsNICUnitNumberCollisionFault(nil)).To(BeFalse())
+				Expect(network.IsNICUnitNumberCollisionFault(
+					fmt.Errorf("some transport error"))).To(BeFalse())
+			})
 		})
 
 		It("numbered miss does NOT fall through to a backing match or orphaned-CR edit", func() {
@@ -586,6 +665,11 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 			))
 			// No Edit: the miss must not reach the orphaned-CR path.
 			Expect(ops(dcs)).ToNot(ContainElement(vimtypes.VirtualDeviceConfigSpecOperationEdit))
+			// The miss Add is stamped with the declared unit number.
+			addDC := dcs[len(dcs)-1].GetVirtualDeviceConfigSpec()
+			Expect(addDC.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
+			Expect(addDC.Device.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().UnitNumber).
+				To(Equal(ptr.To(int32(12))))
 			Expect(results.UpdatedEthCards).To(BeTrue())
 		})
 
@@ -633,6 +717,9 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 				To(Equal(int32(4007)))
 			Expect(dcs[1].GetVirtualDeviceConfigSpec().Device.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().MacAddress).
 				To(BeEmpty())
+			// The Add is stamped with the newly-declared unit number.
+			Expect(dcs[1].GetVirtualDeviceConfigSpec().Device.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().UnitNumber).
+				To(Equal(ptr.To(int32(9))))
 			Expect(results.Devices[0].EthCardKey).To(Equal(int32(0)))
 			Expect(results.Devices[0].MacAddress).To(BeEmpty())
 		})

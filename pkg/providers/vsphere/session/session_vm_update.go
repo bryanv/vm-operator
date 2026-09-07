@@ -1673,6 +1673,20 @@ func doReconfigure(
 	UpdateVMGuestIDReconfiguredCondition(vm, configSpec, taskInfo)
 
 	if err != nil {
+		if network.IsNICUnitNumberCollisionFault(err) {
+			// A colliding explicit NIC unit number is a permanent error, not
+			// a retryable one: retrying an unchanged colliding payload faults
+			// identically forever (T001 Q4/E08). Surface NoRequeueError so
+			// the VM is not requeued; the original fault stays visible in the
+			// message and via the wrapped error below.
+			pkglog.FromContextOrDefault(ctx).Error(
+				err, "NIC unit number collision on reconfigure is not retryable")
+			return fmt.Errorf("failed to reconfigure vm: %w", pkgerr.NoRequeueError{
+				Message: fmt.Sprintf(
+					"NIC unit number collision: a device already occupies the requested unit number (permanent error, not retried): %v",
+					err),
+			})
+		}
 		return err
 	}
 

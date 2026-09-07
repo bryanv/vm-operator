@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	govmomifault "github.com/vmware/govmomi/fault"
 	"github.com/vmware/govmomi/object"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,6 +59,14 @@ func ReconcileNetworkInterfaces(
 		handled[idx] = true
 		ethCard := dev.EthCard.(vimtypes.BaseVirtualEthernetCard)
 
+		// Stamp the declared unit number onto the desired device up front
+		// (T001 confirmed vSphere honours an explicit UnitNumber on an Add):
+		// every device change this result can emit below — a replace Add, or
+		// a miss Add — must carry it, while the full-match branch emits no
+		// device change at all. Stamp once here so the branches stay stamp
+		// sites free.
+		ethCard.GetVirtualEthernetCard().GetVirtualDevice().UnitNumber = pkgptr.To(*dev.UnitNumber)
+
 		// Pass 1: exact unit-number claim. A declared unit number identifies
 		// specific hardware or nothing: on a miss the result must not fall
 		// back to MAC/ExternalID/backing matching, nor to the orphaned-CR
@@ -87,8 +96,6 @@ func ReconcileNetworkInterfaces(
 				// its unit number. On at least one VC build a replacement
 				// reissues the SAME Key (derived from the unit number), so
 				// an unchanged Key does not imply that nothing changed.
-				ethCard.GetVirtualEthernetCard().GetVirtualDevice().UnitNumber = pkgptr.To(*dev.UnitNumber)
-
 				replaceRemoves = append(replaceRemoves, &vimtypes.VirtualDeviceConfigSpec{
 					Device:    currentEthCards[matchingIdx],
 					Operation: vimtypes.VirtualDeviceConfigSpecOperationRemove,
@@ -106,10 +113,10 @@ func ReconcileNetworkInterfaces(
 			continue
 		}
 
-		// Miss at the declared slot: a plain Add of the desired device.
-		// The unit number is stamped onto the Add payload by the Add-path
-		// change (T018). The interface's old device — if unclaimed by any
-		// other result — is removed by the trailing unmatched-device pass.
+		// Miss at the declared slot: a plain Add of the desired device,
+		// already stamped with the declared unit number above. The
+		// interface's old device — if unclaimed by any other result — is
+		// removed by the trailing unmatched-device pass.
 		deviceChanges = append(deviceChanges, &vimtypes.VirtualDeviceConfigSpec{
 			Device:    dev.EthCard,
 			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
@@ -118,7 +125,11 @@ func ReconcileNetworkInterfaces(
 	}
 
 	// Pass 2: un-numbered results use the existing MAC/ExternalID/backing
-	// matching against whatever pass 1 left unclaimed.
+	// matching against whatever pass 1 left unclaimed. Results here carry
+	// no unit number by construction (pass 1 handled and marked every
+	// numbered result), so their Adds are emitted without a UnitNumber
+	// stamp — if pass 2 ever handles numbered results, its Add branch
+	// must stamp them the way pass 1 does.
 	for idx, dev := range results.Devices {
 		if handled[idx] {
 			continue
@@ -306,4 +317,39 @@ func ethCardMatchesDesired(ethDev, curDev *vimtypes.VirtualEthernetCard) bool {
 	}
 
 	return false
+}
+
+// nicUnitNumberCollisionProperty is the InvalidDeviceSpec Property value
+// vSphere reports when an explicit NIC unit number collides with an occupied
+// slot (T001 Q4/E08).
+const nicUnitNumberCollisionProperty = "unitNumber"
+
+// IsNICUnitNumberCollisionFault reports whether err is the fault vSphere
+// returns when an explicit NIC unit number collides with an already-occupied
+// slot: InvalidDeviceSpec with Property "unitNumber" (T001 Q4/E08, recorded
+// against a real vCenter and matching vcsim's simulated fault type).
+//
+// Such a collision is a PERMANENT error, not a retryable one: retrying an
+// unchanged colliding payload faults identically forever. Callers should
+// surface it as pkgerr.NoRequeueError. The classification is wired into the
+// session package's doReconfigure (session_vm_update.go), the shared
+// reconfigure entry that executes the ConfigSpec carrying the ethernet device
+// changes computed here.
+//
+// Note the deliberately narrow shape: an out-of-range unit number below the
+// ethernet band may be silently renumbered by vSphere rather than faulted,
+// and above the band it faults with InvalidArgument (T001 E19) — neither is
+// a collision, and neither matches here.
+func IsNICUnitNumberCollisionFault(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var spec *vimtypes.InvalidDeviceSpec
+	if _, ok := govmomifault.As(err, &spec); !ok {
+		return false
+	}
+
+	// vSphere reports the property exactly as "unitNumber"; compare exactly.
+	return spec.Property == nicUnitNumberCollisionProperty
 }

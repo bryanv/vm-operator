@@ -146,6 +146,11 @@ const (
 	// BestEffortRestartPolicy CRDs as well as the VirtualMachinePowerStateSynced
 	// condition's InfraInMaintenance reason.
 	CapabilityKeyVMEviction = "supports_infrapolicy_vm_evacuation"
+
+	// CapabilityKeyVMNetworkUnitNumbers is the name of the capability key
+	// defined in the Supervisor capabilities CRD for the VM Service's support
+	// for VM network interface unit numbers.
+	CapabilityKeyVMNetworkUnitNumbers = "supports_VM_service_network_unit_numbers"
 )
 
 var (
@@ -326,6 +331,8 @@ func updateCapabilitiesFeaturesFromCRD(
 			fs.ExtensionCompatConstraint = capStatus.Activated
 		case CapabilityKeyVMEviction:
 			fs.VMEviction = capStatus.Activated
+		case CapabilityKeyVMNetworkUnitNumbers:
+			fs.VMNetworkUnitNumbers = capStatus.Activated
 		}
 
 	}

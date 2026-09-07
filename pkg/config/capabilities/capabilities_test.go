@@ -989,6 +989,19 @@ var _ = Describe("UpdateCapabilitiesFeatures", func() {
 				Expect(pkgcfg.FromContext(ctx).Features.VMEviction).To(BeTrue())
 			})
 		})
+		Context(capabilities.CapabilityKeyVMNetworkUnitNumbers, func() {
+			BeforeEach(func() {
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers).To(BeFalse())
+				obj.Status.Supervisor[capabilities.CapabilityKeyVMNetworkUnitNumbers] = capv1.CapabilityStatus{
+					Activated: true,
+				}
+			})
+			Specify("Enabled", func() {
+				Expect(ok).To(BeTrue())
+				Expect(diff).To(Equal("VMNetworkUnitNumbers=true"))
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers).To(BeTrue())
+			})
+		})
 	})
 })
 
@@ -1071,6 +1084,9 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 			capabilities.CapabilityKeyVMEviction: {
 				Activated: true,
 			},
+			capabilities.CapabilityKeyVMNetworkUnitNumbers: {
+				Activated: true,
+			},
 		}
 
 		ok, diff = false, ""
@@ -1106,6 +1122,7 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 					config.Features.WorkloadNetworkConfiguration = true
 					config.Features.ExtensionCompatConstraint = true
 					config.Features.VMEviction = true
+					config.Features.VMNetworkUnitNumbers = true
 				})
 			})
 			Specify("capabilities did not change", func() {
@@ -1178,6 +1195,9 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 			Specify(capabilities.CapabilityKeyVMEviction, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.VMEviction).To(BeTrue())
 			})
+			Specify(capabilities.CapabilityKeyVMNetworkUnitNumbers, func() {
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers).To(BeTrue())
+			})
 		})
 
 		When("the capabilities are different", func() {
@@ -1203,11 +1223,12 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 					config.Features.WorkloadNetworkConfiguration = false
 					config.Features.ExtensionCompatConstraint = false
 					config.Features.VMEviction = false
+					config.Features.VMNetworkUnitNumbers = false
 				})
 			})
 			Specify("capabilities changed", func() {
 				Expect(ok).To(BeTrue())
-				Expect(diff).To(Equal("BringYourOwnEncryptionKey=true,ExtensionCompatConstraint=true,GuestCustomizationVCDParity=true,ImmutableClasses=true,InventoryContentLibrary=true,MutableNetworks=true,PerNamespaceNetworkProvider=true,StoragePolicyMutability=true,TKGMultipleCL=true,VMAffinityDuringExecution=true,VMEviction=true,VMGroups=true,VMPlacementPolicies=true,VMSharedDisks=true,VMSnapshots=true,VMVlanSubinterface=true,VMWaitForFirstConsumerPVC=true,VSpherePolicies=true,VirtualMachineConfigPolicy=true,WorkloadDomainIsolation=true,WorkloadIPv6=true,WorkloadNetworkConfiguration=true"))
+				Expect(diff).To(Equal("BringYourOwnEncryptionKey=true,ExtensionCompatConstraint=true,GuestCustomizationVCDParity=true,ImmutableClasses=true,InventoryContentLibrary=true,MutableNetworks=true,PerNamespaceNetworkProvider=true,StoragePolicyMutability=true,TKGMultipleCL=true,VMAffinityDuringExecution=true,VMEviction=true,VMGroups=true,VMNetworkUnitNumbers=true,VMPlacementPolicies=true,VMSharedDisks=true,VMSnapshots=true,VMVlanSubinterface=true,VMWaitForFirstConsumerPVC=true,VSpherePolicies=true,VirtualMachineConfigPolicy=true,WorkloadDomainIsolation=true,WorkloadIPv6=true,WorkloadNetworkConfiguration=true"))
 			})
 			Specify(capabilities.CapabilityKeyBringYourOwnKeyProvider, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.BringYourOwnEncryptionKey).To(BeFalse())
@@ -1274,6 +1295,9 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 			})
 			Specify(capabilities.CapabilityKeyVMEviction, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.VMEviction).To(BeFalse())
+			})
+			Specify(capabilities.CapabilityKeyVMNetworkUnitNumbers, func() {
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers).To(BeFalse())
 			})
 		})
 	})

@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	imgregv1a1 "github.com/vmware-tanzu/image-registry-operator-api/api/v1alpha1"
+	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
@@ -5809,6 +5810,270 @@ var _ = Describe("Hardware status", func() {
 	AfterEach(func() {
 		ctx.AfterEach()
 		ctx = nil
+	})
+
+	Context("NIC unit number placement", func() {
+		// enableNICCheck turns the VMNetworkUnitNumbers capability on in the
+		// request context; the NIC placement check (and its condition) only
+		// runs when it is enabled.
+		enableNICCheck := func() {
+			pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+				config.Features.VMNetworkUnitNumbers = true
+			})
+		}
+
+		netBacking := func(name string) vimtypes.BaseVirtualDeviceBackingInfo {
+			return &vimtypes.VirtualEthernetCardNetworkBackingInfo{
+				VirtualDeviceDeviceBackingInfo: vimtypes.VirtualDeviceDeviceBackingInfo{
+					DeviceName: name,
+				},
+			}
+		}
+
+		dvpBacking := func(pg string) vimtypes.BaseVirtualDeviceBackingInfo {
+			return &vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo{
+				Port: vimtypes.DistributedVirtualSwitchPortConnection{
+					PortgroupKey: pg,
+				},
+			}
+		}
+
+		ethCard := func(key int32, unit *int32, mac, externalID string, backing vimtypes.BaseVirtualDeviceBackingInfo) *vimtypes.VirtualEthernetCard {
+			return &vimtypes.VirtualEthernetCard{
+				VirtualDevice: vimtypes.VirtualDevice{
+					Key:        key,
+					UnitNumber: unit,
+					Backing:    backing,
+				},
+				MacAddress: mac,
+				ExternalId: externalID,
+			}
+		}
+
+		nicCondition := func() *metav1.Condition {
+			return conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareNICsVerified)
+		}
+
+		// expectVerified / expectDivergence assert the NIC sibling condition;
+		// the aggregate condition is asserted separately where it matters.
+		expectVerified := func() {
+			cond := nicCondition()
+			Expect(cond).ToNot(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		}
+
+		expectDivergence := func() {
+			cond := nicCondition()
+			Expect(cond).ToNot(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(vmopv1.VirtualMachineHardwareNICsMismatchReason))
+			Expect(cond.Message).To(ContainSubstring("eth0"))
+		}
+
+		var ifaces []vmopv1.VirtualMachineNetworkInterfaceSpec
+
+		BeforeEach(func() {
+			enableNICCheck()
+
+			// Drive the aggregate condition from the NIC check alone:
+			// neutralize the controllers, volumes, and CD-ROM checks.
+			vmCtx.VM.Spec.Hardware = nil
+			vmCtx.VM.Spec.Volumes = nil
+
+			// Replace the vcsim VM's real device list; tests add their own.
+			vmCtx.MoVM.Config = &vimtypes.VirtualMachineConfigInfo{
+				Hardware: vimtypes.VirtualHardware{
+					Device: []vimtypes.BaseVirtualDevice{},
+				},
+			}
+
+			ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{
+					Name:    "eth0",
+					Network: &vmopv1common.PartialObjectRef{Name: "net-a"},
+				},
+			}
+			vmCtx.VM.Spec.Network.Interfaces = ifaces
+		})
+
+		It("reports no divergence when the device at the declared slot matches", func() {
+			vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+			vmCtx.MoVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+				ethCard(4000, ptr.To(int32(9)), "", "", netBacking("net-a")),
+			}
+
+			Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+			expectVerified()
+			Expect(conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareDeviceConfigVerified).Status).
+				To(Equal(metav1.ConditionTrue))
+		})
+
+		It("reports a missing device at the declared slot as divergence without error (G13)", func() {
+			vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(12))
+			vmCtx.MoVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+				ethCard(4000, ptr.To(int32(9)), "", "", netBacking("net-a")),
+			}
+
+			Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+			expectDivergence()
+			Expect(conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareDeviceConfigVerified).Status).
+				To(Equal(metav1.ConditionFalse))
+		})
+
+		It("reports divergence when the device at the declared slot has different backing", func() {
+			vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+			vmCtx.MoVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+				ethCard(4000, ptr.To(int32(9)), "", "", netBacking("net-b")),
+			}
+
+			Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+			expectDivergence()
+		})
+
+		It("never reports un-numbered interfaces", func() {
+			// eth0 carries no unit number: no declared slot to verify, even
+			// with no observed devices at all.
+			Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+			expectVerified()
+		})
+
+		It("does not compare a MAC the interface does not specify (Generated)", func() {
+			// The interface pins no MAC; the device's MAC — whatever vSphere
+			// generated — must not trigger a divergence.
+			vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+			vmCtx.MoVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+				ethCard(4000, ptr.To(int32(9)), "aa:bb:cc:dd:ee:09", "", netBacking("net-a")),
+			}
+
+			Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+			expectVerified()
+		})
+
+		It("reports divergence when the interface specifies a MAC and the device's differs", func() {
+			vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+			vmCtx.VM.Spec.Network.Interfaces[0].MACAddr = "aa:bb:cc:dd:ee:01"
+			vmCtx.MoVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+				ethCard(4000, ptr.To(int32(9)), "aa:bb:cc:dd:ee:09", "", netBacking("net-a")),
+			}
+
+			Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+			expectDivergence()
+		})
+
+		When("VDS provider (ExternalID comparison via the NetOp interface CR)", func() {
+			var netIf *netopv1alpha1.NetworkInterface
+
+			BeforeEach(func() {
+				pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+					config.NetworkProviderType = pkgcfg.NetworkProviderTypeVDS
+				})
+
+				vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+				vmCtx.MoVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+					ethCard(4000, ptr.To(int32(9)), "", "ext-observed", dvpBacking("pg-1")),
+				}
+
+				// The desired state lives in the provider's interface CR: the
+				// matcher compares its ExternalID against the device's when
+				// non-empty, exactly as the reconcile path does.
+				netIf = &netopv1alpha1.NetworkInterface{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      network.NetOPCRName(vmCtx.VM.Name, "net-a", "eth0", false),
+						Namespace: vmCtx.VM.Namespace,
+					},
+				}
+				Expect(ctx.Client.Create(ctx, netIf)).To(Succeed())
+			})
+
+			createNetIfStatus := func(networkID, externalID string) {
+				netIf.Status = netopv1alpha1.NetworkInterfaceStatus{
+					NetworkID:  networkID,
+					ExternalID: externalID,
+				}
+				Expect(ctx.Client.Status().Update(ctx, netIf)).To(Succeed())
+			}
+
+			It("reports divergence when the desired ExternalID differs from the observed", func() {
+				createNetIfStatus("pg-1", "ext-desired")
+
+				Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+				expectDivergence()
+			})
+
+			It("reports no divergence when the desired ExternalID matches", func() {
+				createNetIfStatus("pg-1", "ext-observed")
+
+				Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+				expectVerified()
+			})
+		})
+
+		When("the VMNetworkUnitNumbers capability is disabled", func() {
+			BeforeEach(func() {
+				// The enclosing Context enables the flag; override it back off
+				// for this case (default suite config). A numbered interface
+				// with a missing slot must not produce any NIC condition — or
+				// any hardware verification at all, since neither capability
+				// gating the hardware pass is enabled.
+				pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = false
+				})
+
+				vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+			})
+
+			It("does not run the NIC check", func() {
+				Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+				Expect(nicCondition()).To(BeNil())
+				Expect(conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareDeviceConfigVerified)).
+					To(BeNil())
+			})
+		})
+
+		When("VMNetworkUnitNumbers is on but VMSharedDisks is off", func() {
+			// Regression guard: enabling the NIC capability widens the outer
+			// hardware-verification gate, but the controllers/volumes/CD-ROM
+			// checks are gated on VMSharedDisks inside the function — they
+			// must not run (and must not mark their conditions false for
+			// never-disk-backfilled specs) merely because the NIC capability
+			// is enabled.
+			BeforeEach(func() {
+				enableNICCheck()
+				pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+					config.Features.VMSharedDisks = false
+				})
+
+				// No spec hardware (never disk-backfilled), but the vSphere
+				// VM has an SCSI controller: the controller check would report
+				// "unexpected controllers" if it ran.
+				vmCtx.VM.Spec.Hardware = nil
+				vmCtx.VM.Spec.Volumes = nil
+				vmCtx.MoVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+					&vimtypes.VirtualSCSIController{VirtualController: vimtypes.VirtualController{
+						VirtualDevice: vimtypes.VirtualDevice{Key: 1000},
+					}},
+				}
+			})
+
+			It("computes the NIC condition but no disk/CD-ROM/controller conditions", func() {
+				Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+				// The disk checks must not run: their sibling conditions stay
+				// unset (in particular not False for the never-disk-backfilled
+				// spec with an observed SCSI controller).
+				Expect(conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareControllersVerified)).
+					To(BeNil())
+				Expect(conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareVolumesVerified)).
+					To(BeNil())
+				Expect(conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareCDROMVerified)).
+					To(BeNil())
+				// The aggregate runs (the NIC check is part of it) and must not
+				// be failed by the unchecked disk domains.
+				cond := conditions.Get(vmCtx.VM, vmopv1.VirtualMachineHardwareDeviceConfigVerified)
+				Expect(cond).ToNot(BeNil())
+				Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			})
+		})
 	})
 
 	Context("reconcileStatusHardware", func() {

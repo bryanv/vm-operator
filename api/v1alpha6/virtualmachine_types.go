@@ -107,6 +107,12 @@ const (
 	// CD-ROM devices match the desired state specified in the spec.
 	VirtualMachineHardwareCDROMVerified = "VirtualMachineHardwareCDROMVerified"
 
+	// VirtualMachineHardwareNICsVerified indicates that the VM's network
+	// interface devices carrying a unit number match the desired state
+	// specified in the spec. It is only computed when the
+	// VMNetworkUnitNumbers capability is enabled.
+	VirtualMachineHardwareNICsVerified = "VirtualMachineHardwareNICsVerified"
+
 	// VirtualMachinePowerStateSynced indicates the VM's power state is synced
 	// to the desired state.
 	VirtualMachinePowerStateSynced = "VirtualMachinePowerStateSynced"
@@ -173,6 +179,11 @@ const (
 	// VirtualMachineHardwareCDROMMismatchReason indicates that the VM's
 	// CD-ROM device configuration does not match the desired state specified in the spec.
 	VirtualMachineHardwareCDROMMismatchReason = "HardwareCDROMMismatch"
+
+	// VirtualMachineHardwareNICsMismatchReason indicates that the VM's
+	// network interface configuration (for interfaces carrying a unit
+	// number) does not match the desired state specified in the spec.
+	VirtualMachineHardwareNICsMismatchReason = "HardwareNICsMismatch"
 
 	// VirtualMachineHardwareDeviceConfigMismatchReason indicates that the VM's
 	// hardware device configuration does not match the desired state specified

@@ -57,6 +57,7 @@ const (
 	TelcoVMServiceAPICapabilityName         = "supports_telco_vm_service_api"
 	WorkloadIPv6CapabilityName              = "supports_workload_ipv6"
 	CSIBackupAPICapabilityName              = "supports_CSI_Backup_API"
+	VMNetworkUnitNumbersCapabilityName      = "supports_VM_service_network_unit_numbers"
 
 	// VMEvictionCapabilityName gates the AutomaticVMEvictionPolicy and
 	// BestEffortRestartPolicy CRDs; must match

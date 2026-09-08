@@ -203,6 +203,17 @@ var _ = Describe("Testing VM Services", Label("devops"), Label("viadmin"), Label
 			})
 		})
 
+		Context("VM-NIC-UNIT-NUMBERS", func() {
+			virtualmachine.VMNICUnitNumbersSpec(context.TODO(), func() virtualmachine.VMNICUnitNumbersSpecInput {
+				return virtualmachine.VMNICUnitNumbersSpecInput{
+					ClusterProxy:     svClusterProxy,
+					Config:           config,
+					ArtifactFolder:   artifactFolder,
+					WCPNamespaceName: wcpNamespaceName,
+				}
+			})
+		})
+
 		Context("VM-GROUP", func() {
 			virtualmachine.VMGroupSpec(context.TODO(), func() virtualmachine.VMGroupSpecInput {
 				return virtualmachine.VMGroupSpecInput{

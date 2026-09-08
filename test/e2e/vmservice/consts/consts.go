@@ -49,6 +49,7 @@ const (
 	IaaSComputePoliciesCapabilityName        = "supports_iaas_compute_policies"
 	VirtualMachineConfigPolicyCapabilityName = "supports_vm_service_vm_config_policy"
 	TelcoVMServiceAPICapabilityName          = "supports_telco_vm_service_api"
+	VMNetworkUnitNumbersCapabilityName       = "supports_VM_service_network_unit_numbers"
 	WorkloadIPv6CapabilityName               = "supports_workload_ipv6"
 
 	// VMEvictionCapabilityName gates the AutomaticVMEvictionPolicy and

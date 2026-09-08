@@ -4,7 +4,7 @@
   - **PR target**: `vmware-tanzu/vm-operator`
 - **Created**: 2026-06-25
 - **Last updated**: 2026-08-14
-- **Status**: In Progress
+- **Status**: Implemented
 - **Epic**: vmop-3982
 
 ---

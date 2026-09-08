@@ -202,11 +202,11 @@
 
 - [ ] T023 **Partially done.** `research.md`, `plan.md`, and `spec.md` are updated with T001's results (see T001). Remaining before this can close: Q3 (SR-IOV) and Q8 (snapshot revert, owned by T031) are still open — re-run E14 once a testbed with SR-IOV hardware is available, then resolve Q3 in `spec.md`. `hack/vcresearch/nic-unit-numbers/main.go` is intentionally still present (not yet deleted) so that re-run can happen without rewriting the program.
 
-- [ ] T024 Update `plan.md` "Rollout / migration" section once the FSS vs. capability decision (T002) is finalised
+- [x] T024 Update `plan.md` "Rollout / migration" section once the FSS vs. capability decision (T002) is finalised
 
-- [ ] T025 Add release note entry to PR description describing `spec.network.interfaces[i].unitNumber`, `status.network.interfaces[i].unitNumber`, and the opt-in `VMNetworkUnitNumbers` feature flag; call out the I6 failure mode — an annotation-lossy old-version client's UPDATE can now fail with a "cannot change while powered on" error instead of silently wiping the field; **and call out the interim replace-not-Edit behaviour**: for an interface carrying a `unitNumber`, a change to its network/MAC/ExternalID replaces the NIC (new device key, and a new MAC when the MAC is auto-assigned) rather than editing it in place, which narrows the device-preserving behaviour `MutableNetworks` network migrations get today — a device-preserving Edit is planned as a follow-on (T032)
+- [x] T025 Add release note entry to PR description describing `spec.network.interfaces[i].unitNumber`, `status.network.interfaces[i].unitNumber`, and the opt-in `VMNetworkUnitNumbers` feature flag; call out the I6 failure mode — an annotation-lossy old-version client's UPDATE can now fail with a "cannot change while powered on" error instead of silently wiping the field; **and call out the interim replace-not-Edit behaviour**: for an interface carrying a `unitNumber`, a change to its network/MAC/ExternalID replaces the NIC (new device key, and a new MAC when the MAC is auto-assigned) rather than editing it in place, which narrows the device-preserving behaviour `MutableNetworks` network migrations get today — a device-preserving Edit is planned as a follow-on (T032)
 
-- [ ] T026 Flip `spec.md` status from `In Progress` to `Implemented` in the final PR, and update the matching status cell for row `004` in `.sdd/INDEX.md` — the index carries its own status column and goes stale otherwise
+- [x] T026 Flip `spec.md` status from `In Progress` to `Implemented` in the final PR, and update the matching status cell for row `004` in `.sdd/INDEX.md` — the index carries its own status column and goes stale otherwise
 
 - [ ] T027 File a follow-up spec `.sdd/specs/005-nic-unit-numbers-ga/` to track GA promotion and flag removal once the feature has been validated in production
 

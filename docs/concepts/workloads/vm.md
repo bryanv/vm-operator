@@ -836,6 +836,7 @@ Each `spec.network.interfaces[]` entry may include an optional `type` of `VMXNet
 | Field | Description |
 |-------|-------------|
 | `type` | Virtual device model: `VMXNet3`, `SRIOV`, or legacy types `E1000`, `E1000e`, `VMXNet2`, or `PCNet32`. Omitted values are backfilled from the running VM's hardware during schema upgrade, by interface order as described above. |
+| `unitNumber` | The interface's PCI unit number on the virtual PCI bus. See [Interface unit number](#interface-unit-number). |
 | `vnumaNodeID` | Pins the adapter to a virtual NUMA node. Requires EFI firmware (`spec.bootOptions.firmware: efi`), a non-zero `spec.cpuAdvanced.topology.vnumaNodeCount`, and a minimum hardware version. Unlike the `vmxnet3` PowerCycle-mode fields below, this field is never hot-pluggable — changing it always requires the VM to be powered off. |
 | `vmxnet3` | VMXNet3-only performance and offload settings. **Requires `type: VMXNet3`.** See [VMXNet3 interface tuning](#vmxnet3-interface-tuning). |
 | `advancedProperties` | Additional per-adapter VMX settings as key/value pairs. Keys must not duplicate a first-class field (for example a key that duplicates a `vmxnet3` subfield is rejected). Like `spec.advanced.extraConfig`, bag key changes are always written immediately regardless of power state and never produce `PowerCyclePending`. |
@@ -859,6 +860,28 @@ The `Change applies on` column reflects how a change to that field is applied wh
 `*` `uptv2Enabled` is hot-pluggable and, once its prerequisite is met, applies immediately like a `Live` field — it does not use the ExtraConfig PowerCycle mechanism and never produces `PowerCyclePending`. If the prerequisite is not met, it instead produces `PrerequisiteNotMet`.
 
 VM-level advanced options are documented in [Advanced VM settings](#advanced-vm-settings).
+
+#### Interface unit number
+
+Each `spec.network.interfaces[]` entry may include an optional `unitNumber`, the slot (7-16) the interface's virtual device occupies on the VM's virtual PCI bus. Ethernet cards own units 7-16 by the platform's static, per-device-class allocation, and a value must be unique among all of a VM's interfaces — the admission webhook rejects duplicates and out-of-range values.
+
+How a value gets set depends on when the interface is added:
+
+- **Explicitly**: a value you set is honored when the interface's device is created.
+- **Interfaces that exist before the feature is enabled** (including every interface of a VM deployed by an earlier VM Operator release): the first reconcile after the capability is enabled runs a schema upgrade that records each interface's currently observed slot into the spec. Only after that does admission begin assigning.
+- **Interfaces added afterward**: the next admitted update assigns the next available unit number automatically, the same way disk and CD-ROM unit numbers are assigned.
+
+Once set, the unit number is the interface's stable identity for its underlying vSphere device. A value set by a user cannot be changed while the VM is powered on; VM Operator itself may set previously-unset values on a powered-on VM when recording observed slots. The observed value is reported in `status.network.interfaces[].unitNumber` — informational, and only present for interfaces reported by VMware Tools.
+
+!!! note "Admitted now, applied at the next power-off"
+
+    A new interface, or a changed `unitNumber` on an existing interface, is accepted into the spec of a powered-on VM, but the corresponding device change is not applied to vSphere until the VM is next powered off and reconciled. This is not a bug — it matches today's behavior for other NIC device changes. Applying these changes while the VM is powered on is planned as a follow-on.
+
+!!! warning "Changing a unit number replaces the NIC"
+
+    Changing an existing interface's `unitNumber` is a hardware replacement, not a slot relocation. The interface's current device is removed and a new device is created at the newly-requested slot: a new device key, and — for an automatically assigned MAC address — a new MAC address (and therefore possibly a new DHCP-assigned IP). Expect a brief connectivity interruption, the same as deleting and re-adding the interface.
+
+    The same applies once an interface carries a `unitNumber` even when the unit number itself does not change: re-pointing the interface at a different network (or changing its MAC/ExternalID where the provider specifies them) replaces the device at that unit number rather than editing it in place, and so carries the same new-key/new-MAC caveat. A device-preserving edit is planned as a follow-on. Interfaces without a `unitNumber` are unaffected.
 
 #### NetworkConfigSynced condition
 

@@ -831,6 +831,30 @@ func (vs *vSphereVMProvider) getCreateArgs(
 	return createArgs, nil
 }
 
+// annotateVMCreateError annotates a VM create failure that is a NIC
+// unit-number collision: the validating webhook cannot see the VM class
+// ConfigSpec, so a spec.network.interfaces unit number colliding with a
+// class-provided ethernet device only surfaces here, as vSphere's
+// InvalidDeviceSpec with Property "unitNumber" (T001 Q4/E08). Retrying the
+// same spec faults identically every time, so the error says so plainly and
+// the remediation (change the unit number or the class) is on the user.
+func annotateVMCreateError(
+	ctx pkgctx.VirtualMachineContext,
+	err error) error {
+
+	if err == nil || !network.IsNICUnitNumberCollisionFault(err) {
+		return err
+	}
+
+	// Permanent: retrying the unchanged spec faults identically forever
+	// (T001 Q4/E08), so surface NoRequeueError like the reconfigure path's
+	// collision handling does — the VM stops requeuing until the unit
+	// number or the class is changed.
+	return fmt.Errorf(
+		"NIC unit number collision: a spec.network.interfaces unit number collides with a device in the VM class or create ConfigSpec; this error is permanent until the unit number or the class is changed: %w",
+		pkgerr.NoRequeueError{Message: err.Error()})
+}
+
 func (vs *vSphereVMProvider) createVirtualMachine(
 	ctx pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
@@ -843,6 +867,7 @@ func (vs *vSphereVMProvider) createVirtualMachine(
 		vcClient.VimClient(),
 		vcClient.Finder(),
 		&args.CreateArgs)
+	err = annotateVMCreateError(ctx, err)
 
 	if err != nil {
 		ctx.Logger.Error(err, "CreateVirtualMachine failed")
@@ -899,6 +924,7 @@ func (vs *vSphereVMProvider) createVirtualMachineAsync(
 		&args.CreateArgs)
 
 	if vimErr != nil {
+		vimErr = annotateVMCreateError(ctx, vimErr)
 		ctx.Logger.Error(vimErr, "CreateVirtualMachine failed")
 		chanErr <- vimErr
 	} else {
@@ -3243,6 +3269,15 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 		ethCard, err := network.CreateVirtualEthernetCard(vmCtx, createArgs.NetworkDevices[i], interfaceSpec)
 		if err != nil {
 			return err
+		}
+
+		// Carry the interface's explicit unit number onto the device (T001:
+		// vSphere honours it on create; only user-pinned values exist at
+		// create time). NetworkDevices' UnitNumber is populated only when
+		// VMNetworkUnitNumbers is enabled, so nothing is stamped when the
+		// feature is off.
+		if u := createArgs.NetworkDevices[i].UnitNumber; u != nil {
+			ethCard.GetVirtualDevice().UnitNumber = ptr.To(*u)
 		}
 
 		createArgs.ConfigSpec.DeviceChange = append(createArgs.ConfigSpec.DeviceChange, &vimtypes.VirtualDeviceConfigSpec{

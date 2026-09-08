@@ -595,6 +595,219 @@ func vmConfigSpecTests() {
 		})
 	})
 
+	// NIC unit number tests (T029): the create path stamps a spec
+	// interface's explicit unitNumber onto the ConfigSpec device —
+	// overriding a class-provided value on the class-ConfigSpec branch,
+	// set on the fallback default-device branch — and leaves values
+	// alone when the VMNetworkUnitNumbers capability is off. Only
+	// user-pinned values exist at create time; the mutator does not run
+	// on create. The vmCreateGenConfigSpecZipNetworkInterfaces flow is
+	// exercised end to end through the real create path, asserting the
+	// units observed on the created VM's hardware.
+	Context("VM Class ConfigSpec NIC unit numbers", func() {
+
+		const classMAC = "00:0c:29:93:d7:27"
+
+		var (
+			ifaces            []vmopv1.VirtualMachineNetworkInterfaceSpec
+			enableUnitNumbers bool
+		)
+
+		// setInterfacesAndCreate applies the per-test spec interfaces and
+		// feature flag (both must happen after the shared JustBeforeEach,
+		// which overwrites the spec interfaces), then runs the create flow.
+		setInterfacesAndCreate := func() {
+			pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+				config.Features.VMNetworkUnitNumbers = enableUnitNumbers
+			})
+
+			vm.Spec.Network.Interfaces = ifaces
+			var err error
+			vcVM, err = createOrUpdateAndGetVcVM(ctx, vmProvider, vm)
+			Expect(err).ToNot(HaveOccurred())
+		}
+
+		// ethDevicesByMAC returns the created VM's ethernet devices keyed by
+		// MAC address.
+		ethDevicesByMAC := func() map[string]*vimtypes.VirtualEthernetCard {
+			var o mo.VirtualMachine
+			Expect(vcVM.Properties(ctx, vcVM.Reference(), nil, &o)).To(Succeed())
+
+			devList := object.VirtualDeviceList(o.Config.Hardware.Device)
+			ethDevs := devList.SelectByType(&vimtypes.VirtualEthernetCard{})
+
+			out := make(map[string]*vimtypes.VirtualEthernetCard, len(ethDevs))
+			for _, dev := range ethDevs {
+				ethDev := dev.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+				out[ethDev.MacAddress] = ethDev
+			}
+			return out
+		}
+
+		// withClassEthCard puts the class-fixture ethernet card (with the
+		// given unit number) into the VM class ConfigSpec, creating a
+		// class-ConfigSpec NIC for the zip to pair with the first spec
+		// interface.
+		withClassEthCard := func(unit *int32) {
+			ethCard.VirtualDevice.UnitNumber = unit
+			configSpec = &vimtypes.VirtualMachineConfigSpec{
+				DeviceChange: []vimtypes.BaseVirtualDeviceConfigSpec{
+					&vimtypes.VirtualDeviceConfigSpec{
+						Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+						Device: &vimtypes.VirtualE1000{
+							VirtualEthernetCard: ethCard,
+						},
+					},
+				},
+			}
+		}
+
+		BeforeEach(func() {
+			testConfig.WithNetworkEnv = builder.NetworkEnvNamed
+			skipCreateOrUpdateVM = true
+		})
+
+		AfterEach(func() {
+			ifaces = nil
+			enableUnitNumbers = false
+		})
+
+		When("the class device has a unit number the spec overrides", func() {
+			BeforeEach(func() {
+				withClassEthCard(ptr.To(int32(8)))
+
+				enableUnitNumbers = true
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: dvpgName},
+						UnitNumber: ptr.To(int32(9)),
+					},
+				}
+			})
+
+			It("the spec unit number wins on the created device", func() {
+				setInterfacesAndCreate()
+
+				ethDevs := ethDevicesByMAC()
+				Expect(ethDevs).To(HaveKey(classMAC))
+				Expect(ethDevs[classMAC].GetVirtualDevice().UnitNumber).To(Equal(ptr.To(int32(9))))
+			})
+		})
+
+		When("the class device has no unit number and the spec declares one", func() {
+			BeforeEach(func() {
+				withClassEthCard(nil)
+
+				enableUnitNumbers = true
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: dvpgName},
+						UnitNumber: ptr.To(int32(9)),
+					},
+				}
+			})
+
+			It("the created device carries the spec unit number", func() {
+				setInterfacesAndCreate()
+
+				ethDevs := ethDevicesByMAC()
+				Expect(ethDevs).To(HaveKey(classMAC))
+				Expect(ethDevs[classMAC].GetVirtualDevice().UnitNumber).To(Equal(ptr.To(int32(9))))
+			})
+		})
+
+		When("the spec has no unit number and the class device has one", func() {
+			BeforeEach(func() {
+				withClassEthCard(ptr.To(int32(8)))
+
+				enableUnitNumbers = true
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:    "eth0",
+						Network: &vmopv1common.PartialObjectRef{Name: dvpgName},
+					},
+				}
+			})
+
+			It("the class-provided unit number is preserved", func() {
+				setInterfacesAndCreate()
+
+				ethDevs := ethDevicesByMAC()
+				Expect(ethDevs).To(HaveKey(classMAC))
+				Expect(ethDevs[classMAC].GetVirtualDevice().UnitNumber).To(Equal(ptr.To(int32(8))))
+			})
+		})
+
+		When("a spec interface beyond the class device count carries a unit number", func() {
+			BeforeEach(func() {
+				withClassEthCard(nil)
+
+				enableUnitNumbers = true
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:    "eth0",
+						Network: &vmopv1common.PartialObjectRef{Name: dvpgName},
+					},
+					{
+						Name:       "eth1",
+						Network:    &vmopv1common.PartialObjectRef{Name: dvpgName},
+						UnitNumber: ptr.To(int32(10)),
+					},
+				}
+			})
+
+			It("the fallback default device carries the spec unit number", func() {
+				setInterfacesAndCreate()
+
+				ethDevs := ethDevicesByMAC()
+				Expect(ethDevs).To(HaveLen(2))
+				Expect(ethDevs).To(HaveKey(classMAC))
+				// The class device (interface eth0) is unstamped: vSphere
+				// auto-assigned it a slot (the first free ethernet unit), which
+				// the post-create backfill would record.
+				Expect(ethDevs[classMAC].GetVirtualDevice().UnitNumber).
+					ToNot(Equal(ptr.To(int32(10))))
+				// ...and the fallback device (interface eth1) carries eth1's
+				// explicit unit number.
+				var fallbackDev *vimtypes.VirtualEthernetCard
+				for mac, dev := range ethDevs {
+					if mac != classMAC {
+						fallbackDev = dev
+					}
+				}
+				Expect(fallbackDev).ToNot(BeNil())
+				Expect(fallbackDev.GetVirtualDevice().UnitNumber).To(Equal(ptr.To(int32(10))))
+			})
+		})
+
+		When("the VMNetworkUnitNumbers capability is disabled", func() {
+			BeforeEach(func() {
+				withClassEthCard(ptr.To(int32(8)))
+
+				enableUnitNumbers = false
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: dvpgName},
+						UnitNumber: ptr.To(int32(9)),
+					},
+				}
+			})
+
+			It("class values are preserved and spec unit numbers are not stamped", func() {
+				setInterfacesAndCreate()
+
+				ethDevs := ethDevicesByMAC()
+				Expect(ethDevs).To(HaveKey(classMAC))
+				// The class value survives untouched; the spec's 9 is ignored
+				// (Device.UnitNumber is not populated with the flag off).
+				Expect(ethDevs[classMAC].GetVirtualDevice().UnitNumber).To(Equal(ptr.To(int32(8))))
+			})
+		})
+	})
+
 	Context("ConfigSpec does not specify any network interfaces", func() {
 
 		BeforeEach(func() {

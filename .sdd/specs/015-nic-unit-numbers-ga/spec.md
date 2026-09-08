@@ -8,11 +8,7 @@
 
 ---
 
-> **Numbering note**: the 008 plan/tasks anticipated filing this as
-> `005-nic-unit-numbers-ga`, but `005` was taken in the meantime
-> (`005-ipv6-template-funcs`), and `009`/`010` went to the powered-on and
-> device-edit follow-ons filed alongside this spec; `011` is the next free
-> number.
+> **Numbering note**: main now uses spec numbers through 012. The NIC powered-on, device-edit, and GA follow-ups use 013, 014, and 015 respectively.
 
 ## Summary
 
@@ -57,8 +53,8 @@ cluster-wide at GA, after which the flag plumbing is dead weight to be removed.
 - No behavior change beyond making the feature unconditional: the identity
   model, matching, backfill, and validation rules are 008's and are frozen at
   GA (follow-on behavior changes belong to
-  [009](../009-nic-unit-numbers-powered-on/) /
-  [010](../010-nic-unit-numbers-device-edit/)).
+  [013](../013-nic-unit-numbers-powered-on/) /
+  [014](../014-nic-unit-numbers-device-edit/)).
 - No new API fields.
 
 ---

@@ -178,7 +178,7 @@ Design decisions that are settled; each was an open question at some point in th
 
 **Unblocking owner:** the govmomi research program (`tasks.md` T001) for Q1–Q7; the snapshot-revert investigation (`tasks.md` T031) for Q8. Work blocked on a gating question is marked as such in `tasks.md`.
 
-Q1, Q2, Q4–Q7 were answered by T001's research run against a real vCenter (9.2.0 build 25689988 / ESX 9.2.0 build 25690016) on 2026-08-23; full detail lives in `research.md`, "govmomi research program (T001) — results". Q3 was attempted but the test environment had no SR-IOV hardware, so it remains open pending a re-run on a testbed that has it. Q8 remains open, owned by T031.
+Q1, Q2, Q4–Q7 were answered by T001's research run against a real vCenter (9.2.0 build 25689988 / ESX 9.2.0 build 25690016) on 2026-08-23; full detail lives in `research.md`, "govmomi research program (T001) — results". Q3 was attempted but the test environment had no SR-IOV hardware, so it remains open pending a re-run on a testbed that has it. Q8 was answered by T031, owned by T031.
 
 ### Gating — answered
 

@@ -43,6 +43,9 @@ Each spec lives under `specs/NNN-slug/`. Standard artifacts: `spec.md` (behavior
 | 010 | [veeam-e2e-backup-restore](specs/010-veeam-e2e-backup-restore/) | Use Veeam for Backup/Restore E2E Tests | In Progress | vmop-4013 |
 | 011 | [snapshot-disk-list](specs/011-snapshot-disk-list/) | Expose Disk List in VirtualMachineSnapshot (CSI Backup API) | In Review | vmop-52730 |
 | 012 | [lifecycle-hooks](specs/012-lifecycle-hooks/) | Blocking Lifecycle Hooks for `VirtualMachine` | Draft | vmop-3377 |
+| 013 | [nic-unit-numbers-powered-on](specs/013-nic-unit-numbers-powered-on/) | NIC Unit Numbers — powered-on convergence | Draft | vmop-3982 |
+| 014 | [nic-unit-numbers-device-edit](specs/014-nic-unit-numbers-device-edit/) | NIC Unit Numbers — type support & device Edit | Draft | vmop-3982 |
+| 015 | [nic-unit-numbers-ga](specs/015-nic-unit-numbers-ga/) | NIC Unit Numbers — GA promotion | Draft | vmop-3982 |
 
 ### Finding the right spec
 

@@ -63,7 +63,7 @@ Edit instead of Remove+Add:
   (008 G11/G12): the Edit is of the device *at the declared slot*, never a
   relocation of the slot.
 - No powered-on convergence — that is
-  [009-nic-unit-numbers-powered-on](../009-nic-unit-numbers-powered-on/).
+  [013-nic-unit-numbers-powered-on](../013-nic-unit-numbers-powered-on/).
 - No new API fields; `spec.type` exists.
 
 ## Inherited constraints (from 008 — load-bearing, restate verbatim in substance)

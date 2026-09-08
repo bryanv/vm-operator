@@ -867,8 +867,8 @@ Each `spec.network.interfaces[]` entry may include an optional `unitNumber`, the
 
 How a value gets set depends on when the interface is added:
 
-- **Explicitly**: a value you set is honored when the interface's device is created.
-- **Interfaces that exist before the feature is enabled** (including every interface of a VM deployed by an earlier VM Operator release): the first reconcile after the capability is enabled runs a schema upgrade that records each interface's currently observed slot into the spec. Only after that does admission begin assigning.
+- **Explicitly**: a value you set is honored when the interface's device is created. On a VM being created, values are left exactly as submitted — omitted values are not assigned at admission; they are recorded from the observed hardware on the VM's first reconcile.
+- **Interfaces that exist before the feature is enabled** (including every interface of a VM deployed by an earlier VM Operator release): the first reconcile after the capability is enabled runs a schema upgrade that records each interface's currently observed slot into the spec. Only after that does admission begin assigning. The same first-reconcile recording covers a VM created after the feature is enabled whose interfaces omitted `unitNumber`.
 - **Interfaces added afterward**: the next admitted update assigns the next available unit number automatically, the same way disk and CD-ROM unit numbers are assigned.
 
 Once set, the unit number is the interface's stable identity for its underlying vSphere device. A value set by a user cannot be changed while the VM is powered on; VM Operator itself may set previously-unset values on a powered-on VM when recording observed slots. The observed value is reported in `status.network.interfaces[].unitNumber` — informational, and only present for interfaces reported by VMware Tools.
@@ -882,6 +882,8 @@ Once set, the unit number is the interface's stable identity for its underlying 
     Changing an existing interface's `unitNumber` is a hardware replacement, not a slot relocation. The interface's current device is removed and a new device is created at the newly-requested slot: a new device key, and — for an automatically assigned MAC address — a new MAC address (and therefore possibly a new DHCP-assigned IP). Expect a brief connectivity interruption, the same as deleting and re-adding the interface.
 
     The same applies once an interface carries a `unitNumber` even when the unit number itself does not change: re-pointing the interface at a different network (or changing its MAC/ExternalID where the provider specifies them) replaces the device at that unit number rather than editing it in place, and so carries the same new-key/new-MAC caveat. A device-preserving edit is planned as a follow-on. Interfaces without a `unitNumber` are unaffected.
+
+    Note that an update from an old API-version client that drops the conversion-data annotation (and with it the interface's `unitNumber`) now fails with a "cannot change unit number while VM is powered on" error instead of silently wiping the field.
 
 #### NetworkConfigSynced condition
 

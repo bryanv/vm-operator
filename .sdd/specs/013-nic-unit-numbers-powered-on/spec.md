@@ -51,7 +51,7 @@ while the VM is powered on**.
 
 - No change to the unit-number identity model, matching, or backfill (008).
 - No change to the `spec.network.interfaces[i].type` handling — type support is
-  tracked separately (see [010-nic-unit-numbers-device-edit](../010-nic-unit-numbers-device-edit/)).
+  tracked separately (see [014-nic-unit-numbers-device-edit](../014-nic-unit-numbers-device-edit/)).
 - No memory/CPU or other device-class hot-plug work.
 - No change to the E2E flag/capability surface.
 

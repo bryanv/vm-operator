@@ -38,7 +38,7 @@ Each spec lives under `specs/NNN-slug/`. Standard artifacts: `spec.md` (behavior
 | 005 | [ipv6-template-funcs](specs/005-ipv6-template-funcs/) | Differentiate IPv4/IPv6 vApp/Sysprep template functions (V1alpha6) | In Progress | vmop-1152 |
 | 006 | [tag-controller-for-affinity](specs/006-tag-controller-for-affinity/) | Tag CRD + Tag Controller for Affinity | In Progress | vmop-3882 |
 | 007 | [vm-eviction-policy](specs/007-vm-eviction-policy/) | VM Eviction Compute Policies (`AutomaticVMEvictionPolicy`, `BestEffortRestartPolicy`) | Draft | vmop-4057, vmop-4058, vmop-4059 |
-| 008 | [nic-unit-numbers](specs/008-nic-unit-numbers/) | NIC Unit Numbers | In Progress | vmop-3982 |
+| 008 | [nic-unit-numbers](specs/008-nic-unit-numbers/) | NIC Unit Numbers | Implemented | vmop-3982 |
 | 009 | [virtualmachinereplicaset](specs/009-virtualmachinereplicaset/) | `VirtualMachineReplicaSet` Functional Test Coverage (`tds.md`/`test-plan.md` in place of `spec.md`/`plan.md`) | In Progress | vmop-1701 |
 | 010 | [veeam-e2e-backup-restore](specs/010-veeam-e2e-backup-restore/) | Use Veeam for Backup/Restore E2E Tests | In Progress | vmop-4013 |
 | 011 | [snapshot-disk-list](specs/011-snapshot-disk-list/) | Expose Disk List in VirtualMachineSnapshot (CSI Backup API) | In Review | vmop-52730 |

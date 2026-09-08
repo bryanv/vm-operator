@@ -73,7 +73,7 @@ A deep review of this spec/plan/tasks against the codebase raised 8 research-pro
 | I28 | No contingency if T001 answers "explicit `UnitNumber` not honoured" | **Moot — T001 ran and answered HONOURED** (real vCenter 9.2.0 build 25689988 / ESX 9.2.0 build 25690016; `research.md` E01/E03/E15). The fallback below was not taken; kept for the record | If Q1 fails |
 | I29 | Snapshot spec synthesis discards observed unit numbers it already has in hand | Accepted; `synthesizeVMSpecForSnapshot` should set them directly | T031 |
 
-**Note on T027's directory number:** `tasks.md` targets `005-nic-unit-numbers-ga` (`003-` is taken by `003-compute-config-reconcile`).
+**Note on T027's directory number:** the GA follow-up spec was filed as `011-nic-unit-numbers-ga` (`005-` and the numbers after 008 were already taken; see the follow-on specs 009 and 010).
 
 **T001 status: complete — Q1/Q2/Q4/Q5/Q6/Q7 answered against a real vCenter (9.2.0 build 25689988 / ESX 9.2.0 build 25690016); full detail in `research.md`.** Every "gated on T001" / "confirmed by T001 research" phrase below refers to that confirmed HONOURED result for Q1/Q2 unless stated otherwise. Two exceptions: **Q3 (SR-IOV) remains open** — the test environment had no SR-IOV hardware, so the SR-IOV claims below still rest on the platform's static device-key allocation contract, not a live observation — and Q8 (snapshot revert) is owned by T031, not T001. See "If Q1 fails" below for the (not-taken) fallback this result closes off, and the Findings register's I28 row.
 

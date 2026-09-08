@@ -39,6 +39,9 @@ Each spec lives under `specs/NNN-slug/`. Standard artifacts: `spec.md` (behavior
 | 006 | [tag-controller-for-affinity](specs/006-tag-controller-for-affinity/) | Tag CRD + Tag Controller for Affinity | In Progress | vmop-3882 |
 | 007 | [vm-eviction-policy](specs/007-vm-eviction-policy/) | VM Eviction Compute Policies (`AutomaticVMEvictionPolicy`, `BestEffortRestartPolicy`) | Draft | vmop-4057, vmop-4058, vmop-4059 |
 | 008 | [nic-unit-numbers](specs/008-nic-unit-numbers/) | NIC Unit Numbers | Implemented | vmop-3982 |
+| 009 | [nic-unit-numbers-powered-on](specs/009-nic-unit-numbers-powered-on/) | NIC Unit Numbers — powered-on convergence | Draft | vmop-3982 |
+| 010 | [nic-unit-numbers-device-edit](specs/010-nic-unit-numbers-device-edit/) | NIC Unit Numbers — type support & device Edit | Draft | vmop-3982 |
+| 011 | [nic-unit-numbers-ga](specs/011-nic-unit-numbers-ga/) | NIC Unit Numbers — GA promotion | Draft | vmop-3982 |
 
 ### Finding the right spec
 

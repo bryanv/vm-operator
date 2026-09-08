@@ -27,6 +27,7 @@ import (
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
+	pkgptr "github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 )
 
 // CreateVirtualEthernetCard creates a new VirtualEthernetCard based on the Device
@@ -76,7 +77,10 @@ func CreateVirtualEthernetCard(
 }
 
 // UpdateVMClassEthCardFromDevice applies a Device to an existing Ethernet card
-// from the class ConfigSpec. This is used only during VM create.
+// from the class ConfigSpec. This is used only during VM create. The Device's
+// explicit unit number, when set, wins over any class-ConfigSpec-provided
+// unit number; when unset, a class-provided value is preserved as-is (the
+// observed slot is recorded post-create by the schema upgrade).
 func UpdateVMClassEthCardFromDevice(
 	ctx context.Context,
 	dev Device,
@@ -100,6 +104,13 @@ func UpdateVMClassEthCardFromDevice(
 		// this is left as-is.
 		// ethCard.MacAddress = ""
 		// ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeGenerated)
+	}
+
+	// Device.UnitNumber carries the spec interface's explicit unit number and
+	// is populated only when VMNetworkUnitNumbers is enabled, so this stamps
+	// nothing when the feature is off.
+	if dev.UnitNumber != nil {
+		ethCard.GetVirtualDevice().UnitNumber = pkgptr.To(*dev.UnitNumber)
 	}
 
 	return nil

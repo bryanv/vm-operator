@@ -3364,6 +3364,15 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 			return err
 		}
 
+		// Carry the interface's explicit unit number onto the device (T001:
+		// vSphere honours it on create; only user-pinned values exist at
+		// create time). NetworkDevices' UnitNumber is populated only when
+		// VMNetworkUnitNumbers is enabled, so nothing is stamped when the
+		// feature is off.
+		if u := createArgs.NetworkDevices[i].UnitNumber; u != nil {
+			ethCard.GetVirtualDevice().UnitNumber = ptr.To(*u)
+		}
+
 		createArgs.ConfigSpec.DeviceChange = append(createArgs.ConfigSpec.DeviceChange, &vimtypes.VirtualDeviceConfigSpec{
 			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
 			Device:    ethCard,

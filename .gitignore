@@ -33,6 +33,9 @@ integration-cover.xml
 merged-cover.out
 merged-cover.xml
 
+# Machine-readable Ginkgo report consumed by hack/test-report.sh
+ginkgo-report.json
+
 # Build artifacts
 bin/
 out/

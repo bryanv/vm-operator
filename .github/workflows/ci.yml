@@ -333,6 +333,11 @@ jobs:
         GO_TEST_SKIP_PKGS: ${{ matrix.go-test-skip-pkgs }}
         GO_TEST_PARALLEL:  ${{ matrix.go-test-parallel }}
       run: make ${{ matrix.make-target }}
+    - name: test-report
+      # Always run so the failing tests are published even though the test
+      # step above has already failed the job.
+      if: always()
+      run: hack/test-report.sh
     - name: store-coverage
       if: matrix.upload-coverage
       uses: actions/upload-artifact@v4

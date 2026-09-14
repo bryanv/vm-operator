@@ -18,6 +18,19 @@ GO_TEST_FLAGS+=("--race")       # check for possible races
 GO_TEST_FLAGS+=("--keep-going") # do not fail on the first error
 GO_TEST_FLAGS+=("--timeout=3h") # increase timeout
 
+# When running in GitHub Actions, disable the color codes in the output and
+# write a machine-readable report that hack/test-report.sh turns into the job
+# summary and file annotations.
+#
+# Ginkgo's own --github-output flag is deliberately not used. Its annotations
+# carry only the node type and time, and would be counted against GitHub's
+# per-step annotation limit alongside the annotations emitted from the report,
+# which include the actual failure message.
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  GO_TEST_FLAGS+=("--no-color")
+  GO_TEST_FLAGS+=("--json-report=${GINKGO_REPORT_FILE:-ginkgo-report.json}")
+fi
+
 if [ "${GO_TEST_RECURSIVE:-yes}" = "yes" ]; then
   GO_TEST_FLAGS+=("-r")         # recursive
 fi

@@ -113,6 +113,14 @@ func unitTestsReconcile() {
 					config.AsyncCreateEnabled = false
 					config.AsyncSignalEnabled = false
 					config.Features.PodVMOnStretchedSupervisor = true
+					// NewVMMetrics is a process-wide singleton: only the
+					// first call in this test binary's process decides
+					// whether it registers the legacy gauges or no-ops in
+					// favor of the scrape-based collector. Pin it to the
+					// legacy path so this suite's reconciler-driven specs
+					// are what exercises it end to end; the scrape-based
+					// path has its own dedicated tests in pkg/metrics.
+					config.Features.ScrapeMetrics = false
 				},
 			),
 		)

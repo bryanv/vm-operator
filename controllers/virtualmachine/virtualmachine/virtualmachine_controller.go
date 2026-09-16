@@ -313,7 +313,7 @@ func NewReconciler(
 		Recorder:   recorder,
 		VMProvider: vmProvider,
 		Prober:     prober,
-		vmMetrics:  metrics.NewVMMetrics(),
+		vmMetrics:  metrics.NewVMMetrics(pkgcfg.FromContext(ctx).Features.ScrapeMetrics),
 	}
 }
 

@@ -146,6 +146,13 @@ const (
 	// BestEffortRestartPolicy CRDs as well as the VirtualMachinePowerStateSynced
 	// condition's InfraInMaintenance reason.
 	CapabilityKeyVMEviction = "supports_infrapolicy_vm_evacuation"
+
+	// CapabilityKeyScrapeMetrics is the name of the capability key defined in
+	// the Supervisor capabilities CRD for collecting a resource's Prometheus
+	// metrics by reading it out of the informer cache when Prometheus
+	// scrapes, rather than updating the metrics from within the resource's
+	// own reconcile loop.
+	CapabilityKeyScrapeMetrics = "supports_vm_service_scrape_metrics"
 )
 
 var (
@@ -326,6 +333,8 @@ func updateCapabilitiesFeaturesFromCRD(
 			fs.ExtensionCompatConstraint = capStatus.Activated
 		case CapabilityKeyVMEviction:
 			fs.VMEviction = capStatus.Activated
+		case CapabilityKeyScrapeMetrics:
+			fs.ScrapeMetrics = capStatus.Activated
 		}
 
 	}

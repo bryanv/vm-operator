@@ -21,7 +21,15 @@ import (
 var intgFakeVMProvider = providerfake.NewVMProvider()
 
 var suite = builder.NewTestSuiteForControllerWithContext(
-	pkgcfg.NewContextWithDefaultConfig(),
+	// NewVMPublishMetrics is a process-wide singleton: only the first call in
+	// this test binary's process decides whether it registers the legacy
+	// gauge or no-ops in favor of the scrape-based collector. Pin it to the
+	// legacy path so this suite's reconciler-driven specs are what exercises
+	// it end to end; the scrape-based path has its own dedicated tests in
+	// pkg/metrics.
+	pkgcfg.UpdateContext(pkgcfg.NewContextWithDefaultConfig(), func(config *pkgcfg.Config) {
+		config.Features.ScrapeMetrics = false
+	}),
 	virtualmachinepublishrequest.AddToManager,
 	func(ctx *pkgctx.ControllerManagerContext, _ ctrlmgr.Manager) error {
 		ctx.VMProvider = intgFakeVMProvider

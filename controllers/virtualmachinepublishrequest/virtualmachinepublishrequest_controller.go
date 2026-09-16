@@ -94,6 +94,12 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 		ctx.VMProvider,
 	)
 
+	if pkgcfg.FromContext(ctx).Features.ScrapeMetrics {
+		if err := metrics.AddVMPublishCollectorToManager(mgr); err != nil {
+			return fmt.Errorf("failed to initialize VM publish request metrics collector: %w", err)
+		}
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(controlledType).
 		WithOptions(controller.Options{
@@ -158,7 +164,7 @@ func NewReconciler(
 		Logger:     logger,
 		Recorder:   recorder,
 		VMProvider: vmProvider,
-		Metrics:    metrics.NewVMPublishMetrics(),
+		Metrics:    metrics.NewVMPublishMetrics(pkgcfg.FromContext(ctx).Features.ScrapeMetrics),
 	}
 }
 

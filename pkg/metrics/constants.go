@@ -20,4 +20,8 @@ const (
 	// VMImage related metrics labels (from image registry service).
 	vmiNameLabel      = "vmi_name"
 	vmiNamespaceLabel = "vmi_namespace"
+
+	// VirtualMachinePublishRequest related metrics labels.
+	vmPubNameLabel      = "name"
+	vmPubNamespaceLabel = "namespace"
 )

@@ -8,9 +8,12 @@
 
 Restrict the bootstrap-time backfill of global DNS nameservers and search domains to a single
 "primary" interface (the first non-NoIPAM interface in `spec.network.interfaces` order), never
-backfill NoIPAM interfaces, and skip all global DNS backfill when any interface uses DHCP. The
-new behavior is gated by a new capability, with a per-VM internal annotation that restores the
-legacy broadcast behavior. When the capability is disabled the code path is unchanged.
+backfill NoIPAM interfaces, and skip the WCP global ConfigMap fallback when any interface uses
+DHCP (an explicit VM-level `spec.network.nameservers`/`searchDomains` value still backfills
+regardless of DHCP, since it reflects the VM owner's intent rather than an infrastructure
+default). The new behavior is gated by a new capability, with a per-VM internal annotation that
+restores the legacy broadcast behavior. When the capability is disabled the behavior is
+unchanged.
 
 ## Technical context
 
@@ -90,21 +93,33 @@ Replace the current detection-then-broadcast block with:
      `primary < 0`.
    - `useGlobalNS` / `useGlobalSS` from `spec.bootstrap.cloudInit.useGlobalNameserversAsDefault`
      / `useGlobalSearchDomainsAsDefault` via `ptr.DerefWithDefault(..., true)` — only meaningful
-     for CloudInit; treat GOSC as "not applicable" (GOSC has no per-interface concept and no
-     `useGlobal*` fields).
+     for CloudInit; treat GOSC as "not applicable" (the fields live under
+     `spec.bootstrap.cloudInit` and GOSC has no `useGlobal*` fields of its own). Note: the
+     `defaultToGlobalNameservers`/`defaultToGlobalSearchDomains` fallback in
+     `network.InterfaceBootstrap` is already gated on `vm.Spec.Bootstrap.CloudInit != nil`
+     (`pkg/providers/vsphere/network/bootstrap.go`), so the global backfill never reaches GOSC's
+     per-adapter `DnsServerList` (`gosc.go`) today — that field only ever carries each
+     interface's explicit `nameservers`, which Sysprep honors and LinuxPrep ignores. This
+     feature does not change that; see spec Non-goals.
+   - `anyDHCP` gates the **ConfigMap** fallback only, not the VM-level (`spec.network.*`)
+     fallback: an explicit VM-level nameserver/search-domain value still backfills onto the
+     primary interface (Cloud-Init) or the guest-wide values (GOSC) even when a DHCP interface
+     is present, since it reflects the VM owner's explicit intent rather than an infrastructure
+     default. Only the ConfigMap lookup and its use as a fallback are skipped when `anyDHCP`.
    - Fetch the ConfigMap **only when needed**: `!anyDHCP` and at least one of
-     {CloudInit with `useGlobalNS` or `useGlobalSS`, GOSC} still has an unfilled value. Reuse
-     `config.GetDNSInformationFromConfigMap` and keep the `IgnoreNotFound` handling.
-   - When `anyDHCP`: perform **no** backfill at all — not the per-interface values, not
-     `bsa.DNSServers` / `bsa.SearchSuffixes`, for CloudInit or GOSC.
+     {CloudInit with `useGlobalNS` or `useGlobalSS`, GOSC} still has an unfilled value after the
+     VM-level fallback. Reuse `config.GetDNSInformationFromConfigMap` and keep the
+     `IgnoreNotFound` handling.
    - CloudInit, primary interface only: fill `Nameservers` from `spec.network.nameservers` when
-     empty and `useGlobalNS`, then from ConfigMap `ns` when still empty and `useGlobalNS`;
-     likewise `SearchDomains` from `spec.network.searchDomains` then ConfigMap `ss` (ConfigMap
-     search domains only for TKG VMs, per the existing V1ALPHA1 rule).
+     empty and `useGlobalNS` (regardless of `anyDHCP`), then from ConfigMap `ns` when still
+     empty, `useGlobalNS`, and `!anyDHCP`; likewise `SearchDomains` from
+     `spec.network.searchDomains` then ConfigMap `ss` (ConfigMap search domains only for TKG
+     VMs, per the existing V1ALPHA1 rule).
    - `bsa.DNSServers` / `bsa.SearchSuffixes` (VM-level globals for GOSC identity,
      `status.network.config.dns`, and legacy template data): keep the existing "fill when empty"
-     semantics, but under the new conditions — `!anyDHCP`, and for CloudInit additionally gated
-     by `useGlobalNS` / `useGlobalSS`; GOSC search suffixes remain never-backfilled.
+     semantics from `spec.network.*` regardless of `anyDHCP`; the ConfigMap fallback for these
+     is additionally gated on `!anyDHCP`, and for CloudInit also on `useGlobalNS` / `useGlobalSS`.
+     GOSC search suffixes remain never-backfilled from ConfigMap.
    - NoIPAM interfaces are never written to (only `primary` is written at all).
 
 ### `InterfaceBootstrap` (`pkg/providers/vsphere/network/bootstrap.go`)
@@ -135,8 +150,9 @@ Replace the current detection-then-broadcast block with:
 - **Unit** (`testlabels.Controller`-style Ginkgo, external `_test` packages):
   - `pkg/providers/vsphere/vmlifecycle/bootstrap_test.go`: capability-off regression matrix
     (must match current expectations unchanged), capability-on matrix — single NIC, multi-NIC
-    primary-only, NoIPAM-excluded, any-DHCP skip (CloudInit + GOSC), `useGlobal*=false`
-    suppression of the ConfigMap fallback, TKG search-domain rule, all-NoIPAM ⇒ no backfill,
+    primary-only, NoIPAM-excluded, any-DHCP ConfigMap-skip with VM-level-still-applies
+    (CloudInit + GOSC), `useGlobal*=false` suppression of the ConfigMap fallback, TKG
+    search-domain rule, all-NoIPAM ⇒ no backfill,
     annotation restoring legacy under capability-on.
   - `pkg/providers/vsphere/network/bootstrap_test.go`: `InterfaceBootstrap` per-interface
     fallback runs only in legacy mode.
@@ -157,8 +173,9 @@ Replace the current detection-then-broadcast block with:
   spec (`.sdd/specs/NNN-primary-interface-dns-backfill-ga/`).
 - Release note: "Capability-gated change to how global DNS nameservers and search domains are
   backfilled onto VM network interfaces: they are now applied to the VM's primary (first
-  non-NoIPAM) interface only, are no longer applied to NoIPAM interfaces, and are skipped
-  entirely when any interface uses DHCP."
+  non-NoIPAM) interface only, are no longer applied to NoIPAM interfaces, and the WCP
+  infrastructure ConfigMap fallback is skipped when any interface uses DHCP (an explicit
+  VM-level nameserver/search-domain value still applies regardless of DHCP)."
 
 ## Complexity tracking
 

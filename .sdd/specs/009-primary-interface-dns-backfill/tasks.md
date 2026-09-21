@@ -53,8 +53,10 @@
 
 ### US3 (DHCP)
 
-- [ ] T011 [US3] [vmop-TBD] Any-DHCP tests: no per-interface backfill and no ConfigMap lookup for
-      Cloud-Init, and no `bsa.DNSServers` backfill for GOSC (LinuxPrep + Sysprep)
+- [ ] T011 [US3] [vmop-TBD] Any-DHCP tests: no ConfigMap lookup/fallback for Cloud-Init or GOSC
+      (LinuxPrep + Sysprep) when no VM-level nameservers/search domains are set; and, when an
+      explicit VM-level value is set, confirm it still backfills onto the primary interface
+      (Cloud-Init) or `bsa.DNSServers`/guest-wide list (GOSC) despite `anyDHCP`
       (`pkg/providers/vsphere/vmlifecycle/bootstrap_test.go`).
 
 ### US4 (`useGlobal*` flags)
@@ -69,8 +71,9 @@
 - [ ] T013 [US5] [vmop-TBD] Annotation tests: capability on + annotation ⇒ legacy broadcast
       (NoIPAM included); capability off + annotation ⇒ unchanged from today
       (`pkg/providers/vsphere/vmlifecycle/bootstrap_test.go`).
-- [ ] T014 [P] [US5] [vmop-TBD] Preserve the TKG-only ConfigMap search-domain rule and the
-      "GOSC never receives ConfigMap search suffixes" rule under capability-on
+- [ ] T014 [P] [US5] [vmop-TBD] Preserve the TKG-only ConfigMap search-domain rule under
+      capability-on, including the non-TKG/GOSC case where "no ConfigMap search suffixes"
+      follows directly from "TKG-only" rather than being tested as a separate rule
       (`pkg/providers/vsphere/vmlifecycle/bootstrap_test.go`).
 
 ## Phase 4 — E2E (mandatory, capability enabled)

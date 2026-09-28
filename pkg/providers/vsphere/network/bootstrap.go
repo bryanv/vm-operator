@@ -66,7 +66,8 @@ type Bootstrap struct {
 	// Nameservers is the ordered list of DNS resolver addresses for this
 	// interface.  Populated from interfaceSpec.Nameservers, or falls back to
 	// the VM-level nameservers when CloudInit UseGlobalNameserversAsDefault is
-	// true (the default).
+	// true (the default). The Supervisor's default nameservers may later be
+	// applied by the bootstrap engine; see vmlifecycle.GetBootstrapArgs.
 	Nameservers []string
 
 	// SearchDomains is the ordered list of DNS search domains for this
@@ -82,6 +83,67 @@ type Bootstrap struct {
 	// or replaced entirely by interfaceSpec.Addresses when the user supplies
 	// explicit addresses.
 	IPConfigs []NetworkInterfaceIPConfig
+}
+
+// IsStatic returns true if the interface is configured with at least one
+// static IP address and is not using DHCP for either address family, nor is
+// on a network without IP address management.
+func (b Bootstrap) IsStatic() bool {
+	return !b.NoIPAM && !b.DHCP4 && !b.DHCP6 && len(b.IPConfigs) > 0
+}
+
+// GatewayFamilies returns whether the interface has a route beyond its own
+// subnet for IPv4 and IPv6. IPv4 requires a static IPv4 address with a
+// gateway. IPv6 requires a static IPv6 address with a gateway, or accepting
+// Router Advertisements, which provide both the address and default route.
+// A gateway that was set to None is not a gateway.
+func (b Bootstrap) GatewayFamilies() (ipv4, ipv6 bool) {
+	for _, c := range b.IPConfigs {
+		if c.Gateway == "" {
+			continue
+		}
+		if c.IsIPv4 {
+			ipv4 = true
+		} else {
+			ipv6 = true
+		}
+	}
+	return ipv4, ipv6 || b.AcceptRA
+}
+
+// PrimaryInterface returns the VM's first interface if it IsStatic and has a
+// gateway for at least one IP family, otherwise nil. This matches the vSphere
+// GOSC primary adapter, which is the first adapter when it has a static IP
+// address and a static gateway. An interface without a gateway usually cannot
+// reach DNS servers that are not on its subnet, and a gateway set to None
+// indicates the interface is not the VM's route out.
+//
+// The primary interface is the only interface to which the Supervisor's
+// default DNS configuration is applied.
+func PrimaryInterface(bootstraps []Bootstrap) *Bootstrap {
+	if len(bootstraps) == 0 || !bootstraps[0].IsStatic() {
+		return nil
+	}
+	if ipv4, ipv6 := bootstraps[0].GatewayFamilies(); !ipv4 && !ipv6 {
+		return nil
+	}
+	return &bootstraps[0]
+}
+
+// FilterNameserversByFamily returns the nameservers of the IP families
+// indicated by ipv4 and ipv6, preserving their order. Entries that are not IP
+// addresses are kept.
+func FilterNameserversByFamily(nameservers []string, ipv4, ipv6 bool) []string {
+	var filtered []string
+	for _, ns := range nameservers {
+		if ip := net.ParseIP(ns); ip != nil {
+			if isIPv4 := ip.To4() != nil; (isIPv4 && !ipv4) || (!isIPv4 && !ipv6) {
+				continue
+			}
+		}
+		filtered = append(filtered, ns)
+	}
+	return filtered
 }
 
 type NetworkInterfaceIPConfig struct { //nolint:revive

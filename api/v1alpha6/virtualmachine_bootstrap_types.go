@@ -134,6 +134,12 @@ type VirtualMachineBootstrapCloudInitSpec struct {
 	// the NetworkSpec as the per-interface nameservers when the per-interface
 	// nameservers is not provided.
 	//
+	// When the Supervisor supports scoped DNS defaults, the Supervisor's
+	// default nameservers are only applied to the VM's first interface when
+	// the NetworkSpec does not specify nameservers, the interface does not
+	// have nameservers of its own, and the interface has a static IP address.
+	// Please see the NetworkSpec's nameservers for more information.
+	//
 	// Defaults to true if omitted.
 	UseGlobalNameserversAsDefault *bool `json:"useGlobalNameserversAsDefault,omitempty"`
 
@@ -143,6 +149,12 @@ type VirtualMachineBootstrapCloudInitSpec struct {
 	// UseGlobalSearchDomainsAsDefault will use the global search domains specified
 	// in the NetworkSpec as the per-interface search domains when the per-interface
 	// search domains is not provided.
+	//
+	// The Supervisor's default search domains are only applied to VMs that are
+	// Kubernetes cluster nodes. When the Supervisor supports scoped DNS
+	// defaults, they are only applied to the VM's first interface when the
+	// NetworkSpec does not specify search domains, the interface does not have
+	// search domains of its own, and the interface has a static IP address.
 	//
 	// Defaults to true if omitted.
 	UseGlobalSearchDomainsAsDefault *bool `json:"useGlobalSearchDomainsAsDefault,omitempty"`

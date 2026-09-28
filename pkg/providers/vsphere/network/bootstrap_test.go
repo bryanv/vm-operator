@@ -1496,3 +1496,68 @@ var _ = Describe("VPCInterfaceBootstrap",
 		})
 	},
 )
+
+var _ = Describe("PrimaryInterface", func() {
+	v4 := func(gw string) network.NetworkInterfaceIPConfig {
+		return network.NetworkInterfaceIPConfig{IPCIDR: "192.168.1.10/24", IsIPv4: true, Gateway: gw}
+	}
+	v6 := func(gw string) network.NetworkInterfaceIPConfig {
+		return network.NetworkInterfaceIPConfig{IPCIDR: "fd00::10/64", Gateway: gw}
+	}
+	static := func(c ...network.NetworkInterfaceIPConfig) network.Bootstrap {
+		return network.Bootstrap{IPConfigs: c}
+	}
+	var (
+		withGW   = static(v4("192.168.1.1"))
+		noGW     = static(v4(""))
+		dhcp     = network.Bootstrap{DHCP4: true}
+		noIPAM   = network.Bootstrap{NoIPAM: true}
+		raOnlyV6 = network.Bootstrap{IPConfigs: []network.NetworkInterfaceIPConfig{v4("")}, AcceptRA: true}
+	)
+
+	DescribeTable("returns the first interface when it is static with a gateway",
+		func(bootstraps []network.Bootstrap, isPrimary bool) {
+			primary := network.PrimaryInterface(bootstraps)
+			if isPrimary {
+				Expect(primary).To(BeIdenticalTo(&bootstraps[0]))
+			} else {
+				Expect(primary).To(BeNil())
+			}
+		},
+		Entry("no interfaces", nil, false),
+		Entry("static with gateway", []network.Bootstrap{withGW}, true),
+		Entry("static with gateway, then DHCP", []network.Bootstrap{withGW, dhcp}, true),
+		Entry("static without gateway, then with gateway", []network.Bootstrap{noGW, withGW}, false),
+		Entry("no IPAM, then static with gateway", []network.Bootstrap{noIPAM, withGW}, false),
+		Entry("DHCP, then static with gateway", []network.Bootstrap{dhcp, withGW}, false),
+		Entry("IPv6 static with gateway", []network.Bootstrap{static(v6("fd00::1"))}, true),
+		Entry("Router Advertisements provide the IPv6 route", []network.Bootstrap{raOnlyV6}, true),
+	)
+
+	DescribeTable("GatewayFamilies",
+		func(b network.Bootstrap, ipv4, ipv6 bool) {
+			v4, v6 := b.GatewayFamilies()
+			Expect(v4).To(Equal(ipv4))
+			Expect(v6).To(Equal(ipv6))
+		},
+		Entry("IPv4 gateway", withGW, true, false),
+		Entry("no gateway", noGW, false, false),
+		Entry("dual-stack gateways", static(v4("192.168.1.1"), v6("fd00::1")), true, true),
+		Entry("IPv4 gateway, IPv6 gateway set to None", static(v4("192.168.1.1"), v6("")), true, false),
+		Entry("Router Advertisements", raOnlyV6, false, true),
+	)
+})
+
+var _ = Describe("FilterNameserversByFamily", func() {
+	nameservers := []string{"10.0.0.53", "fd00::53", "10.0.0.54", "dns.local"}
+
+	DescribeTable("filters by IP family and preserves order",
+		func(ipv4, ipv6 bool, expected []string) {
+			Expect(network.FilterNameserversByFamily(nameservers, ipv4, ipv6)).To(Equal(expected))
+		},
+		Entry("IPv4", true, false, []string{"10.0.0.53", "10.0.0.54", "dns.local"}),
+		Entry("IPv6", false, true, []string{"fd00::53", "dns.local"}),
+		Entry("both", true, true, nameservers),
+		Entry("neither", false, false, []string{"dns.local"}),
+	)
+})

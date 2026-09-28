@@ -223,6 +223,7 @@ type FeatureStates struct {
 	ControlledRebalancingPolicy  bool
 	VMNetworkUnitNumbers         bool
 	K8sWorkloadMgmtAPI           bool
+	ScopedDNSDefaults            bool
 }
 
 type InstanceStorage struct {

@@ -162,6 +162,12 @@ const (
 	// defined in the Supervisor capabilities CRD for the VirtualMachineReplicaSet
 	// controller, webhooks, and CRD.
 	CapabilityKeyK8sWorkloadMgmtAPI = "supports_k8s_workload_mgmt_api"
+
+	// CapabilityKeyScopedDNSDefaults is the name of the capability key defined
+	// in the Supervisor capabilities CRD for applying the Supervisor's default
+	// DNS configuration to a VM's guest networking only when it is required,
+	// instead of to every interface.
+	CapabilityKeyScopedDNSDefaults = "supports_vm_service_scoped_dns_defaults"
 )
 
 var (
@@ -348,6 +354,8 @@ func updateCapabilitiesFeaturesFromCRD(
 			fs.VMNetworkUnitNumbers = capStatus.Activated
 		case CapabilityKeyK8sWorkloadMgmtAPI:
 			fs.K8sWorkloadMgmtAPI = capStatus.Activated
+		case CapabilityKeyScopedDNSDefaults:
+			fs.ScopedDNSDefaults = capStatus.Activated
 		}
 
 	}

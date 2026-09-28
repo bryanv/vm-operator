@@ -70,4 +70,9 @@ const (
 	// controller, webhooks, and CRD; must match
 	// pkg/config/capabilities.CapabilityKeyK8sWorkloadMgmtAPI.
 	K8sWorkloadMgmtAPICapabilityName = "supports_k8s_workload_mgmt_api"
+
+	// ScopedDNSDefaultsCapabilityName gates applying the Supervisor's default
+	// DNS configuration to only a VM's primary interface; must match
+	// pkg/config/capabilities.CapabilityKeyScopedDNSDefaults.
+	ScopedDNSDefaultsCapabilityName = "supports_vm_service_scoped_dns_defaults"
 )

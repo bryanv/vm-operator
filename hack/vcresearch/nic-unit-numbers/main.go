@@ -39,6 +39,18 @@
 // Connection and placement flags fall back to the standard GOVC_* environment
 // variables, so an environment already set up for govc needs only -out.
 //
+// E14 (SR-IOV) needs an SR-IOV-enabled host. Pin every VM to that host with
+// -host (which also disables DRS for the research VMs and skips E17), name
+// the physical function by pNIC, and supply two or more portgroups on the
+// PF's switch for the ordering sub-experiment:
+//
+//	go run ./hack/vcresearch/nic-unit-numbers -only E14 \
+//	  -host /DC0/host/C0/esx-sriov -pool /DC0/host/C0/Resources \
+//	  -datastore ds0 -network /DC0/network/pg-a \
+//	  -sriov-network /DC0/network/pg-a -sriov-pnic vmnic1 \
+//	  -sriov-order-networks /DC0/network/pg-a,/DC0/network/pg-b \
+//	  -out e14-sriov.md -out-json e14-sriov.json
+//
 // This program is disposable: .sdd/specs/008-nic-unit-numbers/tasks.md T023
 // deletes it once research.md records the findings.
 package main
@@ -66,6 +78,7 @@ import (
 	"github.com/vmware/govmomi/vapi/library"
 	"github.com/vmware/govmomi/vapi/rest"
 	"github.com/vmware/govmomi/vapi/vcenter"
+	"github.com/vmware/govmomi/vim25/methods"
 	"github.com/vmware/govmomi/vim25/mo"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 
@@ -157,11 +170,27 @@ type config struct {
 	// E02; without it that experiment records an explicit skip.
 	libraryItem string
 
+	// host pins every research VM to one ESX host: CreateVM places the VM
+	// there, DRS is disabled for the VM, power-on names the host, and every
+	// create and power-on verifies runtime.host afterwards. Needed on shared
+	// testbeds where only one host may be used (e.g. the only host with an
+	// SR-IOV-enabled pNIC). Experiments that must leave the host (E17)
+	// record a skip when this is set.
+	host string
+
 	// sriovNetwork names an SR-IOV-capable network. Required by E14.
 	sriovNetwork string
-	// sriovPhysicalFunction pins a specific physical function. When empty,
-	// the automatic assignment sentinel is used instead.
+	// sriovPhysicalFunction pins a specific physical function by PCI ID,
+	// e.g. 0000:1a:00.1. When empty and sriovPNIC is also empty, the
+	// automatic assignment sentinel is used instead.
 	sriovPhysicalFunction string
+	// sriovPNIC selects the physical function by its pNIC name, e.g.
+	// vmnic1. Resolved against the host's ConfigTarget.
+	sriovPNIC string
+	// sriovOrderNetworks is a comma-separated list of SR-IOV-capable
+	// networks, one SR-IOV card per entry, used by E14's ordering VM to tell
+	// cards apart by backing.
+	sriovOrderNetworks string
 
 	// vGPUProfile and dvxDeviceClass each supply a non-NIC PCI-bus occupant
 	// for E10. Either one is enough; without both that experiment skips.
@@ -242,7 +271,14 @@ func registerFlags(fs *flag.FlagSet, cfg *config) {
 	fs.StringVar(&cfg.sriovNetwork, "sriov-network", "",
 		"SR-IOV capable network; required by "+e14SRIOV)
 	fs.StringVar(&cfg.sriovPhysicalFunction, "sriov-physical-function", "",
-		"SR-IOV physical function ID; defaults to automatic assignment")
+		"SR-IOV physical function PCI ID, e.g. 0000:1a:00.1; defaults to automatic assignment")
+	fs.StringVar(&cfg.sriovPNIC, "sriov-pnic", "",
+		"SR-IOV physical function by pNIC name, e.g. vmnic1; resolved via the host's ConfigTarget")
+	fs.StringVar(&cfg.sriovOrderNetworks, "sriov-order-networks", "",
+		"comma-separated SR-IOV-capable networks, one SR-IOV card each, for "+e14SRIOV+"'s ordering VM")
+	fs.StringVar(&cfg.host, "host", envOr("", "GOVC_HOST"),
+		"pin every research VM to this ESX host (inventory path or name); disables DRS "+
+			"for the research VMs and skips experiments that must leave the host (env: GOVC_HOST)")
 	fs.StringVar(&cfg.vGPUProfile, "vgpu-profile", "",
 		"vGPU profile for a VirtualPCIPassthrough vmiop device; used by "+e10NonNICPCIOccupant)
 	fs.StringVar(&cfg.dvxDeviceClass, "dvx-device-class", "",
@@ -287,6 +323,11 @@ type deviceInfo struct {
 	AddressType   string `json:"addressType,omitempty"`
 	ExternalID    string `json:"externalID,omitempty"`
 	Backing       string `json:"backing,omitempty"`
+	// SriovPF and SriovVF are the physical and virtual function PCI IDs of
+	// a VirtualSriovEthernetCard's SR-IOV backing. The VF is only assigned
+	// while the VM is powered on.
+	SriovPF string `json:"sriovPF,omitempty"`
+	SriovVF string `json:"sriovVF,omitempty"`
 }
 
 // unit renders the unit number for display, distinguishing an explicit value
@@ -321,6 +362,10 @@ func (d deviceInfo) String() string {
 		fmt.Fprintf(&b, " backing=%s", d.Backing)
 	}
 
+	if d.SriovPF != "" || d.SriovVF != "" {
+		fmt.Fprintf(&b, " sriovPF=%s sriovVF=%s", d.SriovPF, d.SriovVF)
+	}
+
 	return b.String()
 }
 
@@ -344,6 +389,9 @@ type step struct {
 	Faults    []faultInfo  `json:"faults,omitempty"`
 	Err       string       `json:"error,omitempty"`
 	Notes     []string     `json:"notes,omitempty"`
+	// VMX holds the .vmx lines that say which device namespace (ethernetN
+	// vs pciPassthruN) each NIC lives in. Only E14 records it.
+	VMX []string `json:"vmx,omitempty"`
 }
 
 // result is the record for one experiment.
@@ -528,6 +576,16 @@ func (s step) renderMarkdown(b *strings.Builder) {
 	for _, n := range s.Notes {
 		fmt.Fprintf(b, "\n%s\n", n)
 	}
+
+	if len(s.VMX) > 0 {
+		b.WriteString("\nVMX device lines:\n\n```\n")
+
+		for _, l := range s.VMX {
+			fmt.Fprintf(b, "%s\n", l)
+		}
+
+		b.WriteString("```\n")
+	}
 }
 
 // renderDevices appends a labelled device block, or nothing when empty.
@@ -558,6 +616,9 @@ type runner struct {
 	datastore    *object.Datastore
 	folder       *object.Folder
 	network      object.NetworkReference
+
+	// host is the resolved -host, or nil when placement is not pinned.
+	host *object.HostSystem
 
 	env     environment
 	results []*result
@@ -615,6 +676,13 @@ func (r *runner) connect(ctx context.Context) error {
 	r.network, err = r.finder.NetworkOrDefault(ctx, r.cfg.network)
 	if err != nil {
 		return fmt.Errorf("failed to find network %q: %w", r.cfg.network, err)
+	}
+
+	if r.cfg.host != "" {
+		r.host, err = r.finder.HostSystem(ctx, r.cfg.host)
+		if err != nil {
+			return fmt.Errorf("failed to find host %q: %w", r.cfg.host, err)
+		}
 	}
 
 	return nil
@@ -677,14 +745,19 @@ func (r *runner) recordEnvironment(ctx context.Context) {
 		r.env.Network = r.cfg.network
 	}
 
-	hosts, err := r.finder.HostSystemList(ctx, "*")
-	if err != nil || len(hosts) == 0 {
-		return
+	hosts := []*object.HostSystem{r.host}
+	if r.host == nil {
+		var err error
+
+		hosts, err = r.finder.HostSystemList(ctx, "*")
+		if err != nil || len(hosts) == 0 {
+			return
+		}
 	}
 
 	var moHost mo.HostSystem
 
-	err = hosts[0].Properties(ctx, hosts[0].Reference(), []string{"name", "config.product"}, &moHost)
+	err := hosts[0].Properties(ctx, hosts[0].Reference(), []string{"name", "config.product"}, &moHost)
 	if err != nil {
 		return
 	}
@@ -737,6 +810,17 @@ func deviceInfoFor(dev vimtypes.BaseVirtualDevice) deviceInfo {
 		di.MACAddress = card.MacAddress
 		di.AddressType = card.AddressType
 		di.ExternalID = card.ExternalId
+	}
+
+	sriov, ok := dev.(*vimtypes.VirtualSriovEthernetCard)
+	if ok && sriov.SriovBacking != nil {
+		if pf := sriov.SriovBacking.PhysicalFunctionBacking; pf != nil {
+			di.SriovPF = pf.Id
+		}
+
+		if vf := sriov.SriovBacking.VirtualFunctionBacking; vf != nil {
+			di.SriovVF = vf.Id
+		}
 	}
 
 	return di
@@ -968,44 +1052,6 @@ func (r *runner) newEthCard(
 	return dev, nil
 }
 
-// newSriovCard builds a VirtualSriovEthernetCard, using automatic physical
-// function assignment unless a specific PF was named.
-func (r *runner) newSriovCard(
-	ctx context.Context,
-	net object.NetworkReference,
-	unitNumber *int32) (vimtypes.BaseVirtualDevice, error) {
-
-	backing, err := net.EthernetCardBackingInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ethernet card backing for %v: %w", net.Reference(), err)
-	}
-
-	pf := r.cfg.sriovPhysicalFunction
-	if pf == "" {
-		// The sentinel that asks vSphere to pick a physical function from the
-		// network's SR-IOV device pool.
-		pf = "Automatic-0000:00:00.0"
-	}
-
-	card := &vimtypes.VirtualSriovEthernetCard{
-		VirtualEthernetCard: vimtypes.VirtualEthernetCard{
-			VirtualDevice: vimtypes.VirtualDevice{
-				Key:        -100,
-				Backing:    backing,
-				UnitNumber: unitNumber,
-			},
-			AddressType: string(vimtypes.VirtualEthernetCardMacTypeGenerated),
-		},
-		SriovBacking: &vimtypes.VirtualSriovEthernetCardSriovBackingInfo{
-			PhysicalFunctionBacking: &vimtypes.VirtualPCIPassthroughDeviceBackingInfo{
-				Id: pf,
-			},
-		},
-	}
-
-	return card, nil
-}
-
 // newPCIPassthrough builds a non-NIC PCI-bus occupant for E10, from whichever
 // of the two backings the environment supplied.
 func (r *runner) newPCIPassthrough() (vimtypes.BaseVirtualDevice, error) {
@@ -1082,7 +1128,7 @@ func (r *runner) createVM(
 	ctx, cancel := r.withTaskTimeout(ctx)
 	defer cancel()
 
-	task, err := r.folder.CreateVM(ctx, spec, r.resourcePool, nil)
+	task, err := r.folder.CreateVM(ctx, spec, r.resourcePool, r.host)
 	if err != nil {
 		return nil, fmt.Errorf("failed to submit CreateVM for %s: %w", spec.Name, err)
 	}
@@ -1100,7 +1146,84 @@ func (r *runner) createVM(
 	vm := object.NewVirtualMachine(r.client.Client, ref)
 	r.created = append(r.created, vm)
 
+	if r.host == nil {
+		return vm, nil
+	}
+
+	err = r.disableDRS(ctx, vm)
+	if err != nil {
+		return nil, err
+	}
+
+	err = r.verifyHost(ctx, vm)
+	if err != nil {
+		return nil, err
+	}
+
 	return vm, nil
+}
+
+// disableDRS adds a per-VM DRS override that disables DRS for vm, so a
+// fully-automated cluster cannot move a -host-pinned research VM at power-on.
+// The override is removed by vCenter when the VM is destroyed. A standalone
+// host (no cluster) needs no override.
+func (r *runner) disableDRS(ctx context.Context, vm *object.VirtualMachine) error {
+	var moPool mo.ResourcePool
+
+	err := r.resourcePool.Properties(ctx, r.resourcePool.Reference(), []string{"owner"}, &moPool)
+	if err != nil {
+		return fmt.Errorf("failed to resolve resource pool owner: %w", err)
+	}
+
+	if moPool.Owner.Type != "ClusterComputeResource" {
+		return nil
+	}
+
+	cluster := object.NewClusterComputeResource(r.client.Client, moPool.Owner)
+
+	ctx, cancel := r.withTaskTimeout(ctx)
+	defer cancel()
+
+	task, err := cluster.Reconfigure(ctx, &vimtypes.ClusterConfigSpecEx{
+		DrsVmConfigSpec: []vimtypes.ClusterDrsVmConfigSpec{{
+			ArrayUpdateSpec: vimtypes.ArrayUpdateSpec{Operation: vimtypes.ArrayUpdateOperationAdd},
+			Info: &vimtypes.ClusterDrsVmConfigInfo{
+				Key:     vm.Reference(),
+				Enabled: ptr.To(false),
+			},
+		}},
+	}, true)
+	if err != nil {
+		return fmt.Errorf("failed to submit DRS override for %s: %w", vm.Reference().Value, err)
+	}
+
+	_, err = task.WaitForResultEx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to disable DRS for %s: %w", vm.Reference().Value, err)
+	}
+
+	return nil
+}
+
+// verifyHost fails when a -host-pinned VM is not on the pinned host.
+func (r *runner) verifyHost(ctx context.Context, vm *object.VirtualMachine) error {
+	if r.host == nil {
+		return nil
+	}
+
+	var moVM mo.VirtualMachine
+
+	err := vm.Properties(ctx, vm.Reference(), []string{"runtime.host"}, &moVM)
+	if err != nil {
+		return fmt.Errorf("failed to read runtime.host for %s: %w", vm.Reference().Value, err)
+	}
+
+	if moVM.Runtime.Host == nil || *moVM.Runtime.Host != r.host.Reference() {
+		return fmt.Errorf("VM %s is on host %v, not the pinned host %s",
+			vm.Reference().Value, moVM.Runtime.Host, r.host.Reference().Value)
+	}
+
+	return nil
 }
 
 // withTaskTimeout bounds a single vSphere task so one wedged operation cannot
@@ -1184,9 +1307,23 @@ func (r *runner) powerState(
 		err  error
 	)
 
-	if on {
+	switch {
+	case on && r.host != nil:
+		// Name the host so DRS initial placement cannot pick another one.
+		hostRef := r.host.Reference()
+
+		var res *vimtypes.PowerOnVM_TaskResponse
+
+		res, err = methods.PowerOnVM_Task(ctx, r.client.Client, &vimtypes.PowerOnVM_Task{
+			This: vm.Reference(),
+			Host: &hostRef,
+		})
+		if err == nil {
+			task = object.NewTask(r.client.Client, res.Returnval)
+		}
+	case on:
 		task, err = vm.PowerOn(ctx)
-	} else {
+	default:
 		task, err = vm.PowerOff(ctx)
 	}
 
@@ -1204,7 +1341,12 @@ func (r *runner) powerState(
 		want = vimtypes.VirtualMachinePowerStatePoweredOn
 	}
 
-	return vm.WaitForPowerState(ctx, want)
+	err = vm.WaitForPowerState(ctx, want)
+	if err != nil {
+		return err
+	}
+
+	return r.verifyHost(ctx, vm)
 }
 
 // cleanup destroys every VM the program created (R7).
@@ -2457,78 +2599,6 @@ func waitForEnter() {
 	_, _ = fmt.Scanln(&line)
 }
 
-// runE14 answers Q3: does a VirtualSriovEthernetCard draw from the same 7-16
-// unit-number space as other NIC types? Expected, since it is a
-// VirtualEthernetCard, but the spec asserts SR-IOV is covered by the same
-// placement, validation, backfill, and matching, so confirm it.
-//
-// The experiment needs an SR-IOV-capable pNIC and network, which not every
-// testbed has (R5). An unavailable environment is recorded as an explicit skip.
-func (r *runner) runE14(ctx context.Context) *result {
-	res := &result{
-		ID:        e14SRIOV,
-		Title:     "SR-IOV ethernet cards share the 7-16 unit-number space",
-		Questions: []string{"Q3"},
-	}
-
-	if r.cfg.sriovNetwork == "" {
-		return res.skip("no -sriov-network supplied; this experiment needs an SR-IOV-capable " +
-			"pNIC/host and a suitable network (R5)")
-	}
-
-	sriovNet, err := r.finder.Network(ctx, r.cfg.sriovNetwork)
-	if err != nil {
-		return res.fail(fmt.Errorf("failed to find SR-IOV network %q: %w", r.cfg.sriovNetwork, err))
-	}
-
-	card, err := r.newEthCard(ctx, r.network, ptr.To(nicUnitNumberFirst))
-	if err != nil {
-		return res.fail(err)
-	}
-
-	spec := r.baseConfigSpec(r.vmName(res.ID, ""))
-	spec.DeviceChange = addSpec(card)
-
-	vm, err := r.createVM(ctx, spec)
-	if err != nil {
-		return res.fail(err)
-	}
-
-	sriovAuto, err := r.newSriovCard(ctx, sriovNet, nil)
-	if err != nil {
-		return res.fail(err)
-	}
-
-	autoStep := r.addDevices(ctx, vm, "Add an SR-IOV card with UnitNumber nil", sriovAuto)
-	res.Steps = append(res.Steps, autoStep)
-
-	sriovExplicit, err := r.newSriovCard(ctx, sriovNet, ptr.To(int32(13)))
-	if err != nil {
-		return res.fail(err)
-	}
-
-	explicitStep := r.addDevices(ctx, vm, "Add an SR-IOV card at explicit unit 13", sriovExplicit)
-	res.Steps = append(res.Steps, explicitStep)
-	res.Status = statusRecorded
-
-	for _, d := range explicitStep.Observed {
-		if !strings.Contains(d.Kind, "Sriov") || d.UnitNumber == nil {
-			continue
-		}
-
-		if *d.UnitNumber >= nicUnitNumberFirst && *d.UnitNumber <= nicUnitNumberLast {
-			res.findf("SR-IOV card %s occupies unit %d, inside the %d-%d NIC band.",
-				d.Kind, *d.UnitNumber, nicUnitNumberFirst, nicUnitNumberLast)
-		} else {
-			res.findf("SR-IOV card %s occupies unit %d, OUTSIDE the %d-%d NIC band — the spec's "+
-				"claim that SR-IOV shares the NIC unit-number space is wrong.",
-				d.Kind, *d.UnitNumber, nicUnitNumberFirst, nicUnitNumberLast)
-		}
-	}
-
-	return res
-}
-
 // runE15 records whether a hot-add to a powered-on VM honours an explicit unit
 // number. Informational only: NIC device changes are powered-off-only in the
 // product today, so nothing in this change set consumes the answer (I5). It is
@@ -2672,6 +2742,11 @@ func (r *runner) runE17(ctx context.Context) *result {
 	res := &result{
 		ID:    e17VMotion,
 		Title: "NIC unit numbers are stable across vMotion to another host",
+	}
+
+	if r.host != nil {
+		return res.skip("-host pins every research VM to one host; vMotion would move it off " +
+			"that host")
 	}
 
 	hosts, err := r.clusterHosts(ctx)

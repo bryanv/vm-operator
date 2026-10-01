@@ -1,0 +1,2543 @@
+{
+  "environment": {
+    "runAt": "2026-09-30T23:23:10Z",
+    "vcName": "vcf-10-158-42-0 (VMware vCenter Server 8.0.3 build-25197330)",
+    "vcVersion": "8.0.3",
+    "vcBuild": "25197330",
+    "vcAPIVersion": "8.0.3.0",
+    "hostName": "sp-telco-srv-48",
+    "hostVersion": "8.0.3",
+    "hostBuild": "24280767",
+    "hardwareVersion": "vmx-21",
+    "datacenter": "/PNimbus",
+    "resourcePool": "/PNimbus/host/nimbus01/Resources",
+    "datastore": "/PNimbus/datastore/datastore1",
+    "folder": "/PNimbus/vm",
+    "network": "/PNimbus/network/vlan1868",
+    "supportMatrix": "vCenter 8.0.3 / ESXi 8.0.3, Mellanox ConnectX-4 Lx SR-IOV PF (nmlx5_core), 8 VFs",
+    "govmomiVersion": "v0.57.0-alpha.0.0.20260908193317-e23a942e8f55"
+  },
+  "results": [
+    {
+      "id": "E14",
+      "title": "SR-IOV ethernet cards: unit-number band, device keys, and VMX namespace",
+      "questions": [
+        "Q3"
+      ],
+      "status": "RECORDED",
+      "steps": [
+        {
+          "name": "Lifecycle VM: CreateVM with a vmxnet3 and an SR-IOV card, both UnitNumber nil",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -1,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -2,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: ReconfigVM_Task Add, SR-IOV UnitNumber nil",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -3,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: ReconfigVM_Task Add, SR-IOV explicit unit 13",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -4,
+              "unitNumber": 13,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: ReconfigVM_Task Add, SR-IOV explicit unit 40",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -5,
+              "unitNumber": 40,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: Collision: vmxnet3 at the first SR-IOV card's unit 62",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -6,
+              "unitNumber": 62,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "faults": [
+            {
+              "type": "InvalidArgument",
+              "message": "A specified parameter was not correct: unitNumber"
+            }
+          ],
+          "error": "ReconfigVM_Task failed: A specified parameter was not correct: unitNumber",
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: Collision: SR-IOV card at the vmxnet3's unit 7",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -7,
+              "unitNumber": 7,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13027,
+              "unitNumber": 61,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:e0:49",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=183)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru27.deviceId = \"0\"",
+            "pciPassthru27.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru27.id = \"00000:026:00.1\"",
+            "pciPassthru27.pfId = \"00000:026:00.1\"",
+            "pciPassthru27.present = \"TRUE\"",
+            "pciPassthru27.systemId = \"BYPASS\"",
+            "pciPassthru27.vendorId = \"0\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: powered on",
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "pciSlotNumber": 1216,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13027,
+              "unitNumber": 61,
+              "controllerKey": 100,
+              "pciSlotNumber": 160,
+              "macAddress": "00:50:56:8c:e0:49",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=183)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "pciSlotNumber": 192,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "pciSlotNumber": 224,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "pciSlotNumber": 256,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "pciSlotNumber": 1184,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.pciSlotNumber = \"1216\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru27.deviceId = \"0\"",
+            "pciPassthru27.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru27.id = \"00000:026:00.1\"",
+            "pciPassthru27.pciSlotNumber = \"160\"",
+            "pciPassthru27.pfId = \"00000:026:00.1\"",
+            "pciPassthru27.present = \"TRUE\"",
+            "pciPassthru27.systemId = \"BYPASS\"",
+            "pciPassthru27.vendorId = \"0\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pciSlotNumber = \"192\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pciSlotNumber = \"224\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pciSlotNumber = \"256\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pciSlotNumber = \"1184\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: Hot-add an SR-IOV card while powered on (informational)",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -8,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "pciSlotNumber": 1216,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13027,
+              "unitNumber": 61,
+              "controllerKey": 100,
+              "pciSlotNumber": 160,
+              "macAddress": "00:50:56:8c:e0:49",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=183)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "pciSlotNumber": 192,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "pciSlotNumber": 224,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "pciSlotNumber": 256,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "pciSlotNumber": 1184,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "faults": [
+            {
+              "type": "GenericVmConfigFault",
+              "message": "The hot-plug operation failed. ",
+              "localized": [
+                "msg.devices.hotplug.failed: The hot-plug operation failed. ",
+                "msg.devices.hotadd.failed: Hot-add of pciPassthru26 failed. ",
+                "msg.migrate.save.error: An error occurred while saving the state for migration. ",
+                "msg.pciPassthru.noSuspend.postedInterrupts: A virtual machine with a PCI DirectPath I/O device cannot be suspended when FPT devices in-use have posted interrupts enabled.",
+                "msg.pciPassthru.noMigration: vMotion, Storage vMotion, Fault Tolerance, and PCI hot-plug cannot be used for a virtual machine with PCI DirectPath I/O device. "
+              ]
+            }
+          ],
+          "error": "ReconfigVM_Task failed: The hot-plug operation failed. ",
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.pciSlotNumber = \"1216\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru26.deviceId = \"0\"",
+            "pciPassthru26.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru26.id = \"00000:026:00.1\"",
+            "pciPassthru26.pciSlotNumber = \"-1\"",
+            "pciPassthru26.pfId = \"00000:026:00.1\"",
+            "pciPassthru26.present = \"FALSE\"",
+            "pciPassthru26.systemId = \"BYPASS\"",
+            "pciPassthru26.vendorId = \"0\"",
+            "pciPassthru27.deviceId = \"0\"",
+            "pciPassthru27.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru27.id = \"00000:026:00.1\"",
+            "pciPassthru27.pciSlotNumber = \"160\"",
+            "pciPassthru27.pfId = \"00000:026:00.1\"",
+            "pciPassthru27.present = \"TRUE\"",
+            "pciPassthru27.systemId = \"BYPASS\"",
+            "pciPassthru27.vendorId = \"0\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pciSlotNumber = \"192\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pciSlotNumber = \"224\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pciSlotNumber = \"256\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pciSlotNumber = \"1184\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: powered back off",
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "pciSlotNumber": 1216,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13027,
+              "unitNumber": 61,
+              "controllerKey": 100,
+              "pciSlotNumber": 160,
+              "macAddress": "00:50:56:8c:e0:49",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=183)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "pciSlotNumber": 192,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "pciSlotNumber": 224,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "pciSlotNumber": 256,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "pciSlotNumber": 1184,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.pciSlotNumber = \"1216\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru26.deviceId = \"0\"",
+            "pciPassthru26.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru26.id = \"00000:026:00.1\"",
+            "pciPassthru26.pciSlotNumber = \"-1\"",
+            "pciPassthru26.pfId = \"00000:026:00.1\"",
+            "pciPassthru26.present = \"FALSE\"",
+            "pciPassthru26.systemId = \"BYPASS\"",
+            "pciPassthru26.vendorId = \"0\"",
+            "pciPassthru27.deviceId = \"0\"",
+            "pciPassthru27.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru27.id = \"00000:026:00.1\"",
+            "pciPassthru27.pciSlotNumber = \"160\"",
+            "pciPassthru27.pfId = \"00000:026:00.1\"",
+            "pciPassthru27.present = \"TRUE\"",
+            "pciPassthru27.systemId = \"BYPASS\"",
+            "pciPassthru27.vendorId = \"0\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pciSlotNumber = \"192\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pciSlotNumber = \"224\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pciSlotNumber = \"256\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pciSlotNumber = \"1184\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: remove the first SR-IOV card",
+          "requested": [
+            {
+              "kind": "remove VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "pciSlotNumber": 1184,
+              "macAddress": "00:50:56:8c:d0:6d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "pciSlotNumber": 1216,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13027,
+              "unitNumber": 61,
+              "controllerKey": 100,
+              "pciSlotNumber": 160,
+              "macAddress": "00:50:56:8c:e0:49",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=183)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "pciSlotNumber": 192,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "pciSlotNumber": 224,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "pciSlotNumber": 256,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.pciSlotNumber = \"1216\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru26.deviceId = \"0\"",
+            "pciPassthru26.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru26.id = \"00000:026:00.1\"",
+            "pciPassthru26.pciSlotNumber = \"-1\"",
+            "pciPassthru26.pfId = \"00000:026:00.1\"",
+            "pciPassthru26.present = \"FALSE\"",
+            "pciPassthru26.systemId = \"BYPASS\"",
+            "pciPassthru26.vendorId = \"0\"",
+            "pciPassthru27.deviceId = \"0\"",
+            "pciPassthru27.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru27.id = \"00000:026:00.1\"",
+            "pciPassthru27.pciSlotNumber = \"160\"",
+            "pciPassthru27.pfId = \"00000:026:00.1\"",
+            "pciPassthru27.present = \"TRUE\"",
+            "pciPassthru27.systemId = \"BYPASS\"",
+            "pciPassthru27.vendorId = \"0\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pciSlotNumber = \"192\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pciSlotNumber = \"224\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pciSlotNumber = \"256\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Lifecycle VM: add a new SR-IOV card, UnitNumber nil",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -9,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "pciSlotNumber": 1216,
+              "macAddress": "00:50:56:8c:8d:b6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=178)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13027,
+              "unitNumber": 61,
+              "controllerKey": 100,
+              "pciSlotNumber": 160,
+              "macAddress": "00:50:56:8c:e0:49",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=183)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "pciSlotNumber": 192,
+              "macAddress": "00:50:56:8c:87:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=182)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "pciSlotNumber": 224,
+              "macAddress": "00:50:56:8c:2f:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=181)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "pciSlotNumber": 256,
+              "macAddress": "00:50:56:8c:0b:51",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=180)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:03:f6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=179)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.pciSlotNumber = \"1216\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru26.deviceId = \"0\"",
+            "pciPassthru26.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru26.id = \"00000:026:00.1\"",
+            "pciPassthru26.pciSlotNumber = \"-1\"",
+            "pciPassthru26.pfId = \"00000:026:00.1\"",
+            "pciPassthru26.present = \"FALSE\"",
+            "pciPassthru26.systemId = \"BYPASS\"",
+            "pciPassthru26.vendorId = \"0\"",
+            "pciPassthru27.deviceId = \"0\"",
+            "pciPassthru27.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru27.id = \"00000:026:00.1\"",
+            "pciPassthru27.pciSlotNumber = \"160\"",
+            "pciPassthru27.pfId = \"00000:026:00.1\"",
+            "pciPassthru27.present = \"TRUE\"",
+            "pciPassthru27.systemId = \"BYPASS\"",
+            "pciPassthru27.vendorId = \"0\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pciSlotNumber = \"192\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pciSlotNumber = \"224\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pciSlotNumber = \"256\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 8",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -10,
+              "unitNumber": 7,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -11,
+              "unitNumber": 8,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ad:a6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=184)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ca:93",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=185)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 18",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -12,
+              "unitNumber": 7,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -13,
+              "unitNumber": 18,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:24:cc",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=186)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:33:cb",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=187)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 40",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -14,
+              "unitNumber": 7,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -15,
+              "unitNumber": 40,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:04:d3",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=188)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:6e:36",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=189)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 3",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -16,
+              "unitNumber": 7,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -17,
+              "unitNumber": 3,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:73:0a",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=190)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ba:77",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=93)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 200",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -18,
+              "unitNumber": 7,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -19,
+              "unitNumber": 200,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ff:da",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=94)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:2c:5f",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=95)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "NIC limit: CreateVM with ten vmxnet3 cards plus one SR-IOV card, all UnitNumber nil",
+          "requested": [
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -20,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -21,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -22,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -23,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -24,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -25,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -26,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -27,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -28,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualVmxnet3",
+              "key": -29,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -30,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4000,
+              "unitNumber": 7,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:56:f5",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=96)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4001,
+              "unitNumber": 8,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:04:87",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=191)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4002,
+              "unitNumber": 9,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:bb:75",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=192)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4003,
+              "unitNumber": 10,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:73:d2",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=193)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4004,
+              "unitNumber": 11,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:12:e8",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=194)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4005,
+              "unitNumber": 12,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:57:f6",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=195)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4006,
+              "unitNumber": 13,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d7:87",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=196)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4007,
+              "unitNumber": 14,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:da:d2",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=197)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4008,
+              "unitNumber": 15,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:d8:04",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=198)"
+            },
+            {
+              "kind": "VirtualVmxnet3",
+              "key": 4009,
+              "unitNumber": 16,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:2e:b5",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=199)"
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:51:95",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=200)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "ethernet0.addressType = \"vpx\"",
+            "ethernet0.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet0.present = \"TRUE\"",
+            "ethernet0.virtualDev = \"vmxnet3\"",
+            "ethernet1.addressType = \"vpx\"",
+            "ethernet1.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet1.present = \"TRUE\"",
+            "ethernet1.virtualDev = \"vmxnet3\"",
+            "ethernet2.addressType = \"vpx\"",
+            "ethernet2.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet2.present = \"TRUE\"",
+            "ethernet2.virtualDev = \"vmxnet3\"",
+            "ethernet3.addressType = \"vpx\"",
+            "ethernet3.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet3.present = \"TRUE\"",
+            "ethernet3.virtualDev = \"vmxnet3\"",
+            "ethernet4.addressType = \"vpx\"",
+            "ethernet4.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet4.present = \"TRUE\"",
+            "ethernet4.virtualDev = \"vmxnet3\"",
+            "ethernet5.addressType = \"vpx\"",
+            "ethernet5.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet5.present = \"TRUE\"",
+            "ethernet5.virtualDev = \"vmxnet3\"",
+            "ethernet6.addressType = \"vpx\"",
+            "ethernet6.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet6.present = \"TRUE\"",
+            "ethernet6.virtualDev = \"vmxnet3\"",
+            "ethernet7.addressType = \"vpx\"",
+            "ethernet7.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet7.present = \"TRUE\"",
+            "ethernet7.virtualDev = \"vmxnet3\"",
+            "ethernet8.addressType = \"vpx\"",
+            "ethernet8.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet8.present = \"TRUE\"",
+            "ethernet8.virtualDev = \"vmxnet3\"",
+            "ethernet9.addressType = \"vpx\"",
+            "ethernet9.dvs.portgroupId = \"dvportgroup-75\"",
+            "ethernet9.present = \"TRUE\"",
+            "ethernet9.virtualDev = \"vmxnet3\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Ordering VM: CreateVM with 3 SR-IOV cards on [/PNimbus/network/vlan1868 /PNimbus/network/vlan-1869 /PNimbus/network/trunk-dvpg], in that ConfigSpec order, all UnitNumber nil",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -31,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -32,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2635 port=)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -33,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:23:93",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:cc:d1",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2635 port=104)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ff:7e",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "notes": [
+            "config.hardware.device order (unsorted): key=13029 unit=63 VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112); key=13030 unit=64 VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2635 port=104); key=13031 unit=65 VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201)"
+          ],
+          "vmx": [
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-2637\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-2635\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Ordering VM: remove the middle SR-IOV card (key 13030)",
+          "requested": [
+            {
+              "kind": "remove VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:cc:d1",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2635 port=104)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:23:93",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ff:7e",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-2637\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Ordering VM: add a new SR-IOV card, UnitNumber nil",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -34,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:23:93",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ec:88",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=202)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ff:7e",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-2637\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Ordering VM: add an SR-IOV card with explicit device Key 13010, UnitNumber nil",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": 13010,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:19:f9",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=203)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:23:93",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ec:88",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=202)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ff:7e",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-2637\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Ordering VM: add a non-SR-IOV PCI passthrough device DirectPath 0000:1a:01.2 (MT27710 Family [ConnectX-4 Lx Virtual Function]) (config only, never powered on)",
+          "requested": [
+            {
+              "kind": "add VirtualPCIPassthrough",
+              "key": -36,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "backing": "VirtualPCIPassthroughDeviceBackingInfo"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualPCIPassthrough",
+              "key": 13000,
+              "unitNumber": 18,
+              "controllerKey": 100,
+              "backing": "VirtualPCIPassthroughDeviceBackingInfo"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:19:f9",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=203)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:23:93",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ec:88",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=202)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ff:7e",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "pciPassthru0.deviceId = \"0x1016\"",
+            "pciPassthru0.id = \"00000:026:01.2\"",
+            "pciPassthru0.present = \"TRUE\"",
+            "pciPassthru0.systemId = \"6a987c42-1f55-b314-09f7-b48351006ea6\"",
+            "pciPassthru0.vendorId = \"0x15b3\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-2637\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        },
+        {
+          "name": "Ordering VM: add another SR-IOV card after the passthrough device",
+          "requested": [
+            {
+              "kind": "add VirtualSriovEthernetCard",
+              "key": -37,
+              "unitNumber": null,
+              "controllerKey": 0,
+              "addressType": "generated",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "observed": [
+            {
+              "kind": "VirtualMachineVideoCard",
+              "key": 500,
+              "unitNumber": 0,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualMachineVMCIDevice",
+              "key": 12000,
+              "unitNumber": 17,
+              "controllerKey": 100
+            },
+            {
+              "kind": "VirtualPCIPassthrough",
+              "key": 13000,
+              "unitNumber": 18,
+              "controllerKey": 100,
+              "backing": "VirtualPCIPassthroughDeviceBackingInfo"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13027,
+              "unitNumber": 61,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:07:9d",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=204)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13028,
+              "unitNumber": 62,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:19:f9",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=203)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13029,
+              "unitNumber": 63,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:23:93",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13030,
+              "unitNumber": 64,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ec:88",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=202)",
+              "sriovPF": "0000:1a:00.1"
+            },
+            {
+              "kind": "VirtualSriovEthernetCard",
+              "key": 13031,
+              "unitNumber": 65,
+              "controllerKey": 100,
+              "macAddress": "00:50:56:8c:ff:7e",
+              "addressType": "assigned",
+              "backing": "VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201)",
+              "sriovPF": "0000:1a:00.1"
+            }
+          ],
+          "vmx": [
+            "pciPassthru0.deviceId = \"0x1016\"",
+            "pciPassthru0.id = \"00000:026:01.2\"",
+            "pciPassthru0.present = \"TRUE\"",
+            "pciPassthru0.systemId = \"6a987c42-1f55-b314-09f7-b48351006ea6\"",
+            "pciPassthru0.vendorId = \"0x15b3\"",
+            "pciPassthru27.deviceId = \"0\"",
+            "pciPassthru27.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru27.id = \"00000:026:00.1\"",
+            "pciPassthru27.pfId = \"00000:026:00.1\"",
+            "pciPassthru27.present = \"TRUE\"",
+            "pciPassthru27.systemId = \"BYPASS\"",
+            "pciPassthru27.vendorId = \"0\"",
+            "pciPassthru28.deviceId = \"0\"",
+            "pciPassthru28.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru28.id = \"00000:026:00.1\"",
+            "pciPassthru28.pfId = \"00000:026:00.1\"",
+            "pciPassthru28.present = \"TRUE\"",
+            "pciPassthru28.systemId = \"BYPASS\"",
+            "pciPassthru28.vendorId = \"0\"",
+            "pciPassthru29.deviceId = \"0\"",
+            "pciPassthru29.dvs.portgroupId = \"dvportgroup-2637\"",
+            "pciPassthru29.id = \"00000:026:00.1\"",
+            "pciPassthru29.pfId = \"00000:026:00.1\"",
+            "pciPassthru29.present = \"TRUE\"",
+            "pciPassthru29.systemId = \"BYPASS\"",
+            "pciPassthru29.vendorId = \"0\"",
+            "pciPassthru30.deviceId = \"0\"",
+            "pciPassthru30.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru30.id = \"00000:026:00.1\"",
+            "pciPassthru30.pfId = \"00000:026:00.1\"",
+            "pciPassthru30.present = \"TRUE\"",
+            "pciPassthru30.systemId = \"BYPASS\"",
+            "pciPassthru30.vendorId = \"0\"",
+            "pciPassthru31.deviceId = \"0\"",
+            "pciPassthru31.dvs.portgroupId = \"dvportgroup-75\"",
+            "pciPassthru31.id = \"00000:026:00.1\"",
+            "pciPassthru31.pfId = \"00000:026:00.1\"",
+            "pciPassthru31.present = \"TRUE\"",
+            "pciPassthru31.systemId = \"BYPASS\"",
+            "pciPassthru31.vendorId = \"0\""
+          ]
+        }
+      ],
+      "findings": [
+        "Resolved SR-IOV PF from the host ConfigTarget: pnic=vmnic1 id=0000:1a:00.1 deviceId=1015 vendorId=15b3 deviceName=\"MT27710 Family [ConnectX-4 Lx]\".",
+        "CreateVM, SR-IOV UnitNumber nil: platform assigned key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil.",
+        "ReconfigVM_Task Add, SR-IOV UnitNumber nil: platform assigned key=13030 (PCI passthrough keys 13000-13127) unit=64 (PCI passthrough band 38-161) pciSlot=nil.",
+        "ReconfigVM_Task Add, SR-IOV explicit unit 13: explicit unit 13 (ethernet band 7-16) was silently RENUMBERED — key=13029 (PCI passthrough keys 13000-13127) unit=63 (PCI passthrough band 38-161) pciSlot=nil.",
+        "ReconfigVM_Task Add, SR-IOV explicit unit 40: explicit unit 40 (PCI passthrough band 38-161, inside govmomi's SR-IOV naming band 36-45) was silently RENUMBERED — key=13028 (PCI passthrough keys 13000-13127) unit=62 (PCI passthrough band 38-161) pciSlot=nil.",
+        "Collision: vmxnet3 at the first SR-IOV card's unit 62: REJECTED [InvalidArgument] — `ReconfigVM_Task failed: A specified parameter was not correct: unitNumber`.",
+        "Collision: SR-IOV card at the vmxnet3's unit 7: silently RENUMBERED — kind=VirtualSriovEthernetCard key=13027 (PCI passthrough keys 13000-13127) unit=61 (PCI passthrough band 38-161) pciSlot=nil.",
+        "Power cycle (powered off -\u003e powered on): every NIC's key and unit number were unchanged, and no already-assigned PCI slot moved (slots are first assigned at power-on).",
+        "Powered on: SR-IOV card key=13027 unit=61 pciSlot=160, PF \"0000:1a:00.1\", VF (virtualFunctionBacking not populated in config.hardware).",
+        "Powered on: SR-IOV card key=13028 unit=62 pciSlot=192, PF \"0000:1a:00.1\", VF (virtualFunctionBacking not populated in config.hardware).",
+        "Powered on: SR-IOV card key=13029 unit=63 pciSlot=224, PF \"0000:1a:00.1\", VF (virtualFunctionBacking not populated in config.hardware).",
+        "Powered on: SR-IOV card key=13030 unit=64 pciSlot=256, PF \"0000:1a:00.1\", VF (virtualFunctionBacking not populated in config.hardware).",
+        "Powered on: SR-IOV card key=13031 unit=65 pciSlot=1184, PF \"0000:1a:00.1\", VF (virtualFunctionBacking not populated in config.hardware).",
+        "Hot-add an SR-IOV card while powered on (informational): REJECTED [GenericVmConfigFault] — `ReconfigVM_Task failed: The hot-plug operation failed. `.",
+        "Power cycle (powered on -\u003e powered off): every NIC's key and unit number were unchanged, and no already-assigned PCI slot moved (slots are first assigned at power-on).",
+        "Remove/re-add: removed SR-IOV card had key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=1184; the new nil-unit card got key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil (freed unit reused: true).",
+        "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 8: explicit unit 8 (ethernet band 7-16) was silently RENUMBERED — key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil.",
+        "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 18: explicit unit 18 (PCI passthrough band 18-21) was silently RENUMBERED — key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil.",
+        "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 40: explicit unit 40 (PCI passthrough band 38-161, inside govmomi's SR-IOV naming band 36-45) was silently RENUMBERED — key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil.",
+        "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 3: explicit unit 3 (outside every documented band) was silently RENUMBERED — key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil.",
+        "CreateVM, vmxnet3 at unit 7 plus SR-IOV explicit unit 200: explicit unit 200 (outside every documented band) was silently RENUMBERED — key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil.",
+        "NIC limit: ten vmxnet3 + one SR-IOV was ACCEPTED (10 non-SR-IOV NICs observed); SR-IOV card got key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil — SR-IOV does not count against the ten-ethernet-card limit.",
+        "Ordering: SR-IOV card #0 by unit is key=13029 (PCI passthrough keys 13000-13127) unit=63 (PCI passthrough band 38-161) pciSlot=nil backing=VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2637 port=112).",
+        "Ordering: SR-IOV card #1 by unit is key=13030 (PCI passthrough keys 13000-13127) unit=64 (PCI passthrough band 38-161) pciSlot=nil backing=VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-2635 port=104).",
+        "Ordering: SR-IOV card #2 by unit is key=13031 (PCI passthrough keys 13000-13127) unit=65 (PCI passthrough band 38-161) pciSlot=nil backing=VirtualEthernetCardDistributedVirtualPortBackingInfo(portgroup=dvportgroup-75 port=201).",
+        "Gap fill: removed middle card key=13030 (PCI passthrough keys 13000-13127) unit=64 (PCI passthrough band 38-161) pciSlot=nil; the new nil-unit card got key=13030 (PCI passthrough keys 13000-13127) unit=64 (PCI passthrough band 38-161) pciSlot=nil (gap filled: true).",
+        "Explicit Key: explicit device Key 13010, UnitNumber nil -\u003e key=13028 (PCI passthrough keys 13000-13127) unit=62 (PCI passthrough band 38-161) pciSlot=nil (Key honoured: false).",
+        "Passthrough pool: non-SR-IOV passthrough DirectPath 0000:1a:01.2 (MT27710 Family [ConnectX-4 Lx Virtual Function]) got kind=VirtualPCIPassthrough key=13000 (PCI passthrough keys 13000-13127) unit=18 (PCI passthrough band 18-21) pciSlot=nil.",
+        "Passthrough pool: the next SR-IOV card got key=13027 (PCI passthrough keys 13000-13127) unit=61 (PCI passthrough band 38-161) pciSlot=nil.",
+        "Summary across 16 distinct SR-IOV cards (per VM and device key): 0 inside the 7-16 band, 16 outside it; 0 with 4000-series keys, 16 with other keys.",
+        "VERDICT: SR-IOV cards do NOT share the 7-16 ethernet unit band or the 4000-series keys; the spec's Q3 assumption is wrong and the plan must treat SR-IOV separately."
+      ]
+    }
+  ]
+}

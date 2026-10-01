@@ -52,8 +52,25 @@
 // as re-pointing it at a different network — are likewise applied by
 // replacing the device at this unit number rather than by modifying it in
 // place, and so carry the same new-key/new-MAC caveat.
+//
+// This field must not be set on an SR-IOV interface. vSphere allocates
+// SR-IOV adapters as PCI passthrough devices, outside the ethernet range,
+// and chooses their slot itself; a requested value is not honoured. An
+// SR-IOV interface therefore never has a unit number here, and its
+// observed slot is reported only in status.
 UnitNumber *int32 `json:"unitNumber,omitempty"`
 ```
+
+**SR-IOV rule (spec.md G17.1) — a CEL rule on the `VirtualMachineNetworkInterfaceSpec` type**, next to the field's range markers:
+
+```go
+// +kubebuilder:validation:XValidation:rule="!has(self.unitNumber) || !has(self.type) || self.type != 'SRIOV'",message="unitNumber must not be set on an SRIOV interface"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.type) || oldSelf.type != 'SRIOV' || (has(self.type) && self.type == 'SRIOV')",message="type SRIOV cannot be changed or removed"
+```
+
+The second rule is spec.md **G17.9**. `type: SRIOV` is sticky once set, because the mutator's SR-IOV skip keys off it. It follows the existing `ipamModes` transition rule on the same type.
+
+It is structural and single-object, so per the constitution it belongs in CEL, not Go. The create-time case where `type` is empty but the VM class ConfigSpec supplies the SR-IOV device (G17.2) needs the class, so it is a Go check in the validation webhook (see "Validation error messages").
 
 ### `VirtualMachineNetworkInterfaceStatus` — new field (additive)
 
@@ -215,8 +232,11 @@ const (
     invalidNICUnitNumberRangeFmt    = "NIC unit number must be between 7 and 16"
     invalidNICUnitNumberInUse       = "NIC unit number %d is already in use by another interface"
     invalidNICUnitNumberChangePowOn = "NIC unit number cannot be changed while the VM is powered on"
+    invalidNICUnitNumberClassSRIOV  = "NIC unit number must not be set: the VM class provides an SR-IOV device for this interface"
 )
 ```
+
+`invalidNICUnitNumberClassSRIOV` is spec.md **G17.2**. On create, it rejects a `unitNumber` on an interface with an empty `type` whose positionally zipped VM class ConfigSpec ethernet device is a `VirtualSriovEthernetCard`. The explicit-`type: SRIOV` case is the CEL rule above.
 
 `invalidNICUnitNumberChangePowOn` covers all three rejected powered-on transitions: set → different value, set → nil (cleared), and — per I3 — nil → set when the request is not made by the VM Operator service account (`ctx.IsVMOperatorAccount`). Only a nil → set change made by that account (the schema-upgrade backfill) is allowed while powered on.
 
@@ -232,8 +252,9 @@ Revised from an earlier three-Event draft. The split follows whether the fact is
 | Reason | Type | Raised when |
 |---|---|---|
 | `NICUnitNumberBackfillAmbiguous` | `Warning` | An interface was claimed by positional zip rather than uniquely matched by MAC / external ID / backing. |
+| `NICUnitNumberSRIOVCleared` | `Warning` | The backfill matched an interface to a `VirtualSriovEthernetCard` and cleared a `unitNumber` it already carried (spec.md **G17.4**). Only reachable if **G17.2**'s create-time check was bypassed. |
 
-This is the only fact nothing in the resulting spec records: a zipped value is indistinguishable from a matched one afterwards, so it cannot be recomputed and must be emitted when it happens.
+`NICUnitNumberBackfillAmbiguous` is the only fact nothing in the resulting spec records: a zipped value is indistinguishable from a matched one afterwards, so it cannot be recomputed and must be emitted when it happens.
 
 ### A condition, recomputed every reconcile
 

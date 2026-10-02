@@ -356,6 +356,13 @@ func useScopedDNSDefaults(ctx pkgctx.VirtualMachineContext) bool {
 // the IP families that the primary interface has a gateway for. The VM-level
 // DNS configuration is applied as it always has been, and is not filtered.
 //
+// An interface's DNS configuration from the network provider, such as a VPC
+// SubnetPort, is applied to the interface unless the interface spec
+// specifies its own, and takes precedence over the VM-level and the
+// Supervisor's default DNS configuration. Like the Supervisor's defaults, it
+// is not applied where GOSC would use it to override the DNS configuration
+// from DHCP.
+//
 //   - CloudInit: the VM-level DNS configuration is applied to each interface
 //     that does not specify its own, as network.InterfaceBootstrap does. The
 //     primary interface gets the Supervisor's default nameservers when there
@@ -363,7 +370,8 @@ func useScopedDNSDefaults(ctx pkgctx.VirtualMachineContext) bool {
 //     domains are handled the same, but only for TKG VMs.
 //   - LinuxPrep: DNS configuration is only global, and GOSC treats the global
 //     DNS servers as an override of the DNS servers from DHCP. The VM-level
-//     DNS configuration is applied globally. Otherwise, the Supervisor's
+//     DNS configuration is applied globally, followed by each interface's in
+//     interface order, without duplicates. Otherwise, the Supervisor's
 //     default nameservers are applied globally only when the VM has a primary
 //     interface and no interface uses DHCP. The Supervisor's default search
 //     domains are not applied.
@@ -373,11 +381,12 @@ func useScopedDNSDefaults(ctx pkgctx.VirtualMachineContext) bool {
 //     its own and does not use DHCP, since the per-adapter list overrides the
 //     DNS servers from DHCP. The primary adapter gets the Supervisor's default
 //     nameservers when there are no VM-level nameservers and it does not
-//     specify its own. Search suffixes are global: the VM-level search
-//     domains. The Supervisor's default search domains are not applied.
+//     specify its own. Search suffixes are global: the VM-level search domains
+//     followed by each adapter's in adapter order, without duplicates. The
+//     Supervisor's default search domains are not applied.
 //
-// The nameservers made available to templates are the VM-level nameservers,
-// or else the Supervisor's defaults. The global DNS configuration is
+// The nameservers made available to templates are the global nameservers
+// above, or else the Supervisor's defaults. The global DNS configuration is
 // what the bootstrap engine applies globally, which is none for CloudInit, or
 // the resolved configuration when no bootstrap engine configures the guest's
 // network.
@@ -404,8 +413,48 @@ func applyScopedDNSDefaults( //nolint:gocyclo
 		return b.DHCP4 || b.DHCP6
 	})
 
-	// globalNS and globalSS are the VM-level DNS configuration.
+	// The network provider's DNS configuration for an interface takes
+	// precedence over the VM-level DNS configuration. InterfaceBootstrap has
+	// already cleared it for an interface that specifies its own. Like the
+	// Supervisor's defaults, it is not applied where GOSC would use it to
+	// override the DNS configuration from DHCP: for Sysprep, on an adapter
+	// that uses DHCP, and for LinuxPrep, whose DNS configuration is only
+	// global, when any interface uses DHCP.
+	for i := range bootstraps {
+		b := &bootstraps[i]
+		isDHCP := b.DHCP4 || b.DHCP6
+		if (isSysprep && isDHCP) || (isLinuxPrep && anyDHCP) {
+			continue
+		}
+		if len(b.ProviderNameservers) > 0 {
+			b.Nameservers = b.ProviderNameservers
+		}
+		if len(b.ProviderSearchDomains) > 0 {
+			b.SearchDomains = b.ProviderSearchDomains
+		}
+	}
+
+	// globalNS and globalSS are the VM-level DNS configuration, followed by
+	// the interfaces' DNS configuration that the bootstrap engine only
+	// supports globally, in interface order and without duplicates.
 	globalNS, globalSS := vmNS, vmSS
+	switch {
+	case isLinuxPrep:
+		globalNS, globalSS = appendUnique(nil, vmNS...), appendUnique(nil, vmSS...)
+		for i := range bootstraps {
+			b := &bootstraps[i]
+			globalNS = appendUnique(globalNS, b.Nameservers...)
+			globalSS = appendUnique(globalSS, b.SearchDomains...)
+			b.Nameservers, b.SearchDomains = nil, nil
+		}
+	case isSysprep:
+		globalSS = appendUnique(nil, vmSS...)
+		for i := range bootstraps {
+			b := &bootstraps[i]
+			globalSS = appendUnique(globalSS, b.SearchDomains...)
+			b.SearchDomains = nil
+		}
+	}
 
 	if isSysprep && len(vmNS) > 0 {
 		// Apply the VM-level nameservers to each adapter that does not
@@ -787,4 +836,14 @@ func getVimTypeHash(obj vimtypes.AnyType) (string, error) {
 	}
 	out := h.Sum(nil)
 	return fmt.Sprintf("%x", out), nil
+}
+
+// appendUnique appends each of values to dst that is not already in dst.
+func appendUnique(dst []string, values ...string) []string {
+	for _, v := range values {
+		if !slices.Contains(dst, v) {
+			dst = append(dst, v)
+		}
+	}
+	return dst
 }

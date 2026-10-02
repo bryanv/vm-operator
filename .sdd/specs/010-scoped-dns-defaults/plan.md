@@ -61,18 +61,31 @@ Rationale:
 
 ### VM-level DNS
 
-VM-level DNS is applied as the API documents it and is never dropped:
+VM-level DNS is applied as the API documents it, except that DNS from the network provider takes precedence on an interface (see below):
 
 - **Cloud-Init**: `network.InterfaceBootstrap` copies it to every interface without its own when the matching `useGlobal*AsDefault` knob is unset or true. That is unchanged. Netplan adds these nameservers to those from DHCP, since VM Operator does not set `dhcp*-overrides`.
 - **LinuxPrep**: applied to the GOSC global lists.
 - **Sysprep**: Windows does not use the GOSC global DNS server list, so the scoped path copies the VM-level nameservers to every adapter that has none of its own and does not use DHCP, and leaves the global list empty. A per-adapter list overrides DHCP, so DHCP adapters are skipped; interface-level nameservers on a DHCP adapter are still applied (by `InterfaceBootstrap` and `GuestOSCustomization`, in both modes), which lets users override DHCP explicitly. The copy is done in `applyScopedDNSDefaults`, not `InterfaceBootstrap`, so Legacy mode is unchanged. VM-level search domains go to the global suffix list, since Windows search suffixes are global.
+
+### Network provider DNS
+
+`network.Bootstrap` gains `ProviderNameservers` / `ProviderSearchDomains`, to be set from the SubnetPort by `bootstrapFromVPC` once its API reports them. `InterfaceBootstrap` clears them when the interface spec sets its own DNS, and otherwise leaves `Nameservers` / `SearchDomains` as before, so Legacy mode ignores them. At the start of `applyScopedDNSDefaults`, they replace each interface's `Nameservers` / `SearchDomains`, which may hold the VM-level copy from `InterfaceBootstrap`. The later steps then see the interface as having DNS, so the VM-level Sysprep copy and the global defaults skip it.
+
+Like the global defaults, provider DNS is not applied where GOSC would use it to override DHCP: Sysprep skips it on adapters that use DHCP, and LinuxPrep skips it entirely when any interface uses DHCP. Cloud-Init applies it to DHCP interfaces, since netplan adds it to the DNS from DHCP.
+
+For the engines that support a value only globally, the interfaces' values are moved to the global list, after the VM-level values, in interface order and without duplicates, and cleared from the interfaces so status does not report them per interface:
+
+- **LinuxPrep**: nameservers and search domains.
+- **Sysprep**: search domains. Nameservers stay per adapter.
+
+The merged global lists replace the VM-level values in the conditions below: a non-empty merged list suppresses the global defaults. The template nameservers are the merged list, falling back to the ConfigMap.
 
 ### Global defaults
 
 The global defaults are applied only when the VM has a primary interface:
 
 - **Cloud-Init**: the primary interface gets the filtered default nameservers only when `spec.network.nameservers` is empty and the interface specifies none of its own. `useGlobalNameserversAsDefault` keeps its documented meaning: it only controls whether the VM-level nameservers are copied to interfaces. For TKG VMs only, the default search domains follow the same rule: only when `spec.network.searchDomains` is empty and the interface specifies none of its own, regardless of `useGlobalSearchDomainsAsDefault`. Interface-level DNS on other interfaces does not prevent the default.
-- **LinuxPrep**: the global list gets the filtered default nameservers only when the VM-level value is empty and no interface uses DHCP, since GOSC's global DNS servers override DHCP on every interface. The default search domains are not applied.
+- **LinuxPrep**: the global list gets the filtered default nameservers only when the merged global value (VM-level plus interfaces', see above) is empty and no interface uses DHCP, since GOSC's global DNS servers override DHCP on every interface. The default search domains are not applied.
 - **Sysprep**: like Cloud-Init, the primary adapter gets the filtered default nameservers only when `spec.network.nameservers` is empty and the adapter specifies none of its own. The default search domains are not applied.
 
 As in Legacy mode, the default search domains apply only to TKG VMs, which use Cloud-Init, and never through GOSC. Unlike Legacy mode, they go only on the primary interface rather than every non-DHCP interface.
@@ -81,7 +94,7 @@ As in Legacy mode, the default search domains apply only to TKG VMs, which use C
 
 `BootstrapArgs.DNSServers`/`SearchSuffixes` previously did three jobs: GOSC global settings, template data, and status. Template data is now split out:
 
-- **`TemplateDNSServers`** holds the resolved nameservers used by templates. They are the VM-level nameservers, falling back to the ConfigMap. Unlike Legacy mode, the ConfigMap is read even when every interface has nameservers, so templates are not left without any.
+- **`TemplateDNSServers`** holds the resolved nameservers used by templates. They are the global nameservers (VM-level, merged with the interfaces' for LinuxPrep), falling back to the ConfigMap. Unlike Legacy mode, the ConfigMap is read even when every interface has nameservers, so templates are not left without any.
 - **`DNSServers`/`SearchSuffixes`** hold the global DNS configuration that is applied to the GOSC global IP settings and reported in status. In scoped mode:
   - for Cloud-Init, nothing: netplan has no global DNS, and Cloud-Init does not read these fields, so all DNS is reported per interface;
   - for LinuxPrep, the GOSC global lists, as described above;

@@ -74,6 +74,17 @@ type Bootstrap struct {
 	// interface.  Same fallback semantics as Nameservers.
 	SearchDomains []string
 
+	// ProviderNameservers and ProviderSearchDomains are the DNS configuration
+	// for this interface provided by the network provider, such as a VPC
+	// SubnetPort. InterfaceBootstrap clears them when the interface spec
+	// provides its own, since the interface spec takes precedence. Otherwise,
+	// they take precedence over the VM-level and the Supervisor's default DNS
+	// configuration, but are only applied by the bootstrap engine when the
+	// Supervisor's default DNS configuration is scoped; see
+	// vmlifecycle.GetBootstrapArgs.
+	ProviderNameservers   []string
+	ProviderSearchDomains []string
+
 	// Routes is the list of static routes to configure inside the guest,
 	// copied verbatim from interfaceSpec.Routes.
 	Routes []NetworkInterfaceRoute
@@ -285,12 +296,14 @@ func InterfaceBootstrap(
 
 	if n := interfaceSpec.Nameservers; len(n) > 0 {
 		bootstrap.Nameservers = n
+		bootstrap.ProviderNameservers = nil
 	} else if defaultToGlobalNameservers && networkSpec != nil {
 		bootstrap.Nameservers = networkSpec.Nameservers
 	}
 
 	if d := interfaceSpec.SearchDomains; len(d) > 0 {
 		bootstrap.SearchDomains = d
+		bootstrap.ProviderSearchDomains = nil
 	} else if defaultToGlobalSearchDomains && networkSpec != nil {
 		bootstrap.SearchDomains = networkSpec.SearchDomains
 	}
@@ -425,6 +438,9 @@ func bootstrapFromVPC(
 	subnetPort *vpcv1alpha1.SubnetPort) Bootstrap {
 
 	initial := Bootstrap{}
+
+	// TODO: Set ProviderNameservers and ProviderSearchDomains from the
+	// SubnetPort once its API reports them.
 
 	for _, ipAddr := range subnetPort.Status.NetworkInterfaceConfig.IPAddresses {
 		if ipAddr.IPAddress == "" {

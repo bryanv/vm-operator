@@ -36,6 +36,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineimagecache/internal"
 	pkgcond "github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
@@ -522,15 +523,17 @@ func reconcileOVF(
 				return err
 			}
 
+			// Label the ConfigMap so it is excluded from the manager's cache.
+			if configMap.Labels == nil {
+				configMap.Labels = map[string]string{}
+			}
+			configMap.Labels[pkgconst.VMICacheOVFConfigMapLabelKey] = ""
+
 			if configMap.Data[ovfConfigMapValueKey] != "" &&
 				configMap.Data[ovfConfigMapContentVersionKey] == obj.Spec.ProviderVersion {
 				// Do nothing if the ConfigMap has the marshaled OVF and it is
 				// the latest content version.
 				return nil
-			}
-
-			if configMap.Data == nil {
-				configMap.Data = map[string]string{}
 			}
 
 			logger := pkglog.FromContextOrDefault(ctx)
@@ -549,13 +552,17 @@ func reconcileOVF(
 				return fmt.Errorf("failed to marshal ovf envelope to YAML: %w", err)
 			}
 
+			if configMap.Data == nil {
+				configMap.Data = map[string]string{}
+			}
+
 			configMap.Data[ovfConfigMapContentVersionKey] = obj.Spec.ProviderVersion
 			configMap.Data[ovfConfigMapValueKey] = string(data)
 
 			return nil
 		}); err != nil {
 
-		return fmt.Errorf("failed to create or patch ovf configmap: %w", err)
+		return fmt.Errorf("failed to create or patch ovf ConfigMap: %w", err)
 	}
 
 	if obj.Status.OVF == nil {

@@ -103,15 +103,33 @@ func New(ctx context.Context, opts Options) (Manager, error) {
 			DefaultNamespaces: GetNamespaceCacheConfigs(opts.WatchNamespace),
 			DefaultTransform:  cache.TransformStripManagedFields(),
 			SyncPeriod:        &opts.SyncPeriod,
+			ByObject: map[client.Object]cache.ByObject{
+				// An informer is created for each watched resource. Due to the
+				// number of ConfigMap and Secret resources that may exist,
+				// watching each one can result in VM Operator being terminated
+				// due to an out-of-memory error, i.e. OOMKill. To avoid this
+				// outcome, ConfigMap and Secret resources are only cached in
+				// the pod namespace. The OVF ConfigMaps created for each
+				// VirtualMachineImageCache resource are also excluded since
+				// they may be large and numerous.
+				&corev1.ConfigMap{}: {
+					Namespaces: map[string]cache.Config{opts.PodNamespace: {}},
+					Label:      vmicOVFConfigMapExcludeSelector(),
+				},
+				&corev1.Secret{}: {
+					Namespaces: map[string]cache.Config{opts.PodNamespace: {}},
+				},
+			},
 		},
+		// Reads of ConfigMaps and Secrets in the pod namespace are served from
+		// the cache, while reads in all other namespaces go to the API server.
+		NewClient: NewPodNamespaceCachedClientFunc(opts.PodNamespace),
 		Client: client.Options{
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{
-					// An informer is created for each watched resource. Due to the
-					// number of ConfigMap and Secret resources that may exist,
-					// watching each one can result in VM Operator being terminated
-					// due to an out-of-memory error, i.e. OOMKill. To avoid this
-					// outcome, ConfigMap and Secret resources are not cached.
+					// ConfigMap and Secret resources are not cached by the
+					// client directly, since the cache only covers the pod
+					// namespace. See NewPodNamespaceCachedClientFunc.
 					&corev1.ConfigMap{},
 					&corev1.Secret{},
 

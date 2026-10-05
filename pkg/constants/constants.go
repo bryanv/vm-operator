@@ -80,6 +80,12 @@ const (
 	// updated.
 	VMICacheLabelKey = "vmicache.vmoperator.vmware.com/name"
 
+	// VMICacheOVFConfigMapLabelKey is applied to the ConfigMap resources that
+	// contain the OVF envelope for a VirtualMachineImageCache resource. These
+	// ConfigMaps are excluded from the controller manager's cache due to
+	// their size and number.
+	VMICacheOVFConfigMapLabelKey = "vmicache.vmoperator.vmware.com/ovf"
+
 	// VMICacheLocationAnnotationKey is applied to resources waiting on a
 	// VirtualMachineImageCache's disks to be available at the specified
 	// location.

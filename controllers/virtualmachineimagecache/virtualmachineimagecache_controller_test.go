@@ -33,6 +33,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/controllers/virtualmachineimagecache/internal"
 	pkgcond "github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	providerfake "github.com/vmware-tanzu/vm-operator/pkg/providers/fake"
@@ -128,6 +129,7 @@ var _ = Describe(
 		assertConfigMapOVF := func(g Gomega, key ctrlclient.ObjectKey) {
 			var obj corev1.ConfigMap
 			g.ExpectWithOffset(1, vcSimCtx.Client.Get(ctx, key, &obj)).To(Succeed())
+			g.ExpectWithOffset(1, obj.Labels).To(HaveKey(pkgconst.VMICacheOVFConfigMapLabelKey))
 			g.ExpectWithOffset(1, obj.Data["value"]).To(MatchYAML(vcSimCtx.ContentLibraryItem1YAML))
 		}
 

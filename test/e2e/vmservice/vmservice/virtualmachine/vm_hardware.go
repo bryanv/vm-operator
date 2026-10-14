@@ -332,7 +332,6 @@ func VMHardwareSpec(ctx context.Context, inputGetter func() VMHardwareSpecInput)
 		vmYamls                        [][]byte
 		pvcsYamls                      [][]byte
 		vmName                         string
-		isoSupportFSSEnabled           bool
 		allDisksArePVCapabilityEnabled bool
 		linuxImageDisplayName          string
 		linuxVMIName                   string
@@ -375,14 +374,6 @@ func VMHardwareSpec(ctx context.Context, inputGetter func() VMHardwareSpecInput)
 			linuxImageDisplayName = vmservice.GetDefaultImageDisplayName(clusterResources)
 
 			linuxVMIName = vmoperator.WaitForVirtualMachineImageName(ctx, &config.Config, svClusterClient, vmSvcNamespace, linuxImageDisplayName)
-
-			isoSupportFSSEnabled = utils.IsFssEnabled(ctx,
-				svClusterClient,
-				config.GetVariable("VMOPNamespace"),
-				config.GetVariable("VMOPDeploymentName"),
-				config.GetVariable("VMOPManagerCommand"),
-				config.GetVariable("EnvFSSIsoSupport"),
-			)
 
 			asyncSupervisorFSSEnabled, err := utils.CheckSupervisorCapabilitiesCRDSupport(ctx, svClusterClient)
 			Expect(err).NotTo(HaveOccurred())
@@ -435,13 +426,8 @@ func VMHardwareSpec(ctx context.Context, inputGetter func() VMHardwareSpecInput)
 
 			By("Ensure EZT storage class is available in namespace")
 
-			podVMOnStretchedSupervisorEnabled := utils.IsFssEnabled(ctx, svClusterClient,
-				config.GetVariable("VMOPNamespace"),
-				config.GetVariable("VMOPDeploymentName"),
-				config.GetVariable("VMOPManagerCommand"),
-				config.GetVariable("EnvFSSPodVMOnStretchedSupervisor"))
 			utils.EnsureStorageClassInNamespace(ctx, svClusterClient, vmSvcNamespace,
-				eztStorageProfileName, podVMOnStretchedSupervisorEnabled, *config)
+				eztStorageProfileName, *config)
 			e2eframework.Logf(
 				"EZT storage class %s is available in namespace %s",
 				eztStorageProfileName, vmSvcNamespace,
@@ -1781,11 +1767,6 @@ func VMHardwareSpec(ctx context.Context, inputGetter func() VMHardwareSpecInput)
 
 		DescribeTable("VM with CD-ROM",
 			func(cdrom vmopv1.VirtualMachineCdromSpec) {
-				if !isoSupportFSSEnabled {
-					Skip("ISO Support FSS is not enabled")
-					return
-				}
-
 				By("Get the ISO-type image CR name")
 
 				isoImageName := vmoperator.WaitForVirtualMachineImageName(ctx, &config.Config, svClusterClient, vmSvcNamespace, isoImageDisplayName)
@@ -2897,13 +2878,8 @@ func VMHardwareSpec(ctx context.Context, inputGetter func() VMHardwareSpecInput)
 				}
 
 				By("Ensuring the WFFC storage class is associated with the test namespace")
-				podVMOnStretchedSupervisorEnabled := utils.IsFssEnabled(ctx, svClusterClient,
-					config.GetVariable("VMOPNamespace"),
-					config.GetVariable("VMOPDeploymentName"),
-					config.GetVariable("VMOPManagerCommand"),
-					config.GetVariable("EnvFSSPodVMOnStretchedSupervisor"))
 				utils.EnsureStorageClassInNamespace(ctx, svClusterClient, vmSvcNamespace,
-					wffcSCName, podVMOnStretchedSupervisorEnabled, *config)
+					wffcSCName, *config)
 			})
 
 			BeforeEach(func() {

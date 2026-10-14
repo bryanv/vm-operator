@@ -58,22 +58,21 @@ const (
 
 func PackerSpec(ctx context.Context, inputGetter func() SpecInput) {
 	var (
-		input                  SpecInput
-		config                 *e2eConfig.E2EConfig
-		wcpClient              wcp.WorkloadManagementAPI
-		k8sClient              ctrlclient.Client
-		clusterResources       *e2eConfig.Resources
-		kubeconfigPath         string
-		vmserviceCLID          string
-		vmName                 string
-		vmiName                string
-		cvmiName               string
-		gatewayIP              string
-		gatewayUsername        string
-		gatewayPassword        string
-		vmImageRegistryEnabled bool
-		templateFilePath       string
-		packerCmdOpts          PackerBuildCmdOpts
+		input            SpecInput
+		config           *e2eConfig.E2EConfig
+		wcpClient        wcp.WorkloadManagementAPI
+		k8sClient        ctrlclient.Client
+		clusterResources *e2eConfig.Resources
+		kubeconfigPath   string
+		vmserviceCLID    string
+		vmName           string
+		vmiName          string
+		cvmiName         string
+		gatewayIP        string
+		gatewayUsername  string
+		gatewayPassword  string
+		templateFilePath string
+		packerCmdOpts    PackerBuildCmdOpts
 	)
 
 	BeforeEach(func() {
@@ -95,10 +94,6 @@ func PackerSpec(ctx context.Context, inputGetter func() SpecInput) {
 		kubeconfigPath = input.ClusterProxy.GetKubeconfigPath()
 		clusterResources = config.InfraConfig.ManagementClusterConfig.Resources
 
-		vmImageRegistryEnabled = utils.IsFssEnabled(ctx, k8sClient,
-			config.GetVariable("VMOPNamespace"), config.GetVariable("VMOPDeploymentName"),
-			config.GetVariable("VMOPManagerCommand"), config.GetVariable("EnvFSSVMImageRegistry"))
-
 		cancelPodWatches := framework.WatchPodLogsAndEventsInNamespaces(ctx,
 			[]string{config.GetVariable("VMOPNamespace")},
 			input.ClusterProxy.GetRESTConfig(), filepath.Join(input.ArtifactFolder, packerSpecName))
@@ -113,17 +108,15 @@ func PackerSpec(ctx context.Context, inputGetter func() SpecInput) {
 		vmiName = vmiObjName
 		vmserviceCLID = vmservice.GetContentLibraryUUIDByName(consts.VMServiceCLName, wcpClient)
 
-		if vmImageRegistryEnabled {
-			By("Attaching content library to cluster with Image-Registry FSS enabled")
+		By("Attaching content library to cluster")
 
-			clusterMoID := vcenter.GetClusterMoIDFromKubeconfig(ctx, kubeconfigPath)
-			err := wcpClient.AssociateContentLibrariesToCluster(clusterMoID, wcp.ClusterContentLibrarySpec{ContentLibrary: vmserviceCLID})
-			Expect(err).NotTo(HaveOccurred(), "failed to attach content library %s to cluster", vmserviceCLID)
-			cvmiObjName, err := vmoperator.WaitForClusterVirtualMachineImageName(ctx, &config.Config, k8sClient, ubuntuImageName)
-			Expect(err).NotTo(HaveOccurred(), "failed to get the CVMI with display name: %s", ubuntuImageName)
+		clusterMoID := vcenter.GetClusterMoIDFromKubeconfig(ctx, kubeconfigPath)
+		err := wcpClient.AssociateContentLibrariesToCluster(clusterMoID, wcp.ClusterContentLibrarySpec{ContentLibrary: vmserviceCLID})
+		Expect(err).NotTo(HaveOccurred(), "failed to attach content library %s to cluster", vmserviceCLID)
+		cvmiObjName, err := vmoperator.WaitForClusterVirtualMachineImageName(ctx, &config.Config, k8sClient, ubuntuImageName)
+		Expect(err).NotTo(HaveOccurred(), "failed to get the CVMI with display name: %s", ubuntuImageName)
 
-			cvmiName = cvmiObjName
-		}
+		cvmiName = cvmiObjName
 
 		By("Ensure the gateway VM has TCP forwarding enabled to allow SSH access")
 
@@ -139,7 +132,6 @@ func PackerSpec(ctx context.Context, inputGetter func() SpecInput) {
 
 		By("Ensure the packer template file is available in the packer plugin directory")
 
-		var err error
 		templateFilePath, err = GetTemplatePathInPackerPluginDir(packerSpecTemplateName)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(templateFilePath).NotTo(BeEmpty())
@@ -203,10 +195,6 @@ func PackerSpec(ctx context.Context, inputGetter func() SpecInput) {
 	})
 
 	It("Packer command to build, deploy, and publish a VM from CVMI with Image-Registry FSS enabled", func() {
-		if !vmImageRegistryEnabled {
-			Skip("Skipping this test spec as FSS is disabled")
-		}
-
 		// We are switching to CVMI here as VMI is already verified in the above test spec.
 		packerCmdOpts.TemplateVariables["image_name"] = cvmiName
 

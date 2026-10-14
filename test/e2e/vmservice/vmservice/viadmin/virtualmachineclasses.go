@@ -18,8 +18,6 @@ import (
 
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/kubectl"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/wcp"
-	"github.com/vmware-tanzu/vm-operator/test/e2e/utils"
-	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/common"
 	config "github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/config"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/consts"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/skipper"
@@ -41,9 +39,6 @@ func VIAdminVMClassSpec(ctx context.Context, inputGetter func() VIAdminVMClassSp
 		wcpClient                                                           wcp.WorkloadManagementAPI
 		createSpecE2eTestBestEffortSmall, createSpecE2eTestGuaranteedXSmall wcp.VMClassSpec
 		createSpecE2eTestGuaranteedXSmallVirtualDevicesVGPUs                wcp.VMClassSpec
-		vmClassAsConfigDaynDateFssEnabled                                   bool
-		namespacedVMClassFSSEnabled                                         bool
-		vmImageRegistryEnabled                                              bool
 		config                                                              *config.E2EConfig
 	)
 
@@ -52,11 +47,6 @@ func VIAdminVMClassSpec(ctx context.Context, inputGetter func() VIAdminVMClassSp
 		skipper.SkipUnlessInfraIs(input.Config.InfraConfig.InfraName, consts.WCP)
 		wcpClient = input.WCPClient
 		config = input.Config
-		clusterProxy := input.ClusterProxy.(*common.VMServiceClusterProxy)
-		svClusterClient := clusterProxy.GetClient()
-		namespacedVMClassFSSEnabled = utils.IsFssEnabled(ctx, svClusterClient, config.GetVariable("VMOPNamespace"), config.GetVariable("VMOPDeploymentName"), config.GetVariable("VMOPManagerCommand"), config.GetVariable("EnvFSSNamespacedVMClass"))
-		vmImageRegistryEnabled = utils.IsFssEnabled(ctx, svClusterClient, config.GetVariable("VMOPNamespace"), config.GetVariable("VMOPDeploymentName"), config.GetVariable("VMOPManagerCommand"), config.GetVariable("EnvFSSVMImageRegistry"))
-		vmClassAsConfigDaynDateFssEnabled = utils.IsFssEnabled(ctx, svClusterClient, config.GetVariable("VMOPNamespace"), config.GetVariable("VMOPDeploymentName"), config.GetVariable("VMOPManagerCommand"), config.GetVariable("EnvFSSVMClassAsConfigDaynDate"))
 		// Append a random suffix so parallel test runs on the same testbed do not
 		// collide on these cluster-scoped WCP VMClass resources.
 		runSuffix := capiutil.RandomString(4)
@@ -76,17 +66,8 @@ func VIAdminVMClassSpec(ctx context.Context, inputGetter func() VIAdminVMClassSp
 
 	It("VI Admin should have privs to view and edit resources in all namespaces by default", Label("smoke"), func() {
 		viAdminKubeConfig := config.InfraConfig.KubeconfigPath
-		if namespacedVMClassFSSEnabled {
-			kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "virtualmachineclass", "-A")
-		} else {
-			// VM Class is cluster scoped resource when WCP_Namespaced_VM_Class disabled
-			kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "virtualmachineclass")
-			kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "virtualmachineclassbinding", "-A")
-		}
-
-		if vmImageRegistryEnabled {
-			kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "clustervirtualmachineimage")
-		}
+		kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "virtualmachineclass", "-A")
+		kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "clustervirtualmachineimage")
 
 		kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "virtualmachineimage", "-A")
 		kubectl.AssertKubectlUserCan(ctx, viAdminKubeConfig, "get", "virtualmachine", "-A")
@@ -127,31 +108,29 @@ func VIAdminVMClassSpec(ctx context.Context, inputGetter func() VIAdminVMClassSp
 				createSpecE2eTestGuaranteedXSmallVirtualDevicesVGPUs = vmservice.CreateSpecE2eTestGuaranteedXSmallVirtualDevicesVGPUs()
 
 				expectedSpec := createSpecE2eTestGuaranteedXSmallVirtualDevicesVGPUs
-				if vmClassAsConfigDaynDateFssEnabled {
-					expectedSpec.ConfigSpec = &types.VirtualMachineConfigSpec{
-						DeviceChange: []types.BaseVirtualDeviceConfigSpec{
-							&types.VirtualDeviceConfigSpec{
-								Operation: types.VirtualDeviceConfigSpecOperationAdd,
-								Device: &types.VirtualPCIPassthrough{
-									VirtualDevice: types.VirtualDevice{
-										Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
-											Vgpu: "mockup-vmiop",
-										},
-									},
-								},
-							},
-							&types.VirtualDeviceConfigSpec{
-								Operation: types.VirtualDeviceConfigSpecOperationAdd,
-								Device: &types.VirtualPCIPassthrough{
-									VirtualDevice: types.VirtualDevice{
-										Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
-											Vgpu: "mockup-vmiop",
-										},
+				expectedSpec.ConfigSpec = &types.VirtualMachineConfigSpec{
+					DeviceChange: []types.BaseVirtualDeviceConfigSpec{
+						&types.VirtualDeviceConfigSpec{
+							Operation: types.VirtualDeviceConfigSpecOperationAdd,
+							Device: &types.VirtualPCIPassthrough{
+								VirtualDevice: types.VirtualDevice{
+									Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
+										Vgpu: "mockup-vmiop",
 									},
 								},
 							},
 						},
-					}
+						&types.VirtualDeviceConfigSpec{
+							Operation: types.VirtualDeviceConfigSpecOperationAdd,
+							Device: &types.VirtualPCIPassthrough{
+								VirtualDevice: types.VirtualDevice{
+									Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
+										Vgpu: "mockup-vmiop",
+									},
+								},
+							},
+						},
+					},
 				}
 
 				vmservice.VerifyVMClassCreate(wcpClient, createSpecE2eTestGuaranteedXSmallVirtualDevicesVGPUs, expectedSpec)
@@ -174,21 +153,19 @@ func VIAdminVMClassSpec(ctx context.Context, inputGetter func() VIAdminVMClassSp
 				expectedSpec := createSpecE2eTestGuaranteedXSmallVirtualDevicesVGPUs
 
 				expectedSpec.Devices = virtualDevices
-				if vmClassAsConfigDaynDateFssEnabled {
-					expectedSpec.ConfigSpec = &types.VirtualMachineConfigSpec{
-						DeviceChange: []types.BaseVirtualDeviceConfigSpec{
-							&types.VirtualDeviceConfigSpec{
-								Operation: types.VirtualDeviceConfigSpecOperationAdd,
-								Device: &types.VirtualPCIPassthrough{
-									VirtualDevice: types.VirtualDevice{
-										Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
-											Vgpu: "mockup-vmiop",
-										},
+				expectedSpec.ConfigSpec = &types.VirtualMachineConfigSpec{
+					DeviceChange: []types.BaseVirtualDeviceConfigSpec{
+						&types.VirtualDeviceConfigSpec{
+							Operation: types.VirtualDeviceConfigSpecOperationAdd,
+							Device: &types.VirtualPCIPassthrough{
+								VirtualDevice: types.VirtualDevice{
+									Backing: &types.VirtualPCIPassthroughVmiopBackingInfo{
+										Vgpu: "mockup-vmiop",
 									},
 								},
 							},
 						},
-					}
+					},
 				}
 
 				VerifyVMClassUpdate(wcpClient, expectedSpec, updateSpec)

@@ -45,6 +45,9 @@ Each spec lives under `specs/NNN-slug/`. Standard artifacts: `spec.md` (behavior
 | 012 | [lifecycle-hooks](specs/012-lifecycle-hooks/) | Blocking Lifecycle Hooks for `VirtualMachine` | Draft | vmop-3377 |
 | 013 | [spq-webhook-watch](specs/013-spq-webhook-watch/) | Consolidate storage quota webhook CA propagation | Draft | vmop-4310 |
 | 014 | [vmgroup-power-ordering](specs/014-vmgroup-power-ordering/) | VM Group Power-On and Power-Off Ordering (stateless staged release; `PowerOnDelay` and `PowerOffDelay` count from completion of the previous group) | Draft | vmop-4060 |
+| 015 | [network-interface-reconcile](specs/015-network-interface-reconcile/) | Network Interface Reconciliation and Hot Plug | Draft | vmop-4418 |
+| 016 | [rm-pvc-owner-ref](specs/016-rm-pvc-owner-ref/) | Remove PVC OwnerRef on Detach (formerly a second `002-*` directory) | Implementation | bz-3734442 |
+| 017 | [remove-network-interface-result](specs/017-remove-network-interface-result/) | Remove `NetworkInterfaceResult`; use `Device` + `Bootstrap` directly (`plan.md`/`tasks.md` only; formerly a second `004-*` directory) | In Progress | vmop-3707 |
 
 ### Finding the right spec
 

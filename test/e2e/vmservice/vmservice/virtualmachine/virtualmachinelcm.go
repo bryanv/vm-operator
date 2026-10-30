@@ -136,6 +136,16 @@ func VMSpec(ctx context.Context, inputGetter func() VMSpecInput) {
 		vmName = fmt.Sprintf("%s-%s", specName, capiutil.RandomString(4))
 	})
 
+	Context("Lifecycle API coverage", Label("experimental"), func() {
+		vmLifecycleCoverage(ctx, func() lifecycleCoverageInput {
+			return lifecycleCoverageInput{
+				VMSpecInput: input,
+				vimClient:   vCenterClient,
+				imageName:   linuxVMIName,
+			}
+		})
+	})
+
 	It("Should create expected resources for a single VirtualMachine", Label("smoke"), func() {
 		// Use the Linux VM deployed in the vmservice_suite_test.go to avoid
 		// creating another VM with similar config in this read only test.

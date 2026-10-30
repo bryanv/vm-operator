@@ -25,6 +25,7 @@ import (
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	vmopcommon "github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/manifestbuilders"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/utils"
@@ -321,6 +322,29 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		}
 	})
 
+	// vmop-4405: encryption must not be what implicitly selects direct mode.
+	It("explicitly selects fast-deploy direct mode for an ordinary VM", Label("core-functional"), func() {
+		if !utils.IsFssEnabled(ctx, c, input.Config.GetVariable("VMOPNamespace"),
+			input.Config.GetVariable("VMOPDeploymentName"), input.Config.GetVariable("VMOPManagerCommand"),
+			"FSS_WCP_VMSERVICE_FAST_DEPLOY") {
+			Skip("FastDeploy is disabled")
+		}
+		vm.Annotations = map[string]string{pkgconst.FastDeployAnnotationKey: pkgconst.FastDeployModeDirect}
+		vm.Spec.PromoteDisksMode = vmopv1.VirtualMachinePromoteDisksModeDisabled
+		createLifecycleVM(ctx, input, vm)
+		waitForLifecycleCondition(ctx, input, vm, vmopv1.VirtualMachineConditionImageCacheReady, metav1.ConditionTrue)
+		properties := lifecycleVMProperties(ctx, input, vm)
+		devices := object.VirtualDeviceList(properties.Config.Hardware.Device)
+		Expect(properties.Config.KeyId).To(BeNil(), "encryption must not implicitly select direct mode")
+		disks := devices.SelectByType((*vimtypes.VirtualDisk)(nil))
+		Expect(disks).ToNot(BeEmpty())
+		for _, device := range disks {
+			backing, ok := device.(*vimtypes.VirtualDisk).Backing.(*vimtypes.VirtualDiskFlatVer2BackingInfo)
+			Expect(ok).To(BeTrue(), "expected a flat disk for direct deployment")
+			Expect(backing.Parent).To(BeNil(), "direct-deploy disks must not depend on cached parent disks")
+			Expect(backing.KeyId).To(BeNil(), "disk encryption must not implicitly select direct mode")
+		}
+	})
 }
 
 func createLifecycleVM(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine) {

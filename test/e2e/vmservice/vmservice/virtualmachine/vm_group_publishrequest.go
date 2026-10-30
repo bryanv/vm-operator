@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	capiutil "sigs.k8s.io/cluster-api/util"
@@ -21,6 +23,7 @@ import (
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	imgregv1a2 "github.com/vmware-tanzu/vm-operator/external/image-registry-operator/api/v1alpha2"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/framework"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/testbed"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/vcenter"
@@ -286,6 +289,73 @@ func VMGroupPublishRequestSpec(ctx context.Context, inputGetter func() VMGroupPu
 			vmSvcNamespace,
 			groupPubName)
 	}
+
+	// vmop-3617: long group names must not prevent child creation or quota approval.
+	It("publishes a group with a long request name after approving its owned child", Label("extended-functional", "experimental"), func() {
+		createInventoryContentLibrary()
+		c := vmSvcClusterProxy.GetClient()
+		Eventually(func(g Gomega) {
+			var library imgregv1a2.ContentLibrary
+			g.Expect(c.Get(ctx, ctrlclient.ObjectKey{Namespace: vmSvcNamespace, Name: inventoryCLName}, &library)).To(Succeed())
+			patch := ctrlclient.MergeFrom(library.DeepCopy())
+			metav1.SetMetaDataLabel(&library.ObjectMeta, pkgconst.AsyncQuotaPerformCheckAnnotationKey, "true")
+			g.Expect(c.Patch(ctx, &library, patch)).To(Succeed())
+		}).Should(Succeed())
+
+		name := "group-" + strings.Repeat("a", 49) + capiutil.RandomString(5)
+		Expect(name).To(HaveLen(60))
+		request := &vmopv1.VirtualMachineGroupPublishRequest{
+			ObjectMeta: metav1.ObjectMeta{Namespace: vmSvcNamespace, Name: name},
+			Spec: vmopv1.VirtualMachineGroupPublishRequestSpec{
+				Source:          vmGroupName,
+				Target:          inventoryCLName,
+				VirtualMachines: []string{vm0Name},
+			},
+		}
+		Expect(c.Create(ctx, request)).To(Succeed())
+		// Remove the request before the enclosing AfterEach removes its library.
+		defer func() {
+			Expect(ctrlclient.IgnoreNotFound(c.Delete(ctx, request))).To(Succeed())
+			vmoperator.VerifyVirtualMachineGroupPublishRequestDeleted(ctx, vmSvcE2EConfig, c, vmSvcNamespace, name)
+			Eventually(func(g Gomega) {
+				var children vmopv1.VirtualMachinePublishRequestList
+				g.Expect(c.List(ctx, &children, ctrlclient.InNamespace(vmSvcNamespace), ctrlclient.MatchingLabels{
+					vmopv1.VirtualMachinePublishRequestManagedByLabelKey: string(request.UID),
+				})).To(Succeed())
+				g.Expect(children.Items).To(BeEmpty())
+			}, vmSvcE2EConfig.GetIntervals("default", "wait-virtual-machine-publish-request-deletion")...).Should(Succeed())
+		}()
+
+		var child vmopv1.VirtualMachinePublishRequest
+		By("Waiting for the owned child to request quota approval")
+		Eventually(func(g Gomega) {
+			var children vmopv1.VirtualMachinePublishRequestList
+			g.Expect(c.List(ctx, &children, ctrlclient.InNamespace(vmSvcNamespace), ctrlclient.MatchingLabels{
+				vmopv1.VirtualMachinePublishRequestManagedByLabelKey: string(request.UID),
+			})).To(Succeed())
+			g.Expect(children.Items).To(HaveLen(1))
+			child = children.Items[0]
+			g.Expect(metav1.IsControlledBy(&child, request)).To(BeTrue())
+			g.Expect(len(child.Name)).To(BeNumerically("<=", 63))
+			g.Expect(child.Annotations[pkgconst.AsyncQuotaCheckRequestedCapacityAnnotationKey]).ToNot(BeEmpty())
+		}, vmSvcE2EConfig.GetIntervals("default", "wait-virtual-machine-publish-request-condition")...).Should(Succeed())
+		Consistently(func(g Gomega) {
+			g.Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(&child), &child)).To(Succeed())
+			g.Expect(child.Status.Ready).To(BeFalse())
+			g.Expect(child.Annotations[pkgconst.AsyncQuotaCheckRequestedCapacityAnnotationKey]).ToNot(BeEmpty())
+			g.Expect(apimeta.IsStatusConditionTrue(child.Status.Conditions, vmopv1.VirtualMachinePublishRequestConditionUploaded)).To(BeFalse())
+		}, vmSvcE2EConfig.GetIntervals("default", "consistent-virtual-machine-condition")...).Should(Succeed())
+
+		By("Approving quota on the owned child using the privileged client")
+		Eventually(func(g Gomega) {
+			g.Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(&child), &child)).To(Succeed())
+			patch := ctrlclient.MergeFrom(child.DeepCopy())
+			delete(child.Annotations, pkgconst.AsyncQuotaCheckRequestedCapacityAnnotationKey)
+			g.Expect(c.Patch(ctx, &child, patch)).To(Succeed())
+		}).Should(Succeed())
+		vmoperator.WaitForVirtualMachineGroupPublishRequestImagesUploaded(ctx, vmSvcE2EConfig, c, vmSvcNamespace, name)
+		vmoperator.VerifyVirtualMachineGroupPublishRequestCompleted(ctx, vmSvcE2EConfig, c, vmSvcNamespace, name)
+	})
 
 	It("should succeed when vm group publish request with created with proper inputs", Label("smoke"), func() {
 		By("create a vm group publish without a content library should fail when there is no default content library")

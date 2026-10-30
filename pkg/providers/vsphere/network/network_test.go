@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/vmware/govmomi/object"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1803,6 +1804,167 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 		})
 	})
 
+	Context("External VPC SubnetPort", func() {
+		const (
+			interfaceName  = "eth0"
+			interfaceID    = "my-interface-id"
+			subnetPortName = "my-subnetport"
+		)
+
+		var (
+			subnetPort *vpcv1alpha1.SubnetPort
+		)
+
+		BeforeEach(func() {
+			testConfig.WithNetworkEnv = builder.NetworkEnvVPC
+			pkgcfg.SetContext(parentCtx, func(config *pkgcfg.Config) {
+				config.Features.BringYourOwnNetworkInterface = true
+			})
+
+			subnetPort = &vpcv1alpha1.SubnetPort{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      subnetPortName,
+					Namespace: vm.Namespace,
+					Labels: map[string]string{
+						"my-label": "my-value",
+					},
+				},
+				Spec: vpcv1alpha1.SubnetPortSpec{
+					Subnet: "my-subnet",
+				},
+			}
+
+			networkSpec.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{
+					Name: interfaceName,
+					ExternalRef: &common.LocalObjectRef{
+						APIVersion: vpcv1alpha1.SchemeGroupVersion.String(),
+						Kind:       "SubnetPort",
+						Name:       subnetPortName,
+					},
+				},
+			}
+		})
+
+		When("SubnetPort does not exist", func() {
+			It("returns not found error", func() {
+				Expect(err).To(HaveOccurred())
+				Expect(apierrors.IsNotFound(err)).To(BeTrue())
+				Expect(devices).To(BeEmpty())
+
+				var list vpcv1alpha1.SubnetPortList
+				Expect(ctx.Client.List(ctx, &list)).To(Succeed())
+				Expect(list.Items).To(BeEmpty())
+			})
+		})
+
+		When("SubnetPort is owned by a VM", func() {
+			BeforeEach(func() {
+				subnetPort.OwnerReferences = []metav1.OwnerReference{
+					{
+						APIVersion: vmopv1.GroupVersion.String(),
+						Kind:       "VirtualMachine",
+						Name:       "other-vm",
+						UID:        "other-vm-uid",
+					},
+				}
+				initObjects = append(initObjects, subnetPort)
+			})
+
+			It("returns error", func() {
+				Expect(err).To(MatchError(ContainSubstring(
+					"external network interface my-subnetport is owned by VirtualMachine other-vm")))
+				Expect(devices).To(BeEmpty())
+			})
+		})
+
+		When("SubnetPort is associated with another VM", func() {
+			BeforeEach(func() {
+				subnetPort.Labels[network.VMNameLabel] = "other-vm"
+				initObjects = append(initObjects, subnetPort)
+			})
+
+			It("returns error", func() {
+				Expect(err).To(MatchError(ContainSubstring(
+					"external SubnetPort my-subnetport is associated with VM other-vm")))
+				Expect(devices).To(BeEmpty())
+			})
+		})
+
+		When("SubnetPort exists", func() {
+			BeforeEach(func() {
+				initObjects = append(initObjects, subnetPort)
+			})
+
+			It("returns success", func() {
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(MatchError(network.ErrNetworkInterfaceNotReady))
+				Expect(devices).To(BeEmpty())
+
+				By("sets the VM association on the SubnetPort", func() {
+					Expect(ctx.Client.Get(ctx, client.ObjectKeyFromObject(subnetPort), subnetPort)).To(Succeed())
+					Expect(subnetPort.OwnerReferences).To(BeEmpty())
+					Expect(subnetPort.Labels).To(HaveKeyWithValue("my-label", "my-value"))
+					Expect(subnetPort.Labels).To(HaveKeyWithValue(network.VMNameLabel, vm.Name))
+					Expect(subnetPort.Labels).To(HaveKeyWithValue(network.VMInterfaceNameLabel, interfaceName))
+					annotationVal := "virtualmachine/" + vm.Name + "/" + interfaceName
+					Expect(subnetPort.Annotations).To(HaveKeyWithValue(constants.VPCAttachmentRef, annotationVal))
+					Expect(subnetPort.Spec.Subnet).To(Equal("my-subnet"))
+				})
+
+				By("simulate successful NSX Operator reconcile", func() {
+					subnetPort.Status.Attachment.ID = interfaceID
+					subnetPort.Status.NetworkInterfaceConfig.MACAddress = macAddress
+					subnetPort.Status.NetworkInterfaceConfig.LogicalSwitchUUID = ctx.GetNetwork(0).LogicalSwitchUUID
+					subnetPort.Status.Conditions = []vpcv1alpha1.Condition{
+						{
+							Type:   vpcv1alpha1.Ready,
+							Status: corev1.ConditionTrue,
+						},
+					}
+					Expect(ctx.Client.Status().Update(ctx, subnetPort)).To(Succeed())
+				})
+
+				devices, err = network.CreateAndWaitForNetworkInterfaces(
+					vmCtx,
+					ctx.Client,
+					ctx.VCClient.Client,
+					ctx.Finder,
+					nil,
+					networkSpec)
+				Expect(err).ToNot(HaveOccurred())
+
+				Expect(devices).To(HaveLen(1))
+				dev := devices[0]
+				Expect(dev.ProviderType).To(Equal(pkgcfg.NetworkProviderTypeVPC))
+				Expect(dev.MacAddress).To(Equal(expectedMACAddress))
+				Expect(dev.ExternalID).To(Equal(interfaceID))
+				Expect(dev.NetworkID).To(Equal(ctx.GetNetwork(0).LogicalSwitchUUID))
+				Expect(dev.InterfaceName).To(Equal(interfaceName))
+
+				var list vpcv1alpha1.SubnetPortList
+				Expect(ctx.Client.List(ctx, &list)).To(Succeed())
+				Expect(list.Items).To(HaveLen(1))
+			})
+
+			When("BringYourOwnNetworkInterface is disabled", func() {
+				BeforeEach(func() {
+					pkgcfg.SetContext(parentCtx, func(config *pkgcfg.Config) {
+						config.Features.BringYourOwnNetworkInterface = false
+					})
+				})
+
+				It("returns error", func() {
+					Expect(err).To(MatchError(ContainSubstring("external network interfaces are not enabled")))
+					Expect(devices).To(BeEmpty())
+
+					Expect(ctx.Client.Get(ctx, client.ObjectKeyFromObject(subnetPort), subnetPort)).To(Succeed())
+					Expect(subnetPort.Labels).ToNot(HaveKey(network.VMNameLabel))
+				})
+			})
+		})
+	})
+
 	Context("Mixed VDS and VPC", func() {
 		const (
 			ifaceName0 = "eth0"
@@ -2980,5 +3142,191 @@ var _ = Describe("CreateNetworkDevices", Label(testlabels.VCSim), func() {
 				Expect(devices).To(BeEmpty())
 			})
 		})
+	})
+})
+
+var _ = Describe("ReleaseExternalSubnetPorts", func() {
+	const (
+		interfaceID = "my-interface-id"
+	)
+
+	var (
+		ctx        context.Context
+		vm         *vmopv1.VirtualMachine
+		subnetPort *vpcv1alpha1.SubnetPort
+		ethCards   object.VirtualDeviceList
+		k8sClient  client.Client
+		err        error
+	)
+
+	BeforeEach(func() {
+		ctx = pkgcfg.NewContextWithDefaultConfig()
+
+		vm = &vmopv1.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-vm",
+				Namespace: "my-ns",
+				UID:       "my-vm-uid",
+			},
+			Spec: vmopv1.VirtualMachineSpec{
+				Network: &vmopv1.VirtualMachineNetworkSpec{},
+			},
+		}
+
+		subnetPort = &vpcv1alpha1.SubnetPort{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-subnetport",
+				Namespace: vm.Namespace,
+				Labels: map[string]string{
+					"my-label":                   "my-value",
+					network.VMNameLabel:          vm.Name,
+					network.VMInterfaceNameLabel: "eth0",
+				},
+				Annotations: map[string]string{
+					constants.VPCAttachmentRef: "virtualmachine/my-vm/eth0",
+				},
+			},
+			Status: vpcv1alpha1.SubnetPortStatus{
+				Attachment: vpcv1alpha1.PortAttachment{
+					ID: interfaceID,
+				},
+			},
+		}
+
+		ethCards = nil
+	})
+
+	JustBeforeEach(func() {
+		k8sClient = builder.NewFakeClient(subnetPort)
+		err = network.ReleaseExternalSubnetPorts(ctx, vm, k8sClient, ethCards)
+	})
+
+	assertReleased := func(released bool) {
+		GinkgoHelper()
+		Expect(err).ToNot(HaveOccurred())
+
+		obj := &vpcv1alpha1.SubnetPort{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnetPort), obj)).To(Succeed())
+		Expect(obj.Labels).To(HaveKeyWithValue("my-label", "my-value"))
+		if released {
+			Expect(obj.Labels).ToNot(HaveKey(network.VMNameLabel))
+			Expect(obj.Labels).ToNot(HaveKey(network.VMInterfaceNameLabel))
+			Expect(obj.Annotations).ToNot(HaveKey(constants.VPCAttachmentRef))
+		} else {
+			Expect(obj.Labels).To(HaveKeyWithValue(network.VMNameLabel, vm.Name))
+			Expect(obj.Labels).To(HaveKeyWithValue(network.VMInterfaceNameLabel, "eth0"))
+			Expect(obj.Annotations).To(HaveKeyWithValue(constants.VPCAttachmentRef, "virtualmachine/my-vm/eth0"))
+		}
+	}
+
+	When("SubnetPort is referenced by the VM", func() {
+		BeforeEach(func() {
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{
+					Name: "eth0",
+					ExternalRef: &common.LocalObjectRef{
+						APIVersion: vpcv1alpha1.SchemeGroupVersion.String(),
+						Kind:       "SubnetPort",
+						Name:       subnetPort.Name,
+					},
+				},
+			}
+		})
+
+		It("does not release the SubnetPort", func() {
+			assertReleased(false)
+		})
+	})
+
+	When("SubnetPort is not referenced by the VM", func() {
+		When("SubnetPort is still attached to the VM", func() {
+			BeforeEach(func() {
+				ethCards = object.VirtualDeviceList{
+					&vimtypes.VirtualVmxnet3{
+						VirtualVmxnet: vimtypes.VirtualVmxnet{
+							VirtualEthernetCard: vimtypes.VirtualEthernetCard{
+								ExternalId: interfaceID,
+							},
+						},
+					},
+				}
+			})
+
+			It("does not release the SubnetPort", func() {
+				assertReleased(false)
+			})
+		})
+
+		When("SubnetPort is not attached to the VM", func() {
+			It("releases the SubnetPort", func() {
+				assertReleased(true)
+			})
+		})
+
+		When("SubnetPort is owned by the VM", func() {
+			BeforeEach(func() {
+				subnetPort.OwnerReferences = []metav1.OwnerReference{
+					{
+						APIVersion: vmopv1.GroupVersion.String(),
+						Kind:       "VirtualMachine",
+						Name:       vm.Name,
+						UID:        vm.UID,
+					},
+				}
+			})
+
+			It("does not release the SubnetPort", func() {
+				assertReleased(false)
+			})
+		})
+	})
+})
+
+var _ = Describe("ReleaseAllExternalSubnetPorts", func() {
+	It("releases the SubnetPorts associated with the VM", func() {
+		ctx := pkgcfg.NewContextWithDefaultConfig()
+
+		vm := &vmopv1.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-vm",
+				Namespace: "my-ns",
+			},
+			Spec: vmopv1.VirtualMachineSpec{
+				Network: &vmopv1.VirtualMachineNetworkSpec{
+					Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{
+							Name: "eth0",
+							ExternalRef: &common.LocalObjectRef{
+								APIVersion: vpcv1alpha1.SchemeGroupVersion.String(),
+								Kind:       "SubnetPort",
+								Name:       "my-subnetport",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		subnetPort := &vpcv1alpha1.SubnetPort{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-subnetport",
+				Namespace: vm.Namespace,
+				Labels: map[string]string{
+					network.VMNameLabel:          vm.Name,
+					network.VMInterfaceNameLabel: "eth0",
+				},
+				Annotations: map[string]string{
+					constants.VPCAttachmentRef: "virtualmachine/my-vm/eth0",
+				},
+			},
+		}
+
+		k8sClient := builder.NewFakeClient(subnetPort)
+		Expect(network.ReleaseAllExternalSubnetPorts(ctx, vm, k8sClient)).To(Succeed())
+
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(subnetPort), subnetPort)).To(Succeed())
+		Expect(subnetPort.Labels).ToNot(HaveKey(network.VMNameLabel))
+		Expect(subnetPort.Labels).ToNot(HaveKey(network.VMInterfaceNameLabel))
+		Expect(subnetPort.Annotations).ToNot(HaveKey(constants.VPCAttachmentRef))
 	})
 })

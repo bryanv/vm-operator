@@ -292,6 +292,18 @@ func (s *Session) reconcilePoweredOffOrPoweredOnVM(
 		conditions.Delete(vmCtx.VM, vmopv1.GuestIDReconfiguredCondition)
 	}
 
+	// Release any external SubnetPorts that were removed from the spec and are
+	// no longer attached to the VM.
+	if err := network.ReleaseExternalSubnetPorts(
+		vmCtx,
+		vmCtx.VM,
+		s.K8sClient,
+		object.VirtualDeviceList(vmCtx.MoVM.Config.Hardware.Device).
+			SelectByType((*vimtypes.VirtualEthernetCard)(nil))); err != nil {
+
+		return err
+	}
+
 	networkResults, err := s.reconcileNetworkInterfaces(vmCtx)
 	if err != nil {
 		return err

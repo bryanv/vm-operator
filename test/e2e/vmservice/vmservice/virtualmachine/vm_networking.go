@@ -16,13 +16,20 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
+	vpcv1alpha1 "github.com/vmware-tanzu/nsx-operator/pkg/apis/vpc/v1alpha1"
+
 	vmopv1a2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
+	ncpv1alpha1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/framework"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/vcenter"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/wcp"
@@ -291,4 +298,217 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 		ethCards = object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
 		Expect(ethCards).To(HaveLen(1), "VM config should have one EthernetCard")
 	})
+
+	Context("External network interfaces", Label("extended-functional", "byo-network-interface", "experimental"), func() {
+		BeforeEach(func() {
+			skipper.SkipUnlessSupervisorCapabilityEnabled(ctx, clusterProxy, consts.BringYourOwnNetworkInterfaceCapabilityName)
+			skipper.SkipUnlessSupervisorCapabilityEnabled(ctx, clusterProxy, consts.MutableNetworksCapabilityName)
+		})
+
+		It("Should allow an external network interface to be added to and removed from a VirtualMachine", func() {
+			vmToCreate := &vmopv1a2.VirtualMachine{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: input.WCPNamespaceName,
+					Name:      vmName,
+				},
+				Spec: vmopv1a2.VirtualMachineSpec{
+					ImageName:    linuxVMIName,
+					ClassName:    clusterResources.VMClassName,
+					StorageClass: clusterResources.StorageClassName,
+					PowerState:   vmopv1a2.VirtualMachinePowerStateOff,
+				},
+			}
+			vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vmToCreate, false)
+
+			vmoperator.WaitForVirtualMachineToExist(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+			vmoperator.WaitForVirtualMachineMOID(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+			vmMoID := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+			vmMoRef := types.ManagedObjectReference{Type: "VirtualMachine", Value: vmMoID}
+
+			vCenterClient := vcenter.NewVimClientFromKubeconfig(ctx, clusterProxy.GetKubeconfigPath())
+			propCollector := property.DefaultCollector(vCenterClient)
+
+			var vmMO mo.VirtualMachine
+			Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config"}, &vmMO)).To(Succeed())
+			ethCards := object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
+			Expect(ethCards).To(HaveLen(1), "VM config should have one EthernetCard")
+
+			By("Create external network interface from the VM's managed network interface")
+
+			key := ctrlclient.ObjectKey{Name: vmName, Namespace: input.WCPNamespaceName}
+			vm := &vmopv1.VirtualMachine{}
+			Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+
+			externalNetIf, externalRef := newExternalNetworkInterface(ctx, config, svClusterClient, vm, vmName+"-external")
+			Expect(svClusterClient.Create(ctx, externalNetIf)).To(Succeed())
+			externalNetIfKey := ctrlclient.ObjectKeyFromObject(externalNetIf)
+			DeferCleanup(func() {
+				Expect(ctrlclient.IgnoreNotFound(svClusterClient.Delete(ctx, externalNetIf))).To(Succeed())
+			})
+
+			By("Add external network interface to VM Spec")
+			Eventually(func() bool {
+				vm := &vmopv1.VirtualMachine{}
+
+				err := svClusterClient.Get(ctx, key, vm)
+				if err != nil {
+					e2eframework.Logf("retry due to: %v", err)
+					return false
+				}
+
+				Expect(vm.Spec.Network).ToNot(BeNil())
+				Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+				vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces,
+					vmopv1.VirtualMachineNetworkInterfaceSpec{
+						Name:        "eth1",
+						ExternalRef: externalRef,
+					})
+
+				err = svClusterClient.Update(ctx, vm)
+				if err != nil {
+					e2eframework.Logf("retry due to: %v", err)
+					return false
+				}
+
+				return true
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(BeTrue(), "Timed out updating VirtualMachine %s to add external network interface", vmName)
+
+			By("Wait for VM to be reconfigured with second EthernetCard")
+			Eventually(func(g Gomega) {
+				g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config"}, &vmMO)).To(Succeed())
+				ethCards := object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
+				g.Expect(ethCards).To(HaveLen(2), "VM should have two EthernetCards configured")
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VM reconfigured with second EthernetCard")
+
+			By("External network interface should not be owned by the VM")
+			Expect(svClusterClient.Get(ctx, externalNetIfKey, externalNetIf)).To(Succeed())
+			Expect(externalNetIf.GetOwnerReferences()).To(BeEmpty())
+			if _, ok := externalNetIf.(*vpcv1alpha1.SubnetPort); ok {
+				Expect(externalNetIf.GetLabels()).To(HaveKeyWithValue(vmNameLabel, vmName))
+				Expect(externalNetIf.GetAnnotations()).To(HaveKeyWithValue(pkgconst.VPCAttachmentRef, "virtualmachine/"+vmName+"/eth1"))
+			}
+
+			By("Remove external network interface from VM Spec")
+			Eventually(func() bool {
+				vm := &vmopv1.VirtualMachine{}
+
+				err := svClusterClient.Get(ctx, key, vm)
+				if err != nil {
+					e2eframework.Logf("retry due to: %v", err)
+					return false
+				}
+
+				Expect(vm.Spec.Network).ToNot(BeNil())
+				Expect(vm.Spec.Network.Interfaces).To(HaveLen(2))
+				vm.Spec.Network.Interfaces = vm.Spec.Network.Interfaces[:1]
+
+				err = svClusterClient.Update(ctx, vm)
+				if err != nil {
+					e2eframework.Logf("retry due to: %v", err)
+					return false
+				}
+
+				return true
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(BeTrue(), "Timed out updating VirtualMachine %s to remove external network interface", vmName)
+
+			By("Wait for VM to be reconfigured with one EthernetCard")
+			Eventually(func(g Gomega) {
+				g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config"}, &vmMO)).To(Succeed())
+				ethCards := object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
+				g.Expect(ethCards).To(HaveLen(1), "VM should have one EthernetCard configured")
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VM reconfigured with one EthernetCard")
+
+			By("External network interface should still exist and no longer be associated with the VM")
+			Eventually(func(g Gomega) {
+				g.Expect(svClusterClient.Get(ctx, externalNetIfKey, externalNetIf)).To(Succeed())
+				g.Expect(externalNetIf.GetOwnerReferences()).To(BeEmpty())
+				g.Expect(externalNetIf.GetLabels()).ToNot(HaveKey(vmNameLabel))
+				g.Expect(externalNetIf.GetAnnotations()).ToNot(HaveKey(pkgconst.VPCAttachmentRef))
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "External network interface released from VM")
+
+			By("Delete VM")
+			vmoperator.DeleteVirtualMachineAndWait(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+
+			By("External network interface should still exist after the VM is deleted")
+			Expect(svClusterClient.Get(ctx, externalNetIfKey, externalNetIf)).To(Succeed())
+		})
+	})
+}
+
+// vmNameLabel is the label VM Operator puts on a network interface CR to
+// identify its VM by name.
+const vmNameLabel = "vmoperator.vmware.com/vm-name"
+
+// newExternalNetworkInterface returns a network interface CR, not owned by the
+// VM, with the same spec as the VM's managed network interface CR. It also
+// returns the reference to use in the VM's interface ExternalRef.
+func newExternalNetworkInterface(
+	ctx context.Context,
+	config *e2eConfig.E2EConfig,
+	client ctrlclient.Client,
+	vm *vmopv1.VirtualMachine,
+	name string) (ctrlclient.Object, *vmopv1common.LocalObjectRef) {
+
+	GinkgoHelper()
+
+	var list ctrlclient.ObjectList
+	switch {
+	case vmoperator.IsNetworkNsxtVPC(ctx, client, config):
+		list = &vpcv1alpha1.SubnetPortList{}
+	case framework.NetworkTopologyIs(config.InfraConfig.NetworkingTopology, consts.NSX):
+		list = &ncpv1alpha1.VirtualNetworkInterfaceList{}
+	default:
+		list = &netopv1alpha1.NetworkInterfaceList{}
+	}
+
+	var managed ctrlclient.Object
+	Eventually(func(g Gomega) {
+		g.Expect(client.List(ctx, list, ctrlclient.InNamespace(vm.Namespace))).To(Succeed())
+		objs, err := meta.ExtractList(list)
+		g.Expect(err).ToNot(HaveOccurred())
+		for _, obj := range objs {
+			if obj := obj.(ctrlclient.Object); metav1.IsControlledBy(obj, vm) {
+				managed = obj
+			}
+		}
+		g.Expect(managed).ToNot(BeNil(), "VM should have a managed network interface")
+	}, config.GetIntervals("default", "wait-virtual-machine-creation")...).Should(Succeed())
+
+	objectMeta := metav1.ObjectMeta{
+		Namespace: vm.Namespace,
+		Name:      name,
+	}
+
+	switch managed := managed.(type) {
+	case *netopv1alpha1.NetworkInterface:
+		return &netopv1alpha1.NetworkInterface{
+			ObjectMeta: objectMeta,
+			Spec:       managed.Spec,
+		}, &vmopv1common.LocalObjectRef{
+			APIVersion: netopv1alpha1.SchemeGroupVersion.String(),
+			Kind:       "NetworkInterface",
+			Name:       name,
+		}
+	case *ncpv1alpha1.VirtualNetworkInterface:
+		return &ncpv1alpha1.VirtualNetworkInterface{
+			ObjectMeta: objectMeta,
+			Spec:       managed.Spec,
+		}, &vmopv1common.LocalObjectRef{
+			APIVersion: ncpv1alpha1.SchemeGroupVersion.String(),
+			Kind:       "VirtualNetworkInterface",
+			Name:       name,
+		}
+	case *vpcv1alpha1.SubnetPort:
+		return &vpcv1alpha1.SubnetPort{
+			ObjectMeta: objectMeta,
+			Spec:       managed.Spec,
+		}, &vmopv1common.LocalObjectRef{
+			APIVersion: vpcv1alpha1.SchemeGroupVersion.String(),
+			Kind:       "SubnetPort",
+			Name:       name,
+		}
+	}
+
+	Fail(fmt.Sprintf("unsupported network interface type %T", managed))
+	return nil, nil
 }

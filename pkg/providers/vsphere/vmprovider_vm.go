@@ -396,7 +396,7 @@ func (vs *vSphereVMProvider) DeleteVirtualMachine(
 		return err
 	} else if vcVM == nil {
 		// VM does not exist.
-		return nil
+		return network.ReleaseAllExternalSubnetPorts(vmCtx, vm, vs.k8sClient)
 	}
 
 	if err := vcVM.Properties(
@@ -458,7 +458,11 @@ func (vs *vSphereVMProvider) DeleteVirtualMachine(
 		}
 	}
 
-	return virtualmachine.DeleteVirtualMachine(vmCtx, vcVM)
+	if err := virtualmachine.DeleteVirtualMachine(vmCtx, vcVM); err != nil {
+		return err
+	}
+
+	return network.ReleaseAllExternalSubnetPorts(vmCtx, vm, vs.k8sClient)
 }
 
 func (vs *vSphereVMProvider) PublishVirtualMachine(

@@ -136,6 +136,7 @@ Tests are organized using Ginkgo labels for easy filtering:
 - `experimental` - Excluded from all CI targets; requires infrastructure unavailable in the standard `vds_standard_medium` testbed (e.g. encryption-capable storage)
 - `backup-restore` - Backup/restore tests that need an external backup server. Run only by `make e2e-backup-restore` (and the matching CI suite); excluded from the smoke, core, and extended targets. While these tests also carry `experimental`, the `backup-restore` filter still selects them so they can be validated in their own suite.
 - `veeam` - The `backup-restore` tests that use Veeam Backup & Replication. They run in order and share one Veeam connection and vCenter registration.
+- `byo-network-interface` - Experimental tests for adding and removing an external (BYO) network interface on a VM for NetOP (VDS), NCP (NSX), and VPC (NSX). Requires `supports_VM_service_byo_network_interface` and `supports_VM_service_mutable_networks`; disabled capabilities skip. Run with `make test-e2e LABEL_FILTER="byo-network-interface"`. Keep `experimental` until each provider has passed on real Supervisor hardware.
 - `boot-disk-capacity` - The tests for `spec.advanced.bootDiskCapacity`. Run them with `make test-e2e LABEL_FILTER="boot-disk-capacity"`.
 
 ## Configuration

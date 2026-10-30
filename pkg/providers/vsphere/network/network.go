@@ -160,12 +160,14 @@ func CreateNetworkDevices(
 
 		var obj ctrlclient.Object
 
-		switch group {
-		case netopv1alpha1.SchemeGroupVersion.Group:
+		switch {
+		case interfaceSpec.ExternalRef != nil:
+			obj, err = getExternalNetworkInterface(ctx, vm, client, group, interfaceSpec)
+		case group == netopv1alpha1.SchemeGroupVersion.Group:
 			obj, err = createNetOPNetworkInterface(ctx, vm, client, interfaceSpec)
-		case ncpv1alpha1.SchemeGroupVersion.Group:
+		case group == ncpv1alpha1.SchemeGroupVersion.Group:
 			obj, err = createNCPNetworkInterface(ctx, vm, client, interfaceSpec)
-		case vpcv1alpha1.SchemeGroupVersion.Group:
+		case group == vpcv1alpha1.SchemeGroupVersion.Group:
 			obj, err = createVPCNetworkInterface(ctx, vm, client, interfaceSpec)
 		default:
 			err = fmt.Errorf("unsupported network API Group: %q", group)
@@ -233,17 +235,25 @@ func CreateNetworkDevices(
 func getNetworkInterfaceAPIGroup(
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec) (string, error) {
 
-	network := interfaceSpec.Network
-	if network == nil || network.APIVersion == "" {
+	// The VM validation webhook enforces that only one of ExternalRef and
+	// Network is set.
+	var apiVersion string
+	if ref := interfaceSpec.ExternalRef; ref != nil {
+		apiVersion = ref.APIVersion
+	} else if network := interfaceSpec.Network; network != nil {
+		apiVersion = network.APIVersion
+	}
+
+	if apiVersion == "" {
 		// The VM mutation webhook will default in the network type based
 		// on the default network provider for this namespace.
 		return "", pkgerr.NoRequeueErrorf("no network API Version")
 	}
 
-	gv, err := schema.ParseGroupVersion(network.APIVersion)
+	gv, err := schema.ParseGroupVersion(apiVersion)
 	if err != nil {
 		// The VM validation webhook will check for invalid values.
-		return "", pkgerr.NoRequeueErrorf("invalid API Version: %s", network.APIVersion)
+		return "", pkgerr.NoRequeueErrorf("invalid API Version: %s", apiVersion)
 	}
 
 	return gv.Group, nil
@@ -519,12 +529,14 @@ func CreateAndWaitForNetworkInterfaces(
 
 		var dev Device
 
-		switch group {
-		case netopv1alpha1.SchemeGroupVersion.Group:
+		switch {
+		case interfaceSpec.ExternalRef != nil:
+			dev, err = getExternalNetworkInterfaceDevice(vmCtx, client, vimClient, clusterMoRef, group, interfaceSpec)
+		case group == netopv1alpha1.SchemeGroupVersion.Group:
 			dev, err = createAndWaitNetOPNetworkInterface(vmCtx, client, vimClient, clusterMoRef, interfaceSpec)
-		case ncpv1alpha1.SchemeGroupVersion.Group:
+		case group == ncpv1alpha1.SchemeGroupVersion.Group:
 			dev, err = createAndWaitNCPNetworkInterface(vmCtx, client, vimClient, clusterMoRef, interfaceSpec)
-		case vpcv1alpha1.SchemeGroupVersion.Group:
+		case group == vpcv1alpha1.SchemeGroupVersion.Group:
 			dev, err = createAndWaitVPCNetworkInterface(vmCtx, client, vimClient, clusterMoRef, interfaceSpec)
 		default:
 			err = fmt.Errorf("unsupported network API Group: %q", group)

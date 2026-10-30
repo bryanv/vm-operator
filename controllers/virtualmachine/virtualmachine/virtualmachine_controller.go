@@ -204,33 +204,38 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 	}
 
 	// Setup watches for the network interface CR types supported on this cluster.
+	// A VM may reference an external network interface CR it does not own, so
+	// map those to the VMs that reference them.
+	networkInterfaceHandler := handler.EnqueueRequestForOwner(
+		mgr.GetScheme(),
+		mgr.GetRESTMapper(),
+		&vmopv1.VirtualMachine{})
+	if pkgcfg.FromContext(ctx).Features.BringYourOwnNetworkInterface {
+		if err := kubeutil.IndexVMExternalNetworkInterfaces(ctx, mgr); err != nil {
+			return err
+		}
+		networkInterfaceHandler = handler.EnqueueRequestsFromMapFunc(
+			kubeutil.NetworkInterfaceToVMMapper(r.Client))
+	}
+
 	for _, providerType := range netsetutil.GetClusterSupportedProviderTypesFromConfig(ctx) {
 		switch providerType {
 		case pkgcfg.NetworkProviderTypeVDS:
 			builder = builder.Watches(
 				&netopv1alpha1.NetworkInterface{},
-				handler.EnqueueRequestForOwner(
-					mgr.GetScheme(),
-					mgr.GetRESTMapper(),
-					&vmopv1.VirtualMachine{}),
+				networkInterfaceHandler,
 			)
 
 		case pkgcfg.NetworkProviderTypeNSXT:
 			builder = builder.Watches(
 				&ncpv1alpha1.VirtualNetworkInterface{},
-				handler.EnqueueRequestForOwner(
-					mgr.GetScheme(),
-					mgr.GetRESTMapper(),
-					&vmopv1.VirtualMachine{}),
+				networkInterfaceHandler,
 			)
 
 		case pkgcfg.NetworkProviderTypeVPC:
 			builder = builder.Watches(
 				&vpcv1alpha1.SubnetPort{},
-				handler.EnqueueRequestForOwner(
-					mgr.GetScheme(),
-					mgr.GetRESTMapper(),
-					&vmopv1.VirtualMachine{}),
+				networkInterfaceHandler,
 			)
 		case pkgcfg.NetworkProviderTypeNamed:
 			// The named network provider has no network interface CR to watch.

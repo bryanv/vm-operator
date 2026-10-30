@@ -21,6 +21,9 @@ import (
 )
 
 const (
+	// CapabilityKeyBringYourOwnNetworkInterface enables externally owned interfaces.
+	CapabilityKeyBringYourOwnNetworkInterface = "supports_VM_service_byo_network_interface"
+
 	// ConfigMapName is the name of the capabilities ConfigMap.
 	ConfigMapName = "wcp-cluster-capabilities"
 
@@ -286,6 +289,9 @@ func updateCapabilitiesFeaturesFromMap(
 	data map[string]string,
 	fs pkgcfg.FeatureStates) pkgcfg.FeatureStates {
 
+	// This capability is available only through the Supervisor CRD.
+	fs.BringYourOwnNetworkInterface = false
+
 	// TKGMultipleCL is unique in that it is a capability but it predates
 	// SVAsyncUpgrade.
 	fs.TKGMultipleCL = isEnabled(data[CapabilityKeyTKGMultipleContentLibraries])
@@ -303,7 +309,10 @@ func updateCapabilitiesFeaturesFromCRD(
 	obj capv1.Capabilities,
 	fs pkgcfg.FeatureStates) pkgcfg.FeatureStates {
 
+	// Reset absent capabilities as well as explicitly inactive capabilities.
+	fs.BringYourOwnNetworkInterface = false
 	for capName, capStatus := range obj.Status.Supervisor {
+
 		switch capName {
 		case CapabilityKeyBringYourOwnKeyProvider:
 			fs.BringYourOwnEncryptionKey = capStatus.Activated
@@ -311,6 +320,8 @@ func updateCapabilitiesFeaturesFromCRD(
 			fs.TKGMultipleCL = capStatus.Activated
 		case CapabilityKeyWorkloadIsolation:
 			fs.WorkloadDomainIsolation = capStatus.Activated
+		case CapabilityKeyBringYourOwnNetworkInterface:
+			fs.BringYourOwnNetworkInterface = capStatus.Activated
 		case CapabilityKeyMutableNetworks:
 			fs.MutableNetworks = capStatus.Activated
 		case CapabilityKeyVMGroups:

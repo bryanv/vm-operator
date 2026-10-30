@@ -874,6 +874,7 @@ func (v validator) validateNetwork(
 		}
 
 		p := networkPath.Child("interfaces")
+		allErrs = append(allErrs, v.validateNetworkInterfaceExternalRefs(ctx, p, vm, oldVM, providerTypes)...)
 
 		for i, interfaceSpec := range networkSpec.Interfaces {
 			p := p.Index(i)
@@ -1062,6 +1063,94 @@ var networkProviderValidations = map[pkgcfg.NetworkProviderType]networkProviderV
 	},
 }
 
+// externalNetworkInterfaceKinds is the network interface CR kind that may be
+// used as an ExternalRef for each network provider.
+var externalNetworkInterfaceKinds = map[pkgcfg.NetworkProviderType]string{
+	pkgcfg.NetworkProviderTypeVDS:  "NetworkInterface",
+	pkgcfg.NetworkProviderTypeNSXT: "VirtualNetworkInterface",
+	pkgcfg.NetworkProviderTypeVPC:  "SubnetPort",
+}
+
+// validateNetworkInterfaceExternalRefs validates the interfaces that use an
+// external network interface CR. The CR is not required to exist yet.
+func (v validator) validateNetworkInterfaceExternalRefs(
+	ctx *pkgctx.WebhookRequestContext,
+	interfacesPath *field.Path,
+	vm, oldVM *vmopv1.VirtualMachine,
+	providerTypes []pkgcfg.NetworkProviderType) field.ErrorList {
+
+	var allErrs field.ErrorList
+
+	oldInterfaces := map[string]vmopv1.VirtualMachineNetworkInterfaceSpec{}
+	if oldVM != nil && oldVM.Spec.Network != nil {
+		for _, interfaceSpec := range oldVM.Spec.Network.Interfaces {
+			oldInterfaces[interfaceSpec.Name] = interfaceSpec
+		}
+	}
+
+	externalRefs := sets.New[vmopv1common.LocalObjectRef]()
+
+	for i, interfaceSpec := range vm.Spec.Network.Interfaces {
+		p := interfacesPath.Index(i)
+
+		oldInterfaceSpec, existed := oldInterfaces[interfaceSpec.Name]
+		if existed && (interfaceSpec.ExternalRef == nil) != (oldInterfaceSpec.ExternalRef == nil) {
+			allErrs = append(allErrs, field.Forbidden(p.Child("externalRef"),
+				"cannot be added to or removed from an existing interface"))
+		}
+
+		ref := interfaceSpec.ExternalRef
+		if ref == nil {
+			continue
+		}
+		p = p.Child("externalRef")
+
+		// Unchanged references are allowed when the capability is disabled so
+		// the VM can still be updated and deleted.
+		if !pkgcfg.FromContext(ctx).Features.BringYourOwnNetworkInterface &&
+			(oldInterfaceSpec.ExternalRef == nil || *ref != *oldInterfaceSpec.ExternalRef) {
+			allErrs = append(allErrs, field.Forbidden(p, "external network interfaces are not enabled"))
+		}
+
+		if interfaceSpec.Network != nil {
+			allErrs = append(allErrs, field.Forbidden(p, "network and externalRef are mutually exclusive"))
+		}
+
+		if interfaceSpec.MACAddr != "" {
+			allErrs = append(allErrs, field.Forbidden(p, "macAddr and externalRef are mutually exclusive"))
+		}
+
+		supported := false
+		for _, pt := range providerTypes {
+			if ref.APIVersion == networkProviderValidations[pt].apiVersion &&
+				ref.Kind == externalNetworkInterfaceKinds[pt] {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			allErrs = append(allErrs, field.NotSupported(p, ref.APIVersion+"/"+ref.Kind, externalRefKindsForProviders(providerTypes)))
+		}
+
+		if externalRefs.Has(*ref) {
+			allErrs = append(allErrs, field.Duplicate(p, ref.Name))
+		}
+		externalRefs.Insert(*ref)
+	}
+
+	return allErrs
+}
+
+func externalRefKindsForProviders(providerTypes []pkgcfg.NetworkProviderType) []string {
+	var kinds []string
+	for _, pt := range providerTypes {
+		if kind, ok := externalNetworkInterfaceKinds[pt]; ok {
+			kinds = append(kinds, networkProviderValidations[pt].apiVersion+"/"+kind)
+		}
+	}
+	return kinds
+}
+
 func (v validator) validateNetworkInterfaceNetworkRef(
 	_ *pkgctx.WebhookRequestContext,
 	providerTypes []pkgcfg.NetworkProviderType,
@@ -1166,7 +1255,8 @@ func (v validator) validateNetworkInterfaceSpec(
 		allErrs = append(allErrs, field.Invalid(interfacePath.Child("name"), networkIfCRName, "is the resulting network interface name: "+msg))
 	}
 
-	if interfaceSpec.MACAddr != "" {
+	// The macAddr field is not allowed with an ExternalRef.
+	if interfaceSpec.MACAddr != "" && interfaceSpec.ExternalRef == nil {
 		if !slices.Contains(macAddressSupportNetworkGroups, networkGV.Group) {
 			allErrs = append(allErrs, field.Invalid(interfacePath.Child("macAddr"), interfaceSpec.MACAddr,
 				fmt.Sprintf("macAddr is available only with the following network providers: %s",
@@ -2582,6 +2672,9 @@ func (v validator) validateImmutableNetwork(
 		}
 		if !reflect.DeepEqual(newInterface.Network, oldInterface.Network) {
 			allErrs = append(allErrs, field.Forbidden(pi.Child("network"), validation.FieldImmutableErrorMsg))
+		}
+		if !reflect.DeepEqual(newInterface.ExternalRef, oldInterface.ExternalRef) {
+			allErrs = append(allErrs, field.Forbidden(pi.Child("externalRef"), validation.FieldImmutableErrorMsg))
 		}
 
 		allErrs = append(allErrs,

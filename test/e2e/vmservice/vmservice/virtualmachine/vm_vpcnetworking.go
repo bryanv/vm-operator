@@ -5,20 +5,36 @@ package virtualmachine
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/vmware/govmomi/property"
+	"github.com/vmware/govmomi/vim25/mo"
+	vimtypes "github.com/vmware/govmomi/vim25/types"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
+
+	vpcv1alpha1 "github.com/vmware-tanzu/nsx-operator/pkg/apis/vpc/v1alpha1"
 
 	vmopv1a2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	vmopv1a2common "github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	vmopcommon "github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
+	vsphereconst "github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
+	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/netplan"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/framework"
+	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/vcenter"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/wcp"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/manifestbuilders"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/utils"
@@ -138,6 +154,159 @@ func VMVPCSpec(ctx context.Context, inputGetter func() VMVPCSpecInput) {
 				},
 			},
 		}
+	})
+
+	// vmop-4294 and vmop-3881: address overrides and gateway suppression must
+	// survive the SubnetPort, bootstrap, and guest configuration boundaries.
+	It("boots four NICs with all IP/MAC override combinations and no default gateways", Label("extended-functional", "experimental"), func() {
+		DeferCleanup(func() {
+			Expect(ctrlclient.IgnoreNotFound(svClusterClient.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: input.WCPNamespaceName},
+			}))).To(Succeed())
+		})
+		subnetName := "nic-overrides-" + capiutil.RandomString(6)
+		createSubnetOrSubnetSet(utils.SubnetKind, subnetName, input.WCPNamespaceName, utils.CIDRConfig, true)
+		DeferCleanup(vmoperator.DeleteSubnetOrSubnetSetAndWait, ctx, config, svClusterClient, input.WCPNamespaceName, subnetName, utils.SubnetKind)
+		var subnet vpcv1alpha1.Subnet
+		var prefix netip.Prefix
+		Eventually(func(g Gomega) {
+			g.Expect(svClusterClient.Get(ctx, ctrlclient.ObjectKey{Namespace: input.WCPNamespaceName, Name: subnetName}, &subnet)).To(Succeed())
+			for _, cidr := range subnet.Status.NetworkAddresses {
+				parsed, err := netip.ParsePrefix(cidr)
+				g.Expect(err).ToNot(HaveOccurred())
+				if parsed.Addr().Is4() {
+					prefix = parsed.Masked()
+					break
+				}
+			}
+			g.Expect(prefix.IsValid()).To(BeTrue())
+		}, config.GetIntervals("default", "wait-subnet-creation")...).Should(Succeed())
+
+		// The dedicated /28 has no other consumers. Keep requested addresses
+		// away from the gateway and the first automatically allocated addresses.
+		ip := prefix.Addr()
+		for range 10 {
+			ip = ip.Next()
+		}
+		Expect(prefix.Contains(ip.Next())).To(BeTrue())
+		var randomMAC [3]byte
+		_, err := rand.Read(randomMAC[:])
+		Expect(err).ToNot(HaveOccurred())
+		mac1 := fmt.Sprintf("02:50:56:%02x:%02x:%02x", randomMAC[0], randomMAC[1], randomMAC[2])
+		mac2 := fmt.Sprintf("02:50:57:%02x:%02x:%02x", randomMAC[0], randomMAC[1], randomMAC[2])
+		imageName := vmoperator.WaitForVirtualMachineImageName(ctx, &config.Config, svClusterClient, input.WCPNamespaceName, linuxImageDisplayName)
+		vm := &vmopv1.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{Name: vm1Name, Namespace: input.WCPNamespaceName},
+			Spec: vmopv1.VirtualMachineSpec{
+				ClassName: clusterResources.VMClassName, StorageClass: clusterResources.StorageClassName,
+				ImageName: imageName, PowerState: vmopv1.VirtualMachinePowerStateOff,
+				Bootstrap: &vmopv1.VirtualMachineBootstrapSpec{CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{
+					RawCloudConfig: &vmopcommon.SecretKeySelector{Name: secretName, Key: "user-data"},
+				}},
+				Network: &vmopv1.VirtualMachineNetworkSpec{Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{Name: "eth0"},
+					{Name: "eth1", Addresses: []string{netip.PrefixFrom(ip, prefix.Bits()).String()}},
+					{Name: "eth2", MACAddr: mac1},
+					{Name: "eth3", MACAddr: mac2, Addresses: []string{netip.PrefixFrom(ip.Next(), prefix.Bits()).String()}},
+				}},
+			},
+		}
+		for i := range vm.Spec.Network.Interfaces {
+			nic := &vm.Spec.Network.Interfaces[i]
+			nic.Network = &vmopcommon.PartialObjectRef{TypeMeta: metav1.TypeMeta{APIVersion: vpcAPIVersion, Kind: utils.SubnetKind}, Name: subnetName}
+			nic.IPAMModes = []corev1.IPFamily{corev1.IPv4Protocol}
+			nic.Gateway4, nic.Gateway6 = "None", "None"
+		}
+		vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vm, false)
+		vmoperator.WaitForVirtualMachineConditionCreated(ctx, config, svClusterClient, vm.Namespace, vm.Name)
+
+		By("Checking each realized SubnetPort and the metadata before first boot")
+		vimClient := vcenter.NewVimClientFromKubeconfig(ctx, clusterProxy.GetKubeconfigPath())
+		DeferCleanup(vcenter.LogoutVimClient, vimClient)
+		moid := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, vm.Namespace, vm.Name)
+		var metadata struct {
+			Network netplan.Network `json:"network"`
+		}
+		Eventually(func(g Gomega) {
+			var properties mo.VirtualMachine
+			g.Expect(property.DefaultCollector(vimClient).RetrieveOne(ctx,
+				vimtypes.ManagedObjectReference{Type: "VirtualMachine", Value: moid}, []string{"config.extraConfig"}, &properties)).To(Succeed())
+			g.Expect(properties.Config).ToNot(BeNil())
+			var metadataText string
+			for _, option := range properties.Config.ExtraConfig {
+				if option.GetOptionValue().Key == vsphereconst.CloudInitGuestInfoMetadata {
+					metadataText = fmt.Sprint(option.GetOptionValue().Value)
+				}
+			}
+			g.Expect(metadataText).ToNot(BeEmpty())
+			decoded, err := pkgutil.TryToDecodeBase64Gzip([]byte(metadataText))
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(yaml.Unmarshal([]byte(decoded), &metadata)).To(Succeed())
+			g.Expect(metadata.Network.Ethernets).To(HaveLen(4))
+		}, config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
+		var ports vpcv1alpha1.SubnetPortList
+		Expect(svClusterClient.List(ctx, &ports, ctrlclient.InNamespace(vm.Namespace))).To(Succeed())
+		expectedAddresses := map[string][]string{}
+		expectedMACs := map[string]string{}
+		for _, nic := range vm.Spec.Network.Interfaces {
+			var port *vpcv1alpha1.SubnetPort
+			for i := range ports.Items {
+				if ports.Items[i].Annotations[vsphereconst.VPCAttachmentRef] == "virtualmachine/"+vm.Name+"/"+nic.Name {
+					port = &ports.Items[i]
+					break
+				}
+			}
+			Expect(port).ToNot(BeNil(), "missing SubnetPort for %s", nic.Name)
+			if nic.MACAddr != "" {
+				Expect(strings.ToLower(port.Status.NetworkInterfaceConfig.MACAddress)).To(Equal(nic.MACAddr))
+			}
+			for _, address := range port.Status.NetworkInterfaceConfig.IPAddresses {
+				expectedAddresses[nic.Name] = append(expectedAddresses[nic.Name], address.IPAddress)
+			}
+			Expect(expectedAddresses[nic.Name]).ToNot(BeEmpty())
+			if len(nic.Addresses) > 0 {
+				Expect(expectedAddresses[nic.Name]).To(ConsistOf(nic.Addresses))
+			}
+			expectedMACs[nic.Name] = strings.ToLower(port.Status.NetworkInterfaceConfig.MACAddress)
+			matched := false
+			for _, ethernet := range metadata.Network.Ethernets {
+				if ethernet.Match != nil && ethernet.Match.Macaddress != nil && strings.EqualFold(*ethernet.Match.Macaddress, expectedMACs[nic.Name]) {
+					matched = true
+					Expect(ethernet.Gateway4).To(BeNil())
+					Expect(ethernet.Gateway6).To(BeNil())
+					Expect(ethernet.Routes).To(BeEmpty())
+					for _, address := range expectedAddresses[nic.Name] {
+						Expect(ethernet.Addresses).To(ContainElement(netplan.Address{String: &address}))
+					}
+				}
+			}
+			Expect(matched).To(BeTrue(), "bootstrap must configure the realized MAC for %s", nic.Name)
+		}
+
+		By("Booting and checking that VMware Tools reports all four configured NICs")
+		vmoperator.UpdateVirtualMachinePowerState(ctx, config, svClusterClient, vm.Namespace, vm.Name, poweredOnState)
+		vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, vm.Namespace, vm.Name, poweredOnState)
+		Eventually(func(g Gomega) {
+			g.Expect(svClusterClient.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+			g.Expect(vm.Status.Network).ToNot(BeNil())
+			for name, addresses := range expectedAddresses {
+				var observed *vmopv1.VirtualMachineNetworkInterfaceStatus
+				for i := range vm.Status.Network.Interfaces {
+					if vm.Status.Network.Interfaces[i].Name == name {
+						observed = &vm.Status.Network.Interfaces[i]
+						break
+					}
+				}
+				g.Expect(observed).ToNot(BeNil())
+				g.Expect(observed.IP).ToNot(BeNil())
+				g.Expect(strings.ToLower(observed.IP.MACAddr)).To(Equal(expectedMACs[name]))
+				for _, address := range addresses {
+					parsed, err := netip.ParsePrefix(address)
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(observed.IP.Addresses).To(ContainElement(HaveField("Address", parsed.Addr().String())))
+				}
+			}
+		}, config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
 	})
 
 	Context("VPC DHCP should successfully create VMs", func() {

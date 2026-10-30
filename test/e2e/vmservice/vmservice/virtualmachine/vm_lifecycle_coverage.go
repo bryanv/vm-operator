@@ -175,6 +175,7 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 			Expect(lifecycleVMProperties(ctx, input, vm).Runtime.PowerState).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
 		},
 		Entry("using Soft with running Tools", vmopv1.VirtualMachinePowerOpModeSoft, false),
+		Entry("using TrySoft with running Tools", vmopv1.VirtualMachinePowerOpModeTrySoft, false),
 	)
 
 }

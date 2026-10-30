@@ -15,7 +15,7 @@ import (
 
 // GetDefaultDiskProvisioningType gets the default disk provisioning type specified for the VM.
 func GetDefaultDiskProvisioningType(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	storageProfileID string) (string, error) {
 

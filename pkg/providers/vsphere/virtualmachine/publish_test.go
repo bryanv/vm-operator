@@ -29,7 +29,7 @@ func publishTests() {
 		cl       *imgregv1a1.ContentLibrary
 		clv1a2   *imgregv1.ContentLibrary
 		vmPub    *vmopv1.VirtualMachinePublishRequest
-		vmCtx    pkgctx.VirtualMachineContext
+		vmCtx    *pkgctx.VirtualMachineContext
 		vmPubCtx pkgctx.VirtualMachinePublishRequestContext
 	)
 
@@ -43,7 +43,7 @@ func publishTests() {
 		vm = builder.DummyVirtualMachine()
 		vm.Status.UniqueID = vcVM.Reference().Value
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vcVM.Name()),
 			VM:      vm,

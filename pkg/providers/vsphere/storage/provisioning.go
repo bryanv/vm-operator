@@ -63,16 +63,16 @@ func getProfileProportionalCapacity(profile pbmtypes.BasePbmProfile) int32 {
 // GetDiskProvisioningForProfile returns the provisioning type for the storage profile if it has
 // one specified.
 func GetDiskProvisioningForProfile(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	storageProfileID string) (string, error) {
 
-	c, err := pbm.NewClient(vmCtx, vcClient.VimClient())
+	c, err := pbm.NewClient(vmCtx.Context, vcClient.VimClient())
 	if err != nil {
 		return "", err
 	}
 
-	profiles, err := c.RetrieveContent(vmCtx, []pbmtypes.PbmProfileId{{UniqueId: storageProfileID}})
+	profiles, err := c.RetrieveContent(vmCtx.Context, []pbmtypes.PbmProfileId{{UniqueId: storageProfileID}})
 	if err != nil {
 		return "", fmt.Errorf("failed to get storage profiles for ID: %s: %w", storageProfileID, err)
 	}

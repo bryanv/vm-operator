@@ -20,13 +20,13 @@ import (
 // in production because we only really support deploying an OVF via content library.
 // Maybe someday we'll use clone to speed up VM deployment so keep this code around and unit tested.
 func cloneVMFromInventory(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	finder *find.Finder,
 	createArgs *CreateArgs) (*vimtypes.ManagedObjectReference, error) {
 
 	srcVMName := createArgs.ProviderItemID // AKA: vmCtx.VM.Spec.Image.Name
 
-	srcVM, err := finder.VirtualMachine(vmCtx, srcVMName)
+	srcVM, err := finder.VirtualMachine(vmCtx.Context, srcVMName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find clone source VM: %s: %w", srcVMName, err)
 	}
@@ -39,12 +39,12 @@ func cloneVMFromInventory(
 	// We always set cloneSpec.Location.Folder so use that to get the parent folder object.
 	folder := object.NewFolder(srcVM.Client(), *cloneSpec.Location.Folder)
 
-	cloneTask, err := srcVM.Clone(vmCtx, folder, cloneSpec.Config.Name, *cloneSpec)
+	cloneTask, err := srcVM.Clone(vmCtx.Context, folder, cloneSpec.Config.Name, *cloneSpec)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := cloneTask.WaitForResult(vmCtx, nil)
+	result, err := cloneTask.WaitForResult(vmCtx.Context, nil)
 	if err != nil {
 		return nil, fmt.Errorf("clone VM task failed: %w", err)
 	}
@@ -54,7 +54,7 @@ func cloneVMFromInventory(
 }
 
 func createCloneSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *CreateArgs,
 	srcVM *object.VirtualMachine) (*vimtypes.VirtualMachineCloneSpec, error) {
 
@@ -63,7 +63,7 @@ func createCloneSpec(
 		Memory: ptr.To(false), // No full memory clones.
 	}
 
-	virtualDevices, err := srcVM.Device(vmCtx)
+	virtualDevices, err := srcVM.Device(vmCtx.Context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get clone source VM devices: %w", err)
 	}
@@ -99,7 +99,7 @@ func createCloneSpec(
 		Value: createArgs.FolderMoID,
 	}
 
-	rpOwner, err := object.NewResourcePool(srcVM.Client(), *cloneSpec.Location.Pool).Owner(vmCtx)
+	rpOwner, err := object.NewResourcePool(srcVM.Client(), *cloneSpec.Location.Pool).Owner(vmCtx.Context)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func cloneVMDiskLocators(
 }
 
 func resizeBootDiskDeviceChange(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	virtualDisks object.VirtualDeviceList) []vimtypes.BaseVirtualDeviceConfigSpec {
 
 	advanced := vmCtx.VM.Spec.Advanced

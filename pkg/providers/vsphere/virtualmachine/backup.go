@@ -34,7 +34,7 @@ import (
 
 // BackupVirtualMachineOptions contains the options for BackupVirtualMachine.
 type BackupVirtualMachineOptions struct {
-	VMCtx               pkgctx.VirtualMachineContext
+	VMCtx               *pkgctx.VirtualMachineContext
 	VcVM                *object.VirtualMachine
 	DiskUUIDToPVC       map[string]corev1.PersistentVolumeClaim
 	AdditionalResources []client.Object
@@ -65,8 +65,11 @@ func BackupVirtualMachine(opts BackupVirtualMachineOptions) (result error) {
 
 	config := opts.VMCtx.MoVM.Config
 	if config == nil || config.ExtraConfig == nil || config.Hardware.Device == nil {
+		// Keep newly fetched properties local to this backup operation.
+		localCtx := *opts.VMCtx
+		opts.VMCtx = &localCtx
 		// Fetch the properties we need for backup if either are not present.
-		if err := opts.VcVM.Properties(opts.VMCtx, opts.VcVM.Reference(), []string{"config.extraConfig", "config.hardware.device"}, &opts.VMCtx.MoVM); err != nil {
+		if err := opts.VcVM.Properties(opts.VMCtx.Context, opts.VcVM.Reference(), []string{"config.extraConfig", "config.hardware.device"}, &opts.VMCtx.MoVM); err != nil {
 			return err
 		}
 	}
@@ -80,7 +83,7 @@ func BackupVirtualMachine(opts BackupVirtualMachineOptions) (result error) {
 	 * - the backup version annotation is older than the extraConfig backup version key. This can only happen when reconfigure succeeds to add a new
 	 *   extraConfig backup version but the next reconcile failed to update the annotation on the VM resource.
 	 */
-	if pkgcfg.FromContext(opts.VMCtx).Features.VMIncrementalRestore {
+	if pkgcfg.FromContext(opts.VMCtx.Context).Features.VMIncrementalRestore {
 		if backupVersionAnnotation, ok := opts.VMCtx.VM.Annotations[vmopv1.VirtualMachineBackupVersionAnnotation]; ok && backupVersionAnnotation != "" {
 			if backupVersionEcVal, _ := curExCfg.GetString(backupapi.BackupVersionExtraConfigKey); backupVersionEcVal != "" {
 				canBackup, err := canPerformBackup(opts, backupVersionEcVal, backupVersionAnnotation)
@@ -141,7 +144,7 @@ func BackupVirtualMachine(opts BackupVirtualMachineOptions) (result error) {
 		})
 	}
 
-	if pkgcfg.FromContext(opts.VMCtx).Features.VMIncrementalRestore {
+	if pkgcfg.FromContext(opts.VMCtx.Context).Features.VMIncrementalRestore {
 		curClassDiskData, _ := curExCfg.GetString(backupapi.ClassicDiskDataExtraConfigKey)
 		if classicDiskData == curClassDiskData {
 			opts.VMCtx.Logger.V(4).Info("Skipping classic disk data backup as unchanged")
@@ -153,7 +156,7 @@ func BackupVirtualMachine(opts BackupVirtualMachineOptions) (result error) {
 		}
 	}
 
-	if pkgcfg.FromContext(opts.VMCtx).Features.VMIncrementalRestore {
+	if pkgcfg.FromContext(opts.VMCtx.Context).Features.VMIncrementalRestore {
 		curBackup, _ := curExCfg.GetString(backupapi.VMResourceYAMLExtraConfigKey)
 		vmBackupInSync, err := isVMBackupUpToDate(opts.VMCtx.VM, curBackup)
 		if err != nil {
@@ -220,7 +223,7 @@ func BackupVirtualMachine(opts BackupVirtualMachineOptions) (result error) {
 		// This ensures that the reconfigure done for storing the backup data
 		// does not indicate an update operation was triggered. While this does
 		// reconfigure the VM, it is not what "update" means to a user.
-		ctx := ctxop.WithContext(opts.VMCtx)
+		ctx := ctxop.WithContext(opts.VMCtx.Context)
 
 		resVM := res.NewVMFromObject(opts.VcVM)
 		if _, err := resVM.Reconfigure(ctx, configSpec); err != nil {
@@ -229,7 +232,7 @@ func BackupVirtualMachine(opts BackupVirtualMachineOptions) (result error) {
 		}
 
 		// Set the VirtualMachine's backup version annotation once reconfigure succeeds.
-		if pkgcfg.FromContext(opts.VMCtx).Features.VMIncrementalRestore {
+		if pkgcfg.FromContext(opts.VMCtx.Context).Features.VMIncrementalRestore {
 			setBackupVersionAnnotation(opts.VMCtx.VM, opts.BackupVersion)
 			c := conditions.TrueCondition(vmopv1.VirtualMachineBackupUpToDateCondition)
 			c.Message = fmt.Sprintf("Backup version: %s", opts.BackupVersion)
@@ -477,7 +480,7 @@ func getDesiredDiskDataForBackup(opts BackupVirtualMachineOptions) (string, stri
 
 	var classicDiskDataBackup string
 	if len(classicDiskData) > 0 {
-		if pkgcfg.FromContext(opts.VMCtx).Features.VMIncrementalRestore {
+		if pkgcfg.FromContext(opts.VMCtx.Context).Features.VMIncrementalRestore {
 			classicDiskDataJSON, err := json.Marshal(classicDiskData)
 			if err != nil {
 				return "", "", err

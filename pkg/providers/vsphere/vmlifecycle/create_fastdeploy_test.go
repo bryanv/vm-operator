@@ -30,7 +30,7 @@ var _ = Describe("createFastDeploy", func() {
 
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		vm    *vmopv1.VirtualMachine
 	)
 
@@ -48,7 +48,7 @@ var _ = Describe("createFastDeploy", func() {
 		vm.UID = types.UID("cleanup-test-uid-12345")
 		vm.Namespace = pkgcfg.FromContext(ctx).PodNamespace
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,

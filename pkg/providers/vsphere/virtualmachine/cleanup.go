@@ -26,14 +26,14 @@ import (
 // resource with the skip-delete-platform-resource annotation to
 // ensure the vCenter VM is left in a clean state.
 func CleanupVMServiceState(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) error {
 
 	vmCtx.Logger.Info("Sanitizing vCenter VM")
 
 	var moVM mo.VirtualMachine
 	if err := vcVM.Properties(
-		vmCtx,
+		vmCtx.Context,
 		vcVM.Reference(),
 		[]string{"config"},
 		&moVM); err != nil {
@@ -55,18 +55,18 @@ func CleanupVMServiceState(
 	clearManagedBy(moVM.Config, &configSpec)
 
 	// Remove tag associations
-	if pkgcfg.FromContext(vmCtx).Features.VSpherePolicies {
+	if pkgcfg.FromContext(vmCtx.Context).Features.VSpherePolicies {
 		removeTagAssociations(moVM.Config, &configSpec)
 	}
 
 	// Clear the extension compatibility constraints VM Operator registered,
 	// since it no longer manages this VM.
-	if pkgcfg.FromContext(vmCtx).Features.ExtensionCompatConstraint {
+	if pkgcfg.FromContext(vmCtx.Context).Features.ExtensionCompatConstraint {
 		ClearConfigSpecExtensionCompatibilityConstraint(moVM.Config, &configSpec)
 	}
 
 	// Apply the configuration changes
-	if err := reconfigureVM(vmCtx, vcVM, configSpec); err != nil {
+	if err := reconfigureVM(vmCtx.Context, vcVM, configSpec); err != nil {
 		return fmt.Errorf("failed to apply cleanup configuration: %w", err)
 	}
 

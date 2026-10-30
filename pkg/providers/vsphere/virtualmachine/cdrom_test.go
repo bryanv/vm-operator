@@ -57,7 +57,7 @@ func cdromTests() {
 			resultErr error
 
 			ctx        *builder.TestContextForVCSim
-			vmCtx      pkgctx.VirtualMachineContext
+			vmCtx      *pkgctx.VirtualMachineContext
 			restClient *rest.Client
 			k8sClient  ctrlclient.Client
 			curDevices object.VirtualDeviceList
@@ -71,7 +71,7 @@ func cdromTests() {
 			Expect(err).ToNot(HaveOccurred())
 			restClient = vcClient.RestClient()
 
-			vmCtx = pkgctx.VirtualMachineContext{
+			vmCtx = &pkgctx.VirtualMachineContext{
 				Context: ctx,
 				Logger:  suite.GetLogger(),
 				VM:      builder.DummyBasicVirtualMachine(vmName, ns),
@@ -1571,7 +1571,7 @@ func cdromTests() {
 
 		var (
 			ctx        *builder.TestContextForVCSim
-			vmCtx      pkgctx.VirtualMachineContext
+			vmCtx      *pkgctx.VirtualMachineContext
 			restClient *rest.Client
 			k8sClient  ctrlclient.Client
 			configInfo *vimtypes.VirtualMachineConfigInfo
@@ -1588,7 +1588,7 @@ func cdromTests() {
 			Expect(err).ToNot(HaveOccurred())
 			restClient = vcClient.RestClient()
 
-			vmCtx = pkgctx.VirtualMachineContext{
+			vmCtx = &pkgctx.VirtualMachineContext{
 				Context: pkgcfg.NewContext(),
 				Logger:  suite.GetLogger(),
 				VM:      builder.DummyBasicVirtualMachine(vmName, ns),

@@ -30,7 +30,7 @@ type AffinityRuleConstraints struct {
 // in the VM's affinity and anti-affinity rules.
 // Returns a set where keys are "key:value" strings
 // that are used in affinity rules.
-func extractAffinityLabelsFromVM(vmCtx pkgctx.VirtualMachineContext, constraints AffinityRuleConstraints) sets.Set[string] {
+func extractAffinityLabelsFromVM(vmCtx *pkgctx.VirtualMachineContext, constraints AffinityRuleConstraints) sets.Set[string] {
 	affinity := vmCtx.VM.Spec.Affinity
 	if affinity == nil {
 		return nil
@@ -89,7 +89,7 @@ func extractAffinityLabelsFromVM(vmCtx pkgctx.VirtualMachineContext, constraints
 // genConfigSpecTagSpecsFromVMLabels generates tag specs from VM labels.
 // This is required when setting affinity/anti-affinity policies on the VM.
 func genConfigSpecTagSpecsFromVMLabels(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	configSpec *vimtypes.VirtualMachineConfigSpec,
 	constraints AffinityRuleConstraints) {
 
@@ -144,7 +144,7 @@ func genConfigSpecTagSpecsFromVMLabels(
 // genConfigSpecAffinityPolicies generates placement policies from VM's
 // affinity/anti-affinity rules.
 func genConfigSpecAffinityPolicies(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	configSpec *vimtypes.VirtualMachineConfigSpec,
 	constraints AffinityRuleConstraints) {
 
@@ -173,7 +173,7 @@ func genConfigSpecAffinityPolicies(
 // VM affinity is bidirectional, so we only need to send in the label specified
 // in the VM affinity policy. Not additional labels.
 func processVMAffinity(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	affinity *vmopv1.VMAffinitySpec,
 	constraints AffinityRuleConstraints) []vimtypes.BaseVmPlacementPolicy {
 
@@ -203,7 +203,7 @@ func processVMAffinity(
 // Use a single VmToVmGroupsAntiAffinity policy per topology/strictness
 // combination if the labels are non-empty.
 func processVMAntiAffinity(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	antiAffinity *vmopv1.VMAntiAffinitySpec,
 	constraints AffinityRuleConstraints) []vimtypes.BaseVmPlacementPolicy {
 
@@ -230,7 +230,7 @@ func processVMAntiAffinity(
 }
 
 func addAntiAffinityPoliciesForTopology(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	antiAffinity *vmopv1.VMAntiAffinitySpec,
 	placementPols *[]vimtypes.BaseVmPlacementPolicy,
 	topology vimtypes.VmPlacementPolicyVmPlacementPolicyTopology) {
@@ -239,7 +239,7 @@ func addAntiAffinityPoliciesForTopology(
 	// switches host VmVmAntiAffinity to VmToVmGroupsAntiAffinity.
 	grouped := topology == vimtypes.VmPlacementPolicyVmPlacementPolicyTopologyVSphereZone ||
 		pkgcfg.FromContext(vmCtx.Context).Features.VMHardAffinityDuringExecution
-	var buildTagsFunc func(pkgctx.VirtualMachineContext, []vmopv1.VMAffinityTerm) []vimtypes.TagId
+	var buildTagsFunc func(*pkgctx.VirtualMachineContext, []vmopv1.VMAffinityTerm) []vimtypes.TagId
 
 	switch topology {
 	case vimtypes.VmPlacementPolicyVmPlacementPolicyTopologyVSphereZone:
@@ -313,12 +313,12 @@ func addAntiAffinityPolicies(
 }
 
 func addAffinityPoliciesForTopology(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	affinity *vmopv1.VMAffinitySpec,
 	placementPols *[]vimtypes.BaseVmPlacementPolicy,
 	topology vimtypes.VmPlacementPolicyVmPlacementPolicyTopology) {
 
-	var buildTagsFunc func(pkgctx.VirtualMachineContext, []vmopv1.VMAffinityTerm) []vimtypes.TagId
+	var buildTagsFunc func(*pkgctx.VirtualMachineContext, []vmopv1.VMAffinityTerm) []vimtypes.TagId
 
 	switch topology {
 	case vimtypes.VmPlacementPolicyVmPlacementPolicyTopologyVSphereZone:
@@ -376,7 +376,7 @@ func addAffinityPolicies(
 // affinity/anti-affinity terms that match the specified topology key.
 // Terms with other topology types are ignored.
 func buildTagIDsFromTopology(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	terms []vmopv1.VMAffinityTerm,
 	topologyKey string) []vimtypes.TagId {
 
@@ -410,7 +410,7 @@ func buildTagIDsFromTopology(
 // buildTagIDsFromZoneTopology returns a list of TagIds built from the given
 // affinity/anti-affinity terms that have zone topology.
 func buildTagIDsFromZoneTopology(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	terms []vmopv1.VMAffinityTerm) []vimtypes.TagId {
 
 	return buildTagIDsFromTopology(vmCtx, terms, corev1.LabelTopologyZone)
@@ -419,7 +419,7 @@ func buildTagIDsFromZoneTopology(
 // buildTagIDsFromHostTopology returns a list of TagIds built from the given
 // affinity/anti-affinity terms that have host topology.
 func buildTagIDsFromHostTopology(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	terms []vmopv1.VMAffinityTerm) []vimtypes.TagId {
 
 	return buildTagIDsFromTopology(vmCtx, terms, corev1.LabelHostname)

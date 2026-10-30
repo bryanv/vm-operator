@@ -1,0 +1,12 @@
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/Baseline-6 200 1821425.0 ns/op 1160774 B/op 15088 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/GuestNetwork10PVCs-6 200 5256459.0 ns/op 4507334 B/op 48077 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/Baseline-6 200 1821715.0 ns/op 1155790 B/op 15083 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/GuestNetwork10PVCs-6 200 5198418.0 ns/op 4503483 B/op 48079 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/Baseline-6 200 1825153.0 ns/op 1158719 B/op 15083 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/GuestNetwork10PVCs-6 200 5301378.0 ns/op 4509888 B/op 48073 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/Baseline-6 200 1800544.0 ns/op 1154496 B/op 15082 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/GuestNetwork10PVCs-6 200 5330831.0 ns/op 4505830 B/op 48086 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/Baseline-6 200 1807959.0 ns/op 1155847 B/op 15075 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/GuestNetwork10PVCs-6 200 5216862.0 ns/op 4504450 B/op 48085 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/Baseline-6 200 1822730.0 ns/op 1155019 B/op 15080 allocs/op
+BenchmarkCreateOrUpdateVirtualMachineUpdatePath/GuestNetwork10PVCs-6 200 5178839.0 ns/op 4504973 B/op 48077 allocs/op

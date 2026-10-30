@@ -215,14 +215,14 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 
 	if foundVM != nil {
 		// Mark that this is an update operation.
-		ctxop.MarkUpdate(vmCtx)
+		ctxop.MarkUpdate(vmCtx.Context)
 
 		vmCtx.Logger.V(4).Info("found VM and updating")
 		return nil, vs.updateVirtualMachine(vmCtx, foundVM, client)
 	}
 
 	// Mark that this is a create operation.
-	ctxop.MarkCreate(vmCtx)
+	ctxop.MarkCreate(vmCtx.Context)
 
 	// Do not allow more than N create threads/goroutines.
 	//
@@ -300,13 +300,13 @@ func (vs *vSphereVMProvider) createOrUpdateVirtualMachine(
 	// Create a copy of the context and replace its VM with a copy to
 	// ensure modifications in the goroutine below are not impacted or
 	// impact the operations above us in the call stack.
-	copyOfCtx := vmCtx
+	copyOfCtx := *vmCtx
 	copyOfCtx.VM = vmCtx.VM.DeepCopy()
 
 	// Start a goroutine to create the VM in the background.
 	chanErr := make(chan error)
 	go vs.createVirtualMachineAsync(
-		copyOfCtx,
+		&copyOfCtx,
 		client,
 		createArgs,
 		chanErr,
@@ -400,7 +400,7 @@ func (vs *vSphereVMProvider) DeleteVirtualMachine(
 	}
 
 	if err := vcVM.Properties(
-		vmCtx,
+		vmCtx.Context,
 		vcVM.Reference(),
 		virtualmachine.VMDeletePropertiesSelector,
 		&vmCtx.MoVM); err != nil {
@@ -440,18 +440,18 @@ func (vs *vSphereVMProvider) DeleteVirtualMachine(
 
 	// If the disk promotion task is still running, try to cancel since it has the
 	// VM locked and delete cannot happen while it is running.
-	if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+	if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 		ctxWithRecentTaskInfo, err := vs.getRecentTaskInfo(vmCtx, client)
 		if err != nil {
 			return fmt.Errorf("failed to fetch recent tasks: %w", err)
 		}
 		vmCtx.Context = ctxWithRecentTaskInfo
 
-		for _, t := range pkgctx.GetVMRecentTasks(vmCtx) {
+		for _, t := range pkgctx.GetVMRecentTasks(vmCtx.Context) {
 			if t.State == vimtypes.TaskInfoStateRunning &&
 				t.DescriptionId == vmconfdiskpromo.PromoteDisksTaskKey {
 				task := object.NewTask(vcVM.Client(), t.Task)
-				if err := task.Cancel(vmCtx); err != nil {
+				if err := task.Cancel(vmCtx.Context); err != nil {
 					return fmt.Errorf("failed to cancel disk promotion task: %w", err)
 				}
 			}
@@ -512,7 +512,7 @@ func (vs *vSphereVMProvider) PublishVirtualMachine(
 			storageClassName := v1a2contentLibrary.Spec.StorageClass
 			if storageClassName != "" {
 				sc := storagev1.StorageClass{}
-				if err := vs.k8sClient.Get(vmCtx, ctrlclient.ObjectKey{Name: storageClassName}, &sc); err != nil {
+				if err := vs.k8sClient.Get(vmCtx.Context, ctrlclient.ObjectKey{Name: storageClassName}, &sc); err != nil {
 					return "", fmt.Errorf("failed to get storage class %q: %w", storageClassName, err)
 				}
 				storagePolicyID, err = kubeutil.GetStoragePolicyIDFromStorageClass(sc)
@@ -551,7 +551,7 @@ func (vs *vSphereVMProvider) GetVirtualMachineGuestHeartbeat(
 		return "", err
 	}
 
-	status, err := virtualmachine.GetGuestHeartBeatStatus(vmCtx, vcVM)
+	status, err := virtualmachine.GetGuestHeartBeatStatus(vmCtx.Context, vcVM)
 	if err != nil {
 		return "", err
 	}
@@ -570,7 +570,7 @@ func (vs *vSphereVMProvider) GetVirtualMachineProperties(
 	)
 	ctx = vmCtx.Context
 
-	client, err := vs.getVcClient(vmCtx)
+	client, err := vs.getVcClient(vmCtx.Context)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +640,7 @@ func (vs *vSphereVMProvider) GetVirtualMachineFiles(
 	}
 
 	var o mo.VirtualMachine
-	err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"layoutEx"}, &o)
+	err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"layoutEx"}, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -702,7 +702,7 @@ func (vs *vSphereVMProvider) GetVirtualMachineHardwareVersion(
 	}
 
 	var o mo.VirtualMachine
-	err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"config.version"}, &o)
+	err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"config.version"}, &o)
 	if err != nil {
 		return 0, err
 	}
@@ -711,7 +711,7 @@ func (vs *vSphereVMProvider) GetVirtualMachineHardwareVersion(
 }
 
 func (vs *vSphereVMProvider) vmCreatePathName(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
@@ -731,12 +731,12 @@ func (vs *vSphereVMProvider) vmCreatePathName(
 
 	vc := vcClient.VimClient()
 
-	pc, err := pbm.NewClient(vmCtx, vc)
+	pc, err := pbm.NewClient(vmCtx.Context, vc)
 	if err != nil {
 		return err
 	}
 
-	ds, err := pc.DatastoreMap(vmCtx, vc, createArgs.ClusterMoRef)
+	ds, err := pc.DatastoreMap(vmCtx.Context, vc, createArgs.ClusterMoRef)
 	if err != nil {
 		return err
 	}
@@ -747,7 +747,7 @@ func (vs *vSphereVMProvider) vmCreatePathName(
 		},
 	}
 
-	res, err := pc.CheckRequirements(vmCtx, ds.PlacementHub, nil, req)
+	res, err := pc.CheckRequirements(vmCtx.Context, ds.PlacementHub, nil, req)
 	if err != nil {
 		return err
 	}
@@ -769,7 +769,7 @@ func (vs *vSphereVMProvider) vmCreatePathName(
 }
 
 func (vs *vSphereVMProvider) vmCreatePathNameFromDatastoreRecommendation(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	if createArgs.ConfigSpec.Files == nil {
@@ -796,7 +796,7 @@ func (vs *vSphereVMProvider) vmCreatePathNameFromDatastoreRecommendation(
 }
 
 func (vs *vSphereVMProvider) getCreateArgs(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client) (*VMCreateArgs, error) {
 
 	createArgs, err := vs.vmCreateGetArgs(vmCtx, vcClient)
@@ -812,7 +812,7 @@ func (vs *vSphereVMProvider) getCreateArgs(
 		return nil, err
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+	if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 		if err := vs.vmCreateGetSourceFilePaths(vmCtx, vcClient, createArgs); err != nil {
 			return nil, err
 		}
@@ -833,7 +833,7 @@ func (vs *vSphereVMProvider) getCreateArgs(
 }
 
 func (vs *vSphereVMProvider) createVirtualMachine(
-	ctx pkgctx.VirtualMachineContext,
+	ctx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	args *VMCreateArgs) (*object.VirtualMachine, error) {
 
@@ -853,7 +853,7 @@ func (vs *vSphereVMProvider) createVirtualMachine(
 			"Error",
 			err)
 
-		if pkgcfg.FromContext(ctx).Features.FastDeploy {
+		if pkgcfg.FromContext(ctx.Context).Features.FastDeploy {
 			pkgcond.MarkError(
 				ctx.VM,
 				vmopv1.VirtualMachineConditionPlacementReady,
@@ -867,7 +867,7 @@ func (vs *vSphereVMProvider) createVirtualMachine(
 	ctx.VM.Status.UniqueID = moRef.Reference().Value
 	pkgcond.MarkTrue(ctx.VM, vmopv1.VirtualMachineConditionCreated)
 
-	if pkgcfg.FromContext(ctx).Features.FastDeploy {
+	if pkgcfg.FromContext(ctx.Context).Features.FastDeploy {
 		if zoneName := args.ZoneName; zoneName != "" {
 			if ctx.VM.Labels == nil {
 				ctx.VM.Labels = map[string]string{}
@@ -880,7 +880,7 @@ func (vs *vSphereVMProvider) createVirtualMachine(
 }
 
 func (vs *vSphereVMProvider) createVirtualMachineAsync(
-	ctx pkgctx.VirtualMachineContext,
+	ctx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	args *VMCreateArgs,
 	chanErr chan error,
@@ -915,7 +915,7 @@ func (vs *vSphereVMProvider) createVirtualMachineAsync(
 			"Error",
 			vimErr)
 	} else {
-		if pkgcfg.FromContext(ctx).Features.FastDeploy {
+		if pkgcfg.FromContext(ctx.Context).Features.FastDeploy {
 			if zoneName := args.ZoneName; zoneName != "" {
 				if ctx.VM.Labels == nil {
 					ctx.VM.Labels = map[string]string{}
@@ -928,7 +928,7 @@ func (vs *vSphereVMProvider) createVirtualMachineAsync(
 		pkgcond.MarkTrue(ctx.VM, vmopv1.VirtualMachineConditionCreated)
 	}
 
-	if err := vs.k8sClient.Status().Patch(ctx, ctx.VM, objPatch); err != nil {
+	if err := vs.k8sClient.Status().Patch(ctx.Context, ctx.VM, objPatch); err != nil {
 		ctx.Logger.Error(err, "Failed to patch VM status after create")
 		chanErr <- err
 	}
@@ -978,9 +978,13 @@ func errOrReconcileErr(reconcileErr, err error) error {
 //  11. Reconcile power state
 //  12. Reconcile snapshot create
 func (vs *vSphereVMProvider) updateVirtualMachine(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	vcClient *vcclient.Client) error {
+
+	// Keep context enrichment and property updates local to this operation.
+	localCtx := *vmCtx
+	vmCtx = &localCtx
 
 	vmCtx.Logger.V(4).Info("Updating VirtualMachine")
 
@@ -990,7 +994,7 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 	// 1. Fetch properties
 	//
 	if err := vcVM.Properties(
-		vmCtx,
+		vmCtx.Context,
 		vcVM.Reference(),
 		VMUpdatePropertiesSelector,
 		&vmCtx.MoVM); err != nil {
@@ -1142,7 +1146,7 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 // all further reconciliation is blocked until the VM is returned to the correct
 // location. This prevents unintended changes to VMs that have been manually
 // moved in the vCenter inventory.
-func (vs *vSphereVMProvider) reconcileLocation(vmCtx pkgctx.VirtualMachineContext, vcClient *vcclient.Client) error {
+func (vs *vSphereVMProvider) reconcileLocation(vmCtx *pkgctx.VirtualMachineContext, vcClient *vcclient.Client) error {
 	vmCtx.Logger.V(4).Info("Reconciling VirtualMachine location")
 	if vmCtx.MoVM.ResourcePool == nil {
 		return fmt.Errorf("VM is not assigned to any resource pools")
@@ -1158,7 +1162,7 @@ func (vs *vSphereVMProvider) reconcileLocation(vmCtx pkgctx.VirtualMachineContex
 	}
 
 	expectedFolder, expectedRootRPMoID, err := topology.GetNamespaceFolderAndRPMoID(
-		vmCtx,
+		vmCtx.Context,
 		vs.k8sClient,
 		zoneName,
 		vmCtx.VM.Namespace,
@@ -1215,7 +1219,7 @@ func (vs *vSphereVMProvider) reconcileLocation(vmCtx pkgctx.VirtualMachineContex
 // one level of depth is validated: deeper nesting is not a supported
 // configuration and would not be detected as valid here.
 func validateVMResourcePool(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	expectedRootRPMoID string,
 	vcClient *vcclient.Client) (bool, error) {
 
@@ -1224,7 +1228,7 @@ func validateVMResourcePool(
 	}
 
 	moPool, err := vcenter.GetResourcePoolProperties(
-		vmCtx,
+		vmCtx.Context,
 		vcClient.VimClient(),
 		vmCtx.MoVM.ResourcePool.Value,
 	)
@@ -1244,7 +1248,7 @@ func validateVMResourcePool(
 // level of depth is validated: deeper nesting is not a supported configuration
 // and would not be detected as valid here.
 func validateVMFolder(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	expectedFolder string,
 	vcClient *vcclient.Client) (bool, error) {
 
@@ -1252,7 +1256,7 @@ func validateVMFolder(
 		return true, nil
 	}
 	moFolder, err := vcenter.GetFolderProperties(
-		vmCtx,
+		vmCtx.Context,
 		vcClient.VimClient(),
 		vmCtx.MoVM.Parent.Value,
 	)
@@ -1267,7 +1271,7 @@ func validateVMFolder(
 }
 
 func (vs *vSphereVMProvider) reconcileStatus(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) error {
 
 	vmCtx.Logger.V(4).Info("Reconciling status")
@@ -1288,7 +1292,7 @@ func (vs *vSphereVMProvider) reconcileStatus(
 }
 
 func (vs *vSphereVMProvider) getRecentTaskInfo(
-	ctx pkgctx.VirtualMachineContext,
+	ctx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client) (context.Context, error) {
 
 	if len(ctx.MoVM.RecentTask) == 0 {
@@ -1303,7 +1307,7 @@ func (vs *vSphereVMProvider) getRecentTaskInfo(
 	// Tasks can expire between fetching recentTask and retrieving their info.
 	// Allow missing objects so one expired task does not fail the whole batch.
 	pc := property.DefaultCollector(vcClient.VimClient())
-	res, err := pc.RetrieveProperties(ctx, vimtypes.RetrieveProperties{
+	res, err := pc.RetrieveProperties(ctx.Context, vimtypes.RetrieveProperties{
 		SpecSet: []vimtypes.PropertyFilterSpec{{
 			PropSet: []vimtypes.PropertySpec{{
 				Type:    "Task",
@@ -1317,7 +1321,7 @@ func (vs *vSphereVMProvider) getRecentTaskInfo(
 		return nil, fmt.Errorf("failed to retrieve task info: %w", err)
 	}
 
-	logger := pkglog.FromContextOrDefault(ctx)
+	logger := pkglog.FromContextOrDefault(ctx.Context)
 
 	// Property collector results need not follow the requested object order.
 	// Preserve recentTask order because consumers may act on the first task.
@@ -1410,15 +1414,15 @@ func (vs *vSphereVMProvider) getRecentTaskInfo(
 }
 
 func (vs *vSphereVMProvider) getTags(
-	ctx pkgctx.VirtualMachineContext,
+	ctx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client) (context.Context, error) {
 
 	var (
-		logger = pkglog.FromContextOrDefault(ctx)
+		logger = pkglog.FromContextOrDefault(ctx.Context)
 		mgr    = tags.NewManager(vcClient.RestClient())
 	)
 
-	list, err := mgr.ListAttachedTags(ctx, ctx.MoVM.Reference())
+	list, err := mgr.ListAttachedTags(ctx.Context, ctx.MoVM.Reference())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list vm's attached tags: %w", err)
 	}
@@ -1434,7 +1438,7 @@ func (vs *vSphereVMProvider) getTags(
 }
 
 func (vs *vSphereVMProvider) getVolumeInfo(
-	ctx pkgctx.VirtualMachineContext,
+	ctx *pkgctx.VirtualMachineContext,
 	_ *vcclient.Client) (context.Context, error) { //nolint:unparam
 
 	return pkgvol.WithContext(
@@ -1444,17 +1448,17 @@ func (vs *vSphereVMProvider) getVolumeInfo(
 }
 
 func (vs *vSphereVMProvider) reconcileSchemaUpgrade(
-	vmCtx pkgctx.VirtualMachineContext) error {
+	vmCtx *pkgctx.VirtualMachineContext) error {
 
 	return upgradevm.ReconcileSchemaUpgrade(
-		vmCtx,
+		vmCtx.Context,
 		vs.k8sClient,
 		vmCtx.VM,
 		vmCtx.MoVM)
 }
 
 func (vs *vSphereVMProvider) reconcileConfig(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	vcClient *vcclient.Client) error {
 
@@ -1471,7 +1475,7 @@ func (vs *vSphereVMProvider) reconcileConfig(
 	}
 
 	clusterMoRef, err := vcenter.GetResourcePoolOwnerMoRef(
-		vmCtx,
+		vmCtx.Context,
 		vcVM.Client(),
 		vmCtx.MoVM.ResourcePool.Value)
 	if err != nil {
@@ -1501,7 +1505,7 @@ func (vs *vSphereVMProvider) reconcileConfig(
 }
 
 func (vs *vSphereVMProvider) reconcileBackupState(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) error {
 
 	vmCtx.Logger.V(4).Info("Reconciling backup state")
@@ -1542,7 +1546,7 @@ func (vs *vSphereVMProvider) reconcileBackupState(
 }
 
 func (vs *vSphereVMProvider) reconcilePowerState(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) (retErr error) {
 
 	vmCtx.Logger.V(4).Info("Reconciling power state")
@@ -1559,7 +1563,7 @@ func (vs *vSphereVMProvider) reconcilePowerState(
 	}
 
 	// Check if the VM's power state should be delayed by a parent group.
-	if pkgcfg.FromContext(vmCtx).Features.VMGroups &&
+	if pkgcfg.FromContext(vmCtx.Context).Features.VMGroups &&
 		(vmCtx.VM.Spec.PowerState == vmopv1.VirtualMachinePowerStateOn ||
 			vmCtx.VM.Spec.PowerState == vmopv1.VirtualMachinePowerStateOff) {
 		if val := vmCtx.VM.Annotations[pkgconst.ApplyPowerStateTimeAnnotation]; val != "" {
@@ -1590,7 +1594,7 @@ func (vs *vSphereVMProvider) reconcilePowerState(
 	if isVMPaused(vmCtx) {
 		return ErrIsPaused
 	}
-	if pkgctx.HasVMRunningTask(vmCtx, false) {
+	if pkgctx.HasVMRunningTask(vmCtx.Context, false) {
 		return ErrHasTask
 	}
 
@@ -1636,7 +1640,7 @@ func (vs *vSphereVMProvider) reconcilePowerState(
 			}
 
 			result, err := vmutil.RestartAndWait(
-				logr.NewContext(vmCtx, vmCtx.Logger),
+				logr.NewContext(vmCtx.Context, vmCtx.Logger),
 				vcVM.Client(),
 				vmutil.ManagedObjectFromObject(vcVM),
 				false,
@@ -1688,7 +1692,7 @@ func (vs *vSphereVMProvider) reconcilePowerState(
 
 	if setPowerState {
 		err := res.NewVMFromObject(vcVM).SetPowerState(
-			vmCtx,
+			vmCtx.Context,
 			currentPowerState,
 			vmCtx.VM.Spec.PowerState,
 			powerOpMode)
@@ -1717,7 +1721,7 @@ func (vs *vSphereVMProvider) reconcilePowerState(
 // every exit path of reconcilePowerState, including its early returns.
 // Exported so its branches can be unit tested with a synthetic error, since
 // vcsim cannot produce a real NoCompatibleHost/autoevac task fault.
-func SetPowerStateSyncedCondition(vmCtx pkgctx.VirtualMachineContext, err error) {
+func SetPowerStateSyncedCondition(vmCtx *pkgctx.VirtualMachineContext, err error) {
 	// ErrSetPowerState is a NoRequeueNoErr sentinel: SetPowerState returns it
 	// when the power op it just performed actually changed the VM's power
 	// state, i.e. success, not failure.
@@ -1729,7 +1733,7 @@ func SetPowerStateSyncedCondition(vmCtx pkgctx.VirtualMachineContext, err error)
 		return
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.VMEviction && errors.Is(err, vmutil.ErrInfraMaintenanceFault) {
+	if pkgcfg.FromContext(vmCtx.Context).Features.VMEviction && errors.Is(err, vmutil.ErrInfraMaintenanceFault) {
 		pkgcond.MarkFalse(
 			vmCtx.VM,
 			vmopv1.VirtualMachinePowerStateSynced,
@@ -1747,7 +1751,7 @@ func SetPowerStateSyncedCondition(vmCtx pkgctx.VirtualMachineContext, err error)
 }
 
 func (vs *vSphereVMProvider) reconcileCurrentSnapshot(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) error {
 
 	vmCtx.Logger.V(4).Info("Reconciling current snapshot")
@@ -1755,7 +1759,7 @@ func (vs *vSphereVMProvider) reconcileCurrentSnapshot(
 	return ReconcileCurrentSnapshot(vmCtx, vs.k8sClient, vcVM)
 }
 
-func verifyConfigInfo(vmCtx pkgctx.VirtualMachineContext) error {
+func verifyConfigInfo(vmCtx *pkgctx.VirtualMachineContext) error {
 	if vmCtx.MoVM.Config == nil {
 		return pkgerr.NoRequeueError{
 			Message: "nil config info",
@@ -1764,7 +1768,7 @@ func verifyConfigInfo(vmCtx pkgctx.VirtualMachineContext) error {
 	return nil
 }
 
-func verifyConnectionState(vmCtx pkgctx.VirtualMachineContext) error {
+func verifyConnectionState(vmCtx *pkgctx.VirtualMachineContext) error {
 	// Only reconcile connected VMs or if the connection state is empty.
 	if cs := vmCtx.MoVM.Summary.Runtime.ConnectionState; cs != "" && cs !=
 		vimtypes.VirtualMachineConnectionStateConnected {
@@ -1786,7 +1790,7 @@ func verifyConnectionState(vmCtx pkgctx.VirtualMachineContext) error {
 	return nil
 }
 
-func verifyResourcePool(vmCtx pkgctx.VirtualMachineContext) error {
+func verifyResourcePool(vmCtx *pkgctx.VirtualMachineContext) error {
 	if vmCtx.MoVM.ResourcePool == nil {
 		// Same error as govmomi VirtualMachine::ResourcePool().
 		return pkgerr.NoRequeueError{
@@ -1799,7 +1803,7 @@ func verifyResourcePool(vmCtx pkgctx.VirtualMachineContext) error {
 // vmCreateDoPlacement determines placement of the VM prior to creating the VM
 // on VC. If VM has a group name specified, placement is determined by group.
 func (vs *vSphereVMProvider) vmCreateDoPlacement(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) (retErr error) {
 
@@ -1817,9 +1821,9 @@ func (vs *vSphereVMProvider) vmCreateDoPlacement(
 		}
 	}()
 
-	if pkgcfg.FromContext(vmCtx).Features.VSpherePolicies {
+	if pkgcfg.FromContext(vmCtx.Context).Features.VSpherePolicies {
 		if err := vmconfpolicy.Reconcile(
-			pkgctx.WithRestClient(vmCtx, vcClient.RestClient()),
+			pkgctx.WithRestClient(vmCtx.Context, vcClient.RestClient()),
 			vs.k8sClient,
 			vcClient.Client.VimClient(),
 			vmCtx.VM,
@@ -1831,12 +1835,12 @@ func (vs *vSphereVMProvider) vmCreateDoPlacement(
 		}
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.VMGroups &&
+	if pkgcfg.FromContext(vmCtx.Context).Features.VMGroups &&
 		vmCtx.VM.Spec.GroupName != "" {
 
 		// First update and check if the VM is linked to its group.
 		if err := vmopv1util.UpdateGroupLinkedCondition(
-			vmCtx,
+			vmCtx.Context,
 			vmCtx.VM,
 			vs.k8sClient,
 		); err != nil {
@@ -1857,7 +1861,7 @@ func (vs *vSphereVMProvider) vmCreateDoPlacement(
 		// the regular placement flow to honor the zone override.
 		zoneName := vmCtx.VM.Labels[corev1.LabelTopologyZone]
 		useGroupPlacement := zoneName == "" ||
-			(pkgcfg.FromContext(vmCtx).Features.VMAffinityDuringExecution &&
+			(pkgcfg.FromContext(vmCtx.Context).Features.VMAffinityDuringExecution &&
 				!kubeutil.HasCAPILabels(vmCtx.VM.Labels))
 
 		if useGroupPlacement {
@@ -1905,7 +1909,7 @@ func (vs *vSphereVMProvider) vmCreateDoPlacement(
 
 // vmCreateDoPlacementByGroup places the VM from the group's placement result.
 func (vs *vSphereVMProvider) vmCreateDoPlacementByGroup(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
@@ -1916,7 +1920,7 @@ func (vs *vSphereVMProvider) vmCreateDoPlacementByGroup(
 
 	var vmg vmopv1.VirtualMachineGroup
 	if err := vs.k8sClient.Get(
-		vmCtx,
+		vmCtx.Context,
 		ctrlclient.ObjectKey{
 			Namespace: vmCtx.VM.Namespace,
 			Name:      vmCtx.VM.Spec.GroupName,
@@ -1994,7 +1998,7 @@ func (vs *vSphereVMProvider) vmCreateDoPlacementByGroup(
 	// with the selected host for VMs that have instance storage backed volumes.
 	// They're likely not supported for group placement. Leave it here for now
 	// to keep consistent with the single VM placement workflow.
-	if pkgcfg.FromContext(vmCtx).Features.InstanceStorage {
+	if pkgcfg.FromContext(vmCtx.Context).Features.InstanceStorage {
 		if vmopv1util.IsInstanceStoragePresent(vmCtx.VM) {
 			result.InstanceStoragePlacement = true
 		}
@@ -2006,7 +2010,7 @@ func (vs *vSphereVMProvider) vmCreateDoPlacementByGroup(
 // processPlacementResult updates the createArgs and VM annotations/labels with
 // the given placement result.
 func processPlacementResult(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs,
 	result placement.Result) error {
@@ -2017,7 +2021,7 @@ func processPlacementResult(
 	// so block placement and surface a condition for the user to reconcile the
 	// label with the desired placement. VKS nodes and VMs without a zone label
 	// are unaffected.
-	if pkgcfg.FromContext(vmCtx).Features.VMAffinityDuringExecution &&
+	if pkgcfg.FromContext(vmCtx.Context).Features.VMAffinityDuringExecution &&
 		!kubeutil.HasCAPILabels(vmCtx.VM.Labels) {
 
 		if zoneLabel := vmCtx.VM.Labels[corev1.LabelTopologyZone]; zoneLabel != "" &&
@@ -2031,7 +2035,7 @@ func processPlacementResult(
 	}
 
 	if result.ZoneName != "" {
-		if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+		if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 			createArgs.ZoneName = result.ZoneName
 		} else {
 			if vmCtx.VM.Labels == nil {
@@ -2051,7 +2055,7 @@ func processPlacementResult(
 		createArgs.HostMoID = result.HostMoRef.Value
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+	if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 		createArgs.DatacenterMoID = vcClient.Datacenter().Reference().Value
 		createArgs.Datastores = make([]vmlifecycle.DatastoreRef, len(result.Datastores))
 		for i := range result.Datastores {
@@ -2071,7 +2075,7 @@ func processPlacementResult(
 			return fmt.Errorf("placement result missing host required for instance storage")
 		}
 
-		hostFQDN, err := vcenter.GetESXHostFQDN(vmCtx, vcClient.VimClient(), hostMoID)
+		hostFQDN, err := vcenter.GetESXHostFQDN(vmCtx.Context, vcClient.VimClient(), hostMoID)
 		if err != nil {
 			return err
 		}
@@ -2088,14 +2092,14 @@ func processPlacementResult(
 
 // vmCreateGetFolderAndRPMoIDs gets the MoIDs of the Folder and Resource Pool the VM will be created under.
 func (vs *vSphereVMProvider) vmCreateGetFolderAndRPMoIDs(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
 	if createArgs.ResourcePoolMoID == "" {
 		// We did not do placement so find this namespace/zone ResourcePool and Folder.
 
-		nsFolderMoID, rpMoID, err := topology.GetNamespaceFolderAndRPMoID(vmCtx, vs.k8sClient,
+		nsFolderMoID, rpMoID, err := topology.GetNamespaceFolderAndRPMoID(vmCtx.Context, vs.k8sClient,
 			vmCtx.VM.Labels[corev1.LabelTopologyZone], vmCtx.VM.Namespace)
 		if err != nil {
 			return err
@@ -2107,7 +2111,7 @@ func (vs *vSphereVMProvider) vmCreateGetFolderAndRPMoIDs(
 			parentRP := object.NewResourcePool(vcClient.VimClient(),
 				vimtypes.ManagedObjectReference{Type: "ResourcePool", Value: rpMoID})
 
-			childRP, err := vcenter.GetChildResourcePool(vmCtx, parentRP, createArgs.ChildResourcePoolName)
+			childRP, err := vcenter.GetChildResourcePool(vmCtx.Context, parentRP, createArgs.ChildResourcePoolName)
 			if err != nil {
 				return err
 			}
@@ -2120,7 +2124,7 @@ func (vs *vSphereVMProvider) vmCreateGetFolderAndRPMoIDs(
 
 	} else {
 		// Placement already selected the ResourcePool/Cluster, so we just need this namespace's Folder.
-		nsFolderMoID, err := topology.GetNamespaceFolderMoID(vmCtx, vs.k8sClient, vmCtx.VM.Namespace)
+		nsFolderMoID, err := topology.GetNamespaceFolderMoID(vmCtx.Context, vs.k8sClient, vmCtx.VM.Namespace)
 		if err != nil {
 			return err
 		}
@@ -2134,7 +2138,7 @@ func (vs *vSphereVMProvider) vmCreateGetFolderAndRPMoIDs(
 		parentFolder := object.NewFolder(vcClient.VimClient(),
 			vimtypes.ManagedObjectReference{Type: "Folder", Value: createArgs.FolderMoID})
 
-		childFolder, err := vcenter.GetChildFolder(vmCtx, parentFolder, createArgs.ChildFolderName)
+		childFolder, err := vcenter.GetChildFolder(vmCtx.Context, parentFolder, createArgs.ChildFolderName)
 		if err != nil {
 			return err
 		}
@@ -2143,7 +2147,7 @@ func (vs *vSphereVMProvider) vmCreateGetFolderAndRPMoIDs(
 	}
 
 	// Now that we know the ResourcePool, use that to look up the CCR.
-	clusterMoRef, err := vcenter.GetResourcePoolOwnerMoRef(vmCtx, vcClient.VimClient(), createArgs.ResourcePoolMoID)
+	clusterMoRef, err := vcenter.GetResourcePoolOwnerMoRef(vmCtx.Context, vcClient.VimClient(), createArgs.ResourcePoolMoID)
 	if err != nil {
 		return err
 	}
@@ -2155,7 +2159,7 @@ func (vs *vSphereVMProvider) vmCreateGetFolderAndRPMoIDs(
 // vmCreateGetSourceFilePaths gets paths to the source file(s) used to create
 // the VM.
 func (vs *vSphereVMProvider) vmCreateGetSourceFilePaths(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
@@ -2174,12 +2178,12 @@ func (vs *vSphereVMProvider) vmCreateGetSourceFilePaths(
 	// Create/patch/get the VirtualMachineImageCache resource.
 	obj := vmopv1.VirtualMachineImageCache{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: pkgcfg.FromContext(vmCtx).PodNamespace,
+			Namespace: pkgcfg.FromContext(vmCtx.Context).PodNamespace,
 			Name:      pkgutil.VMIName(itemID),
 		},
 	}
 	if _, err := controllerutil.CreateOrPatch(
-		vmCtx,
+		vmCtx.Context,
 		vs.k8sClient,
 		&obj,
 		func() error {
@@ -2277,7 +2281,7 @@ func (vs *vSphereVMProvider) vmCreateGetSourceFilePaths(
 // available. If a file is missing, a reconcile request is enqueued for the VMI
 // cache object. Other errors are returned so the VM reconcile can retry.
 func (vs *vSphereVMProvider) vmCreateGetSourceFilePathsVerify(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	obj vmopv1.VirtualMachineImageCache,
 	srcFiles []vmopv1.VirtualMachineImageCacheFileStatus) (bool, error) {
@@ -2285,7 +2289,7 @@ func (vs *vSphereVMProvider) vmCreateGetSourceFilePathsVerify(
 	for i := range srcFiles {
 		s := srcFiles[i]
 		if err := pkgutil.DatastoreFileExists(
-			vmCtx,
+			vmCtx.Context,
 			vcClient.VimClient(),
 			s.ID,
 			vcClient.Datacenter()); err != nil {
@@ -2298,7 +2302,7 @@ func (vs *vSphereVMProvider) vmCreateGetSourceFilePathsVerify(
 			vmCtx.Logger.Info("cached file is missing", "filePath", s.ID)
 
 			chanSource := cource.FromContextWithBuffer(
-				vmCtx, "VirtualMachineImageCache", 100)
+				vmCtx.Context, "VirtualMachineImageCache", 100)
 			chanSource <- event.GenericEvent{
 				Object: &vmopv1.VirtualMachineImageCache{
 					ObjectMeta: metav1.ObjectMeta{
@@ -2316,13 +2320,13 @@ func (vs *vSphereVMProvider) vmCreateGetSourceFilePathsVerify(
 }
 
 func (vs *vSphereVMProvider) vmCreateIsReady(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	if policy := createArgs.ResourcePolicy; policy != nil {
 		if name := vmCtx.VM.Annotations[pkgconst.ClusterModuleNameAnnotationKey]; name != "" {
 			_, moduleUUID := clustermodules.FindClusterModuleUUID(
-				vmCtx,
+				vmCtx.Context,
 				name,
 				createArgs.ClusterMoRef,
 				policy)
@@ -2341,8 +2345,8 @@ func (vs *vSphereVMProvider) vmCreateIsReady(
 	return nil
 }
 
-func (vs *vSphereVMProvider) vmCreateConcurrentAllowed(vmCtx pkgctx.VirtualMachineContext) (bool, func()) {
-	maxDeployThreads := pkgcfg.FromContext(vmCtx).GetMaxDeployThreadsOnProvider()
+func (vs *vSphereVMProvider) vmCreateConcurrentAllowed(vmCtx *pkgctx.VirtualMachineContext) (bool, func()) {
+	maxDeployThreads := pkgcfg.FromContext(vmCtx.Context).GetMaxDeployThreadsOnProvider()
 
 	createCountLock.Lock()
 	if concurrentCreateCount >= maxDeployThreads {
@@ -2364,7 +2368,7 @@ func (vs *vSphereVMProvider) vmCreateConcurrentAllowed(vmCtx pkgctx.VirtualMachi
 }
 
 func (vs *vSphereVMProvider) vmCreateGetArgs(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client) (*VMCreateArgs, error) {
 
 	createArgs, err := vs.vmCreateGetPrereqs(vmCtx, vcClient)
@@ -2388,7 +2392,7 @@ func (vs *vSphereVMProvider) vmCreateGetArgs(
 // vmCreateGetPrereqs returns the VMCreateArgs populated with the k8s objects required to
 // create the VM on VC.
 func (vs *vSphereVMProvider) vmCreateGetPrereqs(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client) (*VMCreateArgs, error) {
 
 	createArgs := &VMCreateArgs{}
@@ -2424,7 +2428,7 @@ func (vs *vSphereVMProvider) vmCreateGetPrereqs(
 
 	if !vmopv1util.IsClasslessVM(*vmCtx.VM) {
 		// Only set VM Class field for non-synthesized classes.
-		if pkgcfg.FromContext(vmCtx).Features.VMResizeCPUMemory {
+		if pkgcfg.FromContext(vmCtx.Context).Features.VMResizeCPUMemory {
 			vmopv1util.MustSetLastResizedAnnotation(vmCtx.VM, createArgs.VMClass)
 		}
 		vmCtx.VM.Status.Class = &common.LocalObjectRef{
@@ -2438,7 +2442,7 @@ func (vs *vSphereVMProvider) vmCreateGetPrereqs(
 }
 
 func (vs *vSphereVMProvider) vmCreateGetVirtualMachineClass(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	vmClass, err := GetVirtualMachineClass(vmCtx, vs.k8sClient)
@@ -2452,7 +2456,7 @@ func (vs *vSphereVMProvider) vmCreateGetVirtualMachineClass(
 }
 
 func (vs *vSphereVMProvider) vmCreateGetVirtualMachineImage(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	imageObj, imageSpec, imageStatus, err := GetVirtualMachineImageSpecAndStatus(vmCtx, vs.k8sClient)
@@ -2490,7 +2494,7 @@ func (vs *vSphereVMProvider) vmCreateGetVirtualMachineImage(
 }
 
 func (vs *vSphereVMProvider) vmCreateGetSetResourcePolicy(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	resourcePolicy, err := GetVMSetResourcePolicy(vmCtx, vs.k8sClient)
@@ -2509,7 +2513,7 @@ func (vs *vSphereVMProvider) vmCreateGetSetResourcePolicy(
 }
 
 func (vs *vSphereVMProvider) vmCreateGetBootstrap(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	bsData, err := GetVirtualMachineBootstrap(vmCtx, vs.k8sClient)
@@ -2523,11 +2527,11 @@ func (vs *vSphereVMProvider) vmCreateGetBootstrap(
 }
 
 func (vs *vSphereVMProvider) vmCreateGetStoragePrereqs(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
-	if pkgcfg.FromContext(vmCtx).Features.InstanceStorage {
+	if pkgcfg.FromContext(vmCtx.Context).Features.InstanceStorage {
 		// To determine all the storage profiles, we need the class because of
 		// the possibility of InstanceStorage volumes. If we weren't able to get
 		// the class earlier, still check & set the storage condition because
@@ -2568,7 +2572,7 @@ func (vs *vSphereVMProvider) vmCreateGetStoragePrereqs(
 			return err
 		}
 
-		datastore, err := vcClient.Finder().Datastore(vmCtx, cfg.Datastore)
+		datastore, err := vcClient.Finder().Datastore(vmCtx.Context, cfg.Datastore)
 		if err != nil {
 			pkgcond.MarkError(vmCtx.VM, vmopv1.VirtualMachineConditionStorageReady, "DatastoreNotFound", err)
 			return fmt.Errorf("failed to find Datastore %s: %w", cfg.Datastore, err)
@@ -2584,12 +2588,12 @@ func (vs *vSphereVMProvider) vmCreateGetStoragePrereqs(
 		return err
 	}
 
-	storageProfileID, err := kubeutil.GetStoragePolicyID(vmCtx, vs.k8sClient, *vmCtx.VM)
+	storageProfileID, err := kubeutil.GetStoragePolicyID(vmCtx.Context, vs.k8sClient, *vmCtx.VM)
 	if err != nil {
 		return err
 	}
 
-	isEnc, err := kubeutil.IsEncryptedStorageProfile(vmCtx, vs.k8sClient, storageProfileID)
+	isEnc, err := kubeutil.IsEncryptedStorageProfile(vmCtx.Context, vs.k8sClient, storageProfileID)
 	if err != nil {
 		return err
 	}
@@ -2612,12 +2616,12 @@ func (vs *vSphereVMProvider) vmCreateGetStoragePrereqs(
 }
 
 func (vs *vSphereVMProvider) vmCreateDoNetworking(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
 	devices, err := network.CreateNetworkDevices(
-		vmCtx,
+		vmCtx.Context,
 		vmCtx.VM,
 		vs.k8sClient,
 		vcClient.VimClient(),
@@ -2641,7 +2645,7 @@ func (vs *vSphereVMProvider) vmCreateDoNetworking(
 }
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) error {
 
@@ -2650,7 +2654,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 
 	var configSpec vimtypes.VirtualMachineConfigSpec
 	if rawConfigSpec := createArgs.VMClass.Spec.ConfigSpec; len(rawConfigSpec) > 0 {
-		vmClassConfigSpec, err := GetVMClassConfigSpec(vmCtx, rawConfigSpec)
+		vmClassConfigSpec, err := GetVMClassConfigSpec(vmCtx.Context, rawConfigSpec)
 		if err != nil {
 			return err
 		}
@@ -2661,7 +2665,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 
 	var minCPUFreq uint64
 	if res := createArgs.VMClass.Spec.Policies.Resources; !res.Requests.Cpu.IsZero() || !res.Limits.Cpu.IsZero() {
-		freq, err := vs.getOrComputeCPUMinFrequency(vmCtx)
+		freq, err := vs.getOrComputeCPUMinFrequency(vmCtx.Context)
 		if err != nil {
 			return err
 		}
@@ -2675,7 +2679,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 		createArgs.ImageStatus,
 		minCPUFreq)
 
-	if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+	if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 		if err := vs.vmCreateGenConfigSpecImage(vmCtx, createArgs); err != nil {
 			return err
 		}
@@ -2687,7 +2691,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 	}
 
 	// Get the encryption class details for the VM.
-	if pkgcfg.FromContext(vmCtx).Features.BringYourOwnEncryptionKey {
+	if pkgcfg.FromContext(vmCtx.Context).Features.BringYourOwnEncryptionKey {
 		doCryptoReconcile := true
 		if vmCtx.VM.Spec.Crypto != nil {
 			// If vTPM mode is 'Clone', then we skip the below reconcile.
@@ -2696,7 +2700,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 
 		if doCryptoReconcile {
 			if err := vmconfcrypto.Reconcile(
-				vmCtx,
+				vmCtx.Context,
 				vs.k8sClient,
 				vcClient.VimClient(),
 				vmCtx.VM,
@@ -2709,7 +2713,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 	}
 
 	if err := vmconfbootoptions.Reconcile(
-		vmCtx,
+		vmCtx.Context,
 		vs.k8sClient,
 		vcClient.VimClient(),
 		vmCtx.VM,
@@ -2723,9 +2727,9 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 		return err
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.TelcoVMServiceAPI {
+	if pkgcfg.FromContext(vmCtx.Context).Features.TelcoVMServiceAPI {
 		if err := vmconfextraconfig.Reconcile(
-			vmCtx,
+			vmCtx.Context,
 			vs.k8sClient,
 			vcClient.VimClient(),
 			vmCtx.VM,
@@ -2735,7 +2739,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 			return err
 		}
 		if err := vmconfnetworkextraconfig.Reconcile(
-			vmCtx,
+			vmCtx.Context,
 			vs.k8sClient,
 			vcClient.VimClient(),
 			vmCtx.VM,
@@ -2784,7 +2788,7 @@ func NormalizeVAppConfigExpressionProperties(configSpec *vimtypes.VirtualMachine
 }
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpecImage(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	const (
@@ -2827,12 +2831,12 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecImage(
 
 	// Get and validate the VirtualMachineImageCache
 	vmiCache, err := GetVirtualMachineImageCache(
-		vmCtx,
+		vmCtx.Context,
 		vs.k8sClient,
 		itemID,
 		itemVersion,
 		imageType,
-		pkgcfg.FromContext(vmCtx).PodNamespace)
+		pkgcfg.FromContext(vmCtx.Context).PodNamespace)
 	if err != nil {
 		return err
 	}
@@ -2840,7 +2844,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecImage(
 	var imgConfigSpec vimtypes.VirtualMachineConfigSpec
 
 	if imageType == imageTypeOVF {
-		cs, err := GetConfigSpecFromOVFCache(vmCtx, vs.k8sClient, vmiCache)
+		cs, err := GetConfigSpecFromOVFCache(vmCtx.Context, vs.k8sClient, vmiCache)
 		if err != nil {
 			return err
 		}
@@ -2901,7 +2905,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecImage(
 		}
 	}
 
-	if !pkgcfg.FromContext(vmCtx).Features.VMSharedDisks {
+	if !pkgcfg.FromContext(vmCtx.Context).Features.VMSharedDisks {
 		// Inherit the image's disks and their controllers.
 		pkgutil.CopyStorageControllersAndDisks(
 			&createArgs.ConfigSpec,
@@ -2927,7 +2931,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecImage(
 
 		specControllersConfigSpec :=
 			pkgutil.CreateUserStorageControllersConfigSpec(
-				vmCtx,
+				vmCtx.Context,
 				vmCtx.VM,
 				createArgs.ConfigSpec)
 
@@ -2943,7 +2947,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecImage(
 		}
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.AllDisksArePVCs {
+	if pkgcfg.FromContext(vmCtx.Context).Features.AllDisksArePVCs {
 		if err := vs.vmCreateGenConfigSpecImagePVCDataSourceRefs(
 			vmCtx,
 			createArgs); err != nil {
@@ -2991,14 +2995,14 @@ func DefaultGuestIDIfEmpty(
 }
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpecImagePVCDataSourceRefs(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	if createArgs.ConfigSpec.DeviceChange == nil {
 		return nil
 	}
 
-	logger := pkglog.FromContextOrDefault(vmCtx).
+	logger := pkglog.FromContextOrDefault(vmCtx.Context).
 		WithName("vmCreateGenConfigSpecImagePVCDataSourceRefs")
 
 	if err := pkgutil.EnsureDisksHaveControllers(
@@ -3073,7 +3077,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecImagePVCDataSourceRefs(
 }
 
 func (vs *vSphereVMProvider) updateDiskDeviceFromPVC(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	claimName string,
 	storageClassToPolicyID map[string]string,
 	deviceSpec *vimtypes.VirtualDeviceConfigSpec,
@@ -3086,7 +3090,7 @@ func (vs *vSphereVMProvider) updateDiskDeviceFromPVC(
 		Name:      claimName,
 	}
 
-	if err := vs.k8sClient.Get(vmCtx, key, pvc); err != nil {
+	if err := vs.k8sClient.Get(vmCtx.Context, key, pvc); err != nil {
 		return fmt.Errorf(
 			"failed to get pvc %s for the specified claim: %w", key, err,
 		)
@@ -3121,11 +3125,11 @@ func (vs *vSphereVMProvider) updateDiskDeviceFromPVC(
 }
 
 func (vs *vSphereVMProvider) getConfigSpecFromVM(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vmiCache vmopv1.VirtualMachineImageCache,
 	vmClass vmopv1.VirtualMachineClass) (vimtypes.VirtualMachineConfigSpec, error) {
 
-	vcClient, err := vs.getVcClient(vmCtx)
+	vcClient, err := vs.getVcClient(vmCtx.Context)
 	if err != nil {
 		return vimtypes.VirtualMachineConfigSpec{},
 			fmt.Errorf("failed to get vc client: %w", err)
@@ -3140,7 +3144,7 @@ func (vs *vSphereVMProvider) getConfigSpecFromVM(
 
 	var moVM mo.VirtualMachine
 	if err := vm.Properties(
-		vmCtx,
+		vmCtx.Context,
 		vm.Reference(),
 		[]string{"config"},
 		&moVM); err != nil {
@@ -3179,7 +3183,7 @@ func (vs *vSphereVMProvider) getConfigSpecFromVM(
 }
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpecExtraConfig(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	ecMap := maps.Clone(vs.globalExtraConfig)
@@ -3226,7 +3230,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecExtraConfig(
 }
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpecChangeBootDiskSize(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ *VMCreateArgs) error {
 
 	advanced := vmCtx.VM.Spec.Advanced
@@ -3242,7 +3246,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecChangeBootDiskSize(
 }
 
 func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	createArgs *VMCreateArgs) error {
 
 	if vmCtx.VM.Spec.Network == nil || vmCtx.VM.Spec.Network.Disabled {
@@ -3266,11 +3270,11 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 
 			if interfaceSpec.Type == "" {
 				ethCard := spec.Device.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-				if err := network.UpdateVMClassEthCardFromDevice(vmCtx, dev, ethCard); err != nil {
+				if err := network.UpdateVMClassEthCardFromDevice(vmCtx.Context, dev, ethCard); err != nil {
 					return err
 				}
 			} else {
-				ethCard, err := network.CreateVirtualEthernetCard(vmCtx, dev, interfaceSpec)
+				ethCard, err := network.CreateVirtualEthernetCard(vmCtx.Context, dev, interfaceSpec)
 				if err != nil {
 					return err
 				}
@@ -3304,7 +3308,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 	for i := devIdx; i < len(createArgs.NetworkDevices); i++ {
 		interfaceSpec := vmCtx.VM.Spec.Network.Interfaces[i]
 
-		ethCard, err := network.CreateVirtualEthernetCard(vmCtx, createArgs.NetworkDevices[i], interfaceSpec)
+		ethCard, err := network.CreateVirtualEthernetCard(vmCtx.Context, createArgs.NetworkDevices[i], interfaceSpec)
 		if err != nil {
 			return err
 		}
@@ -3319,7 +3323,7 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 }
 
 func (vs *vSphereVMProvider) vmUpdateGetArgs(
-	vmCtx pkgctx.VirtualMachineContext) (*vmUpdateArgs, error) {
+	vmCtx *pkgctx.VirtualMachineContext) (*vmUpdateArgs, error) {
 
 	updateArgs := &vmUpdateArgs{}
 
@@ -3357,7 +3361,7 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 	updateArgs.ExtraConfig = ecMap
 
 	if res := updateArgs.VMClass.Spec.Policies.Resources; !res.Requests.Cpu.IsZero() || !res.Limits.Cpu.IsZero() {
-		freq, err := vs.getOrComputeCPUMinFrequency(vmCtx)
+		freq, err := vs.getOrComputeCPUMinFrequency(vmCtx.Context)
 		if err != nil {
 			return nil, err
 		}
@@ -3366,7 +3370,7 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 
 	var configSpec vimtypes.VirtualMachineConfigSpec
 	if rawConfigSpec := updateArgs.VMClass.Spec.ConfigSpec; len(rawConfigSpec) > 0 {
-		vmClassConfigSpec, err := GetVMClassConfigSpec(vmCtx, rawConfigSpec)
+		vmClassConfigSpec, err := GetVMClassConfigSpec(vmCtx.Context, rawConfigSpec)
 		if err != nil {
 			return nil, err
 		}
@@ -3384,7 +3388,7 @@ func (vs *vSphereVMProvider) vmUpdateGetArgs(
 }
 
 func (vs *vSphereVMProvider) vmResizeGetArgs(
-	vmCtx pkgctx.VirtualMachineContext) (*vmResizeArgs, error) {
+	vmCtx *pkgctx.VirtualMachineContext) (*vmResizeArgs, error) {
 
 	resizeArgs := &vmResizeArgs{}
 
@@ -3423,7 +3427,7 @@ func (vs *vSphereVMProvider) vmResizeGetArgs(
 		var minCPUFreq uint64
 
 		if res := resizeArgs.VMClass.Spec.Policies.Resources; !res.Requests.Cpu.IsZero() || !res.Limits.Cpu.IsZero() {
-			freq, err := vs.getOrComputeCPUMinFrequency(vmCtx)
+			freq, err := vs.getOrComputeCPUMinFrequency(vmCtx.Context)
 			if err != nil {
 				return nil, err
 			}
@@ -3432,7 +3436,7 @@ func (vs *vSphereVMProvider) vmResizeGetArgs(
 
 		var configSpec vimtypes.VirtualMachineConfigSpec
 		if rawConfigSpec := resizeArgs.VMClass.Spec.ConfigSpec; len(rawConfigSpec) > 0 {
-			vmClassConfigSpec, err := GetVMClassConfigSpec(vmCtx, rawConfigSpec)
+			vmClassConfigSpec, err := GetVMClassConfigSpec(vmCtx.Context, rawConfigSpec)
 			if err != nil {
 				return nil, err
 			}

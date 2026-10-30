@@ -26,7 +26,7 @@ import (
 var _ = deployOVF
 
 func deployOVF(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	restClient *rest.Client,
 	item *library.Item,
 	createArgs *CreateArgs) (*vimtypes.ManagedObjectReference, error) {
@@ -67,13 +67,13 @@ func deployOVF(
 		"k8sVMCreateTimestamp", vmCtx.VM.CreationTimestamp.Format(time.RFC3339))
 
 	return vcenter.NewManager(restClient).DeployLibraryItem(
-		util.WithVAPIActivationID(vmCtx, restClient, vmCtx.VM.Spec.InstanceUUID),
+		util.WithVAPIActivationID(vmCtx.Context, restClient, vmCtx.VM.Spec.InstanceUUID),
 		item.ID,
 		deploy)
 }
 
 func createVM(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vimClient *vim25.Client,
 	createArgs *CreateArgs) (*vimtypes.ManagedObjectReference, error) {
 
@@ -86,12 +86,12 @@ func createVM(
 	vmCtx.Logger.Info("Creating VM with params", "vmFolder", vmFolder.Reference(),
 		"resourcePool", resourcePool.Reference(), "createConfigSpec", createConfigSpec,
 		"k8sVMCreateTimestamp", vmCtx.VM.CreationTimestamp.Format(time.RFC3339))
-	task, err := vmFolder.CreateVM(vmCtx, createConfigSpec, resourcePool, nil)
+	task, err := vmFolder.CreateVM(vmCtx.Context, createConfigSpec, resourcePool, nil)
 	if err != nil {
 		vmCtx.Logger.Error(err, "Failed to create VM")
 		return nil, err
 	}
-	taskInfo, err := task.WaitForResultEx(vmCtx)
+	taskInfo, err := task.WaitForResultEx(vmCtx.Context)
 	if err != nil {
 		vmCtx.Logger.Error(err, "Task failed to create VM")
 		return nil, err
@@ -103,7 +103,7 @@ func createVM(
 }
 
 func deployVMTX(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	restClient *rest.Client,
 	item *library.Item,
 	createArgs *CreateArgs) (*vimtypes.ManagedObjectReference, error) {
@@ -120,29 +120,29 @@ func deployVMTX(
 }
 
 func deployFromContentLibrary(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	restClient *rest.Client,
 	vimClient *vim25.Client,
 	createArgs *CreateArgs) (*vimtypes.ManagedObjectReference, error) {
 
 	// This call is needed to get the item type. We could avoid going to CL here, and
 	// instead get the item type via the {Cluster}ContentLibrary CR for the image.
-	contentLibraryProvider := contentlibrary.NewProvider(vmCtx, restClient)
-	item, err := contentLibraryProvider.GetLibraryItemID(vmCtx, createArgs.ProviderItemID)
+	contentLibraryProvider := contentlibrary.NewProvider(vmCtx.Context, restClient)
+	item, err := contentLibraryProvider.GetLibraryItemID(vmCtx.Context, createArgs.ProviderItemID)
 	if err != nil {
 		return nil, err
 	}
 
 	switch item.Type {
 	case library.ItemTypeOVF:
-		if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+		if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 			return fastDeploy(vmCtx, vimClient, createArgs)
 		}
 		return deployOVF(vmCtx, restClient, item, createArgs)
 	case library.ItemTypeVMTX:
 		return deployVMTX(vmCtx, restClient, item, createArgs)
 	case library.ItemTypeISO:
-		if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+		if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 			return fastDeploy(vmCtx, vimClient, createArgs)
 		}
 		return createVM(vmCtx, vimClient, createArgs)

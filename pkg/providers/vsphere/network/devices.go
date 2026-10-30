@@ -114,7 +114,7 @@ func UpdateVMClassEthCardFromDevice(
 // It would be nice if VM Tools would send down the interface name in the guest so we
 // could just show that instead.
 func MapEthernetDevicesToSpecIdx(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	vmMO mo.VirtualMachine) map[int32]int {
 
@@ -126,7 +126,7 @@ func MapEthernetDevicesToSpecIdx(
 	ethCards := devices.SelectByType((*vimtypes.VirtualEthernetCard)(nil))
 	devKeyToSpecIdx := make(map[int32]int)
 
-	if !pkgcfg.FromContext(vmCtx).Features.MutableNetworks {
+	if !pkgcfg.FromContext(vmCtx.Context).Features.MutableNetworks {
 		// For immutable, just zip these lists together. This assumes that the
 		// devices are in the same order as the VM Spec.Network.Interfaces.
 		for i := range min(len(ethCards), len(vmCtx.VM.Spec.Network.Interfaces)) {
@@ -147,13 +147,13 @@ func MapEthernetDevicesToSpecIdx(
 }
 
 func findMatchingEthCardForInterfaceSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 	ethCards object.VirtualDeviceList) int {
 
-	if !pkgcfg.FromContext(vmCtx).Features.PerNamespaceNetworkProvider {
-		if pkgcfg.FromContext(vmCtx).NetworkProviderType == pkgcfg.NetworkProviderTypeNamed {
+	if !pkgcfg.FromContext(vmCtx.Context).Features.PerNamespaceNetworkProvider {
+		if pkgcfg.FromContext(vmCtx.Context).NetworkProviderType == pkgcfg.NetworkProviderTypeNamed {
 			return findMatchingEthCardNamed(vmCtx, client, interfaceSpec, ethCards)
 		}
 	}
@@ -179,7 +179,7 @@ func findMatchingEthCardForInterfaceSpec(
 }
 
 func findMatchingEthCardVDS(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 	ethCards object.VirtualDeviceList) int {
@@ -193,7 +193,7 @@ func findMatchingEthCardVDS(
 	}
 
 	// Check if a networkIf object exists with the older (v1a1) naming convention.
-	if err := client.Get(vmCtx, netIfKey, netIf); err != nil {
+	if err := client.Get(vmCtx.Context, netIfKey, netIf); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return -1
 		}
@@ -204,7 +204,7 @@ func findMatchingEthCardVDS(
 			Namespace: vmCtx.VM.Namespace,
 		}
 
-		if err := client.Get(vmCtx, ctrlclient.ObjectKeyFromObject(netIf), netIf); err != nil {
+		if err := client.Get(vmCtx.Context, ctrlclient.ObjectKeyFromObject(netIf), netIf); err != nil {
 			return -1
 		}
 	}
@@ -268,7 +268,7 @@ func findMatchingEthCardNetOpNetIf(
 }
 
 func findMatchingEthCardNSXT(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 	ethCards object.VirtualDeviceList) int {
@@ -282,7 +282,7 @@ func findMatchingEthCardNSXT(
 	}
 
 	// Check if a networkIf object exists with the older (v1a1) naming convention.
-	if err := client.Get(vmCtx, vnetIfKey, vnetIf); err != nil {
+	if err := client.Get(vmCtx.Context, vnetIfKey, vnetIf); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return -1
 		}
@@ -293,7 +293,7 @@ func findMatchingEthCardNSXT(
 			Namespace: vmCtx.VM.Namespace,
 		}
 
-		if err := client.Get(vmCtx, ctrlclient.ObjectKeyFromObject(vnetIf), vnetIf); err != nil {
+		if err := client.Get(vmCtx.Context, ctrlclient.ObjectKeyFromObject(vnetIf), vnetIf); err != nil {
 			return -1
 		}
 	}
@@ -322,7 +322,7 @@ func findMatchingEthCardNCPNetIf(
 }
 
 func findMatchingEthCardVPC(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 	ethCards object.VirtualDeviceList) int {
@@ -334,7 +334,7 @@ func findMatchingEthCardVPC(
 		},
 	}
 
-	if err := client.Get(vmCtx, ctrlclient.ObjectKeyFromObject(subnetPort), subnetPort); err != nil {
+	if err := client.Get(vmCtx.Context, ctrlclient.ObjectKeyFromObject(subnetPort), subnetPort); err != nil {
 		return -1
 	}
 
@@ -374,7 +374,7 @@ func findMatchingEthCardVPCSubnetPort(
 }
 
 func findMatchingEthCardNamed(
-	_ pkgctx.VirtualMachineContext,
+	_ *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 	ethCards object.VirtualDeviceList) int {

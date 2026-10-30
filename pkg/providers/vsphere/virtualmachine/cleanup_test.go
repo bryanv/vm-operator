@@ -33,7 +33,7 @@ func cleanupOnDeleteTests() {
 		vcSimCtx *builder.TestContextForVCSim
 		ctx      context.Context
 		vcVM     *object.VirtualMachine
-		vmCtx    pkgctx.VirtualMachineContext
+		vmCtx    *pkgctx.VirtualMachineContext
 		vm       *vmopv1.VirtualMachine
 		tagMgr   *tags.Manager
 	)
@@ -56,7 +56,7 @@ func cleanupOnDeleteTests() {
 
 		vm = builder.DummyVirtualMachine()
 		logger := testutil.GinkgoLogr(5)
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: logr.NewContext(ctx, logger),
 			Logger:  logger.WithValues("vmName", vcVM.Name()),
 			VM:      vm,
@@ -83,9 +83,9 @@ func cleanupOnDeleteTests() {
 				ManagedBy:   initialManagedBy,
 			}
 
-			task, err := vcVM.Reconfigure(vmCtx, configSpec)
+			task, err := vcVM.Reconfigure(vmCtx.Context, configSpec)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(task.Wait(vmCtx)).To(Succeed())
+			Expect(task.Wait(vmCtx.Context)).To(Succeed())
 		})
 
 		Context("when VM has ExtraConfig and ManagedBy set", func() {
@@ -126,7 +126,7 @@ func cleanupOnDeleteTests() {
 
 				// Verify both were cleaned
 				var moVM mo.VirtualMachine
-				err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"config"}, &moVM)
+				err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"config"}, &moVM)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(moVM.Config).ToNot(BeNil())
 
@@ -172,7 +172,7 @@ func cleanupOnDeleteTests() {
 
 				// Verify state is unchanged
 				var moVMAfter mo.VirtualMachine
-				err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"config"}, &moVMAfter)
+				err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"config"}, &moVMAfter)
 				Expect(err).NotTo(HaveOccurred())
 
 				ecList := object.OptionValueList(moVMAfter.Config.ExtraConfig)
@@ -203,7 +203,7 @@ func cleanupOnDeleteTests() {
 				Expect(err).NotTo(HaveOccurred())
 
 				var moVM mo.VirtualMachine
-				err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"config"}, &moVM)
+				err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"config"}, &moVM)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(moVM.Config).ToNot(BeNil())
 				Expect(moVM.Config.ManagedBy).To(BeNil())
@@ -296,7 +296,7 @@ func cleanupOnDeleteTests() {
 
 				// Verify ExtraConfig has policy tags recorded
 				var moVMBefore mo.VirtualMachine
-				err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"config"}, &moVMBefore)
+				err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"config"}, &moVMBefore)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(moVMBefore.Config).ToNot(BeNil())
 
@@ -312,7 +312,7 @@ func cleanupOnDeleteTests() {
 
 				// Verify ExtraConfig key was also removed
 				var moVMAfter mo.VirtualMachine
-				err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"config"}, &moVMAfter)
+				err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"config"}, &moVMAfter)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(moVMAfter.Config).ToNot(BeNil())
 

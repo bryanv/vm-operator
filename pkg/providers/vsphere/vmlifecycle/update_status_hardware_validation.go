@@ -200,7 +200,7 @@ func formatStrings(items []string, label string) string {
 // all condition messages. Detailed information is available in the individual
 // device-specific conditions.
 func reconcileHardwareCondition(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -368,7 +368,7 @@ func checkVolumes(
 // CD-ROM devices exist that aren't in the spec. It sets the
 // VirtualMachineHardwareCDROMVerified condition.
 func checkCDROMDevices(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	hwInfo pkgutil.HardwareInfo,
 	issues *CDROMIssues) {
@@ -389,7 +389,7 @@ func checkCDROMDevices(
 			}
 
 			backingFileName, err := virtualmachine.GetBackingFileNameByImageRef(
-				vmCtx, k8sClient, cdromSpec.Image, vm.Namespace, false, nil)
+				vmCtx.Context, k8sClient, cdromSpec.Image, vm.Namespace, false, nil)
 			if err != nil {
 				vmCtx.Logger.Error(err, "failed to resolve backing file name for CD-ROM device",
 					"cdromName", cdromSpec.Name, "image", cdromSpec.Image)

@@ -52,7 +52,7 @@ var _ = Describe("SysPrep Bootstrap", func() {
 			customizationLatch *bool
 			err                error
 
-			vmCtx          pkgctx.VirtualMachineContext
+			vmCtx          *pkgctx.VirtualMachineContext
 			vm             *vmopv1.VirtualMachine
 			sysPrepSpec    *vmopv1.VirtualMachineBootstrapSysprepSpec
 			vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec
@@ -87,7 +87,7 @@ var _ = Describe("SysPrep Bootstrap", func() {
 				},
 			}
 
-			vmCtx = pkgctx.VirtualMachineContext{
+			vmCtx = &pkgctx.VirtualMachineContext{
 				Context: pkgcfg.NewContext(),
 				Logger:  suite.GetLogger(),
 				VM:      vm,
@@ -205,7 +205,7 @@ var _ = Describe("SysPrep Bootstrap", func() {
 
 			When("GuestCustomizationVCDParity is enabled", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.GuestCustomizationVCDParity = true
 					})
 				})

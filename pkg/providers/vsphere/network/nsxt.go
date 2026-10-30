@@ -156,7 +156,7 @@ func getDVPGsForCCR(
 }
 
 func VPCPostRestoreBackingFixup(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	currentEthCards []vimtypes.BaseVirtualDevice,
 	devices []Device) ([]vimtypes.BaseVirtualDeviceConfigSpec, error) {
 

@@ -26,12 +26,15 @@ const (
 	vmTagsContextKey
 )
 
-// VirtualMachineContext is the context used for VirtualMachineControllers.
+// VirtualMachineContext carries the state for a VirtualMachine operation.
+// Pass it by pointer to avoid copying the managed object, and pass Context to
+// consumers that only need context.Context. Operations that replace its fields
+// must make a local copy when those changes should not be visible to callers.
 type VirtualMachineContext struct {
-	context.Context
-	Logger logr.Logger
-	VM     *vmopv1.VirtualMachine
-	MoVM   mo.VirtualMachine
+	Context context.Context
+	Logger  logr.Logger
+	VM      *vmopv1.VirtualMachine
+	MoVM    mo.VirtualMachine
 }
 
 // NewVirtualMachineContext returns a VirtualMachineContext based on existing
@@ -40,7 +43,7 @@ type VirtualMachineContext struct {
 func NewVirtualMachineContext(
 	ctx context.Context,
 	vm *vmopv1.VirtualMachine,
-	skipVMName ...bool) VirtualMachineContext {
+	skipVMName ...bool) *VirtualMachineContext {
 
 	logger := pkglog.FromContextOrDefault(ctx)
 	updatedLogger := false
@@ -61,21 +64,23 @@ func NewVirtualMachineContext(
 		ctx = logr.NewContext(ctx, logger)
 	}
 
-	return VirtualMachineContext{
+	return &VirtualMachineContext{
 		Context: ctx,
 		Logger:  logger,
 		VM:      vm,
 	}
 }
 
-func (v VirtualMachineContext) String() string {
+// String returns the VM's kind and namespaced name, or an empty string if unset.
+func (v *VirtualMachineContext) String() string {
 	if v.VM == nil {
 		return ""
 	}
 	return fmt.Sprintf("%s %s/%s", v.VM.GroupVersionKind(), v.VM.Namespace, v.VM.Name)
 }
 
-func (v VirtualMachineContext) IsOffToOn() bool {
+// IsOffToOn reports whether a VM that is not powered on is desired to be on.
+func (v *VirtualMachineContext) IsOffToOn() bool {
 	if v.VM == nil {
 		return false
 	}
@@ -83,7 +88,8 @@ func (v VirtualMachineContext) IsOffToOn() bool {
 		v.VM.Spec.PowerState == vmopv1.VirtualMachinePowerStateOn
 }
 
-func (v VirtualMachineContext) IsOnToOff() bool {
+// IsOnToOff reports whether a powered-on VM is desired to be off.
+func (v *VirtualMachineContext) IsOnToOff() bool {
 	if v.VM == nil {
 		return false
 	}

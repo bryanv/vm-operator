@@ -48,7 +48,7 @@ var _ = Describe("UpdateStatus", func() {
 
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		vcVM  *object.VirtualMachine
 		data  vmlifecycle.ReconcileStatusData
 	)
@@ -62,7 +62,7 @@ var _ = Describe("UpdateStatus", func() {
 		vm.Name = "update-status-test"
 		vm.Namespace = nsInfo.Namespace
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -1763,7 +1763,7 @@ var _ = Describe("UpdateStatus", func() {
 					})
 					When("VMSnapshot feature is enabled", func() {
 						BeforeEach(func() {
-							pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+							pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 								config.Features.VMSnapshots = true
 							})
 						})
@@ -1807,7 +1807,7 @@ var _ = Describe("UpdateStatus", func() {
 
 					When("VMSnapshot feature is enabled", func() {
 						BeforeEach(func() {
-							pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+							pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 								config.Features.VMSnapshots = true
 							})
 						})
@@ -2162,7 +2162,7 @@ var _ = Describe("UpdateStatus", func() {
 
 				When("target id is in volume", func() {
 					BeforeEach(func() {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.AllDisksArePVCs = true
 						})
 					})
@@ -2241,7 +2241,7 @@ var _ = Describe("UpdateStatus", func() {
 
 			When("VMSharedDisks feature is enabled and a classic disk has multi-writer sharing", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.VMSharedDisks = true
 					})
 					d := vmCtx.MoVM.Config.Hardware.Device[1].(*vimtypes.VirtualDisk)
@@ -2265,7 +2265,7 @@ var _ = Describe("UpdateStatus", func() {
 
 			When("vm.status.volumes does not have pvcs, but one of the classic disks is already converted to FCD", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.AllDisksArePVCs = true
 					})
 				})
@@ -2856,7 +2856,7 @@ var _ = Describe("UpdateStatus", func() {
 				})
 				When("VMSnapshot feature is enabled", func() {
 					BeforeEach(func() {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.VMSnapshots = true
 						})
 
@@ -4517,7 +4517,7 @@ var _ = Describe("UpdateStatus", func() {
 				vmCtx.Context,
 				record.New(&events.FakeRecorder{Events: chanRecord}))
 
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.AsyncSignalEnabled = true
 			})
 		})
@@ -5495,7 +5495,7 @@ var _ = Describe("UpdateNetworkStatusConfig", func() {
 var _ = Describe("Group status", func() {
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		data  vmlifecycle.ReconcileStatusData
 		vcVM  *object.VirtualMachine
 		vm    *vmopv1.VirtualMachine
@@ -5512,7 +5512,7 @@ var _ = Describe("Group status", func() {
 		vm.Name = "group-status-test"
 		Expect(ctx.Client.Create(ctx, vm)).To(Succeed())
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -5622,7 +5622,7 @@ var _ = Describe("Group status", func() {
 var _ = Describe("Hardware status", func() {
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		vcVM  *object.VirtualMachine
 		data  vmlifecycle.ReconcileStatusData
 	)
@@ -5633,7 +5633,7 @@ var _ = Describe("Hardware status", func() {
 		vm := builder.DummyVirtualMachine()
 		vm.Name = "hardware-status-test"
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -6335,7 +6335,7 @@ var _ = Describe("Hardware status", func() {
 var _ = Describe("ExtraConfig status", func() {
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		data  vmlifecycle.ReconcileStatusData
 		vcVM  *object.VirtualMachine
 		vm    *vmopv1.VirtualMachine
@@ -6357,7 +6357,7 @@ var _ = Describe("ExtraConfig status", func() {
 			pkgconst.UpgradedToFeatureVersionAnnotationKey,
 			vmopv1util.FeatureVersionTelcoVMServiceAPI.String())
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -6730,7 +6730,7 @@ var _ = Describe("ExtraConfig status", func() {
 var _ = Describe("NetworkExtraConfig status", func() {
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		data  vmlifecycle.ReconcileStatusData
 		vcVM  *object.VirtualMachine
 		vm    *vmopv1.VirtualMachine
@@ -6745,7 +6745,7 @@ var _ = Describe("NetworkExtraConfig status", func() {
 		vm = builder.DummyVirtualMachine()
 		vm.Name = "networkextraconfig-status-test"
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -6942,7 +6942,7 @@ var _ = Describe("NetworkExtraConfig status", func() {
 var _ = Describe("Guest status", func() {
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		vcVM  *object.VirtualMachine
 		data  vmlifecycle.ReconcileStatusData
 	)
@@ -6953,7 +6953,7 @@ var _ = Describe("Guest status", func() {
 		vm := builder.DummyVirtualMachine()
 		vm.Name = "guest-status-test"
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -7038,7 +7038,7 @@ var _ = Describe("Guest status", func() {
 var _ = Describe("Snapshot status", func() {
 	var (
 		ctx   *builder.TestContextForVCSim
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		vcVM  *object.VirtualMachine
 		data  vmlifecycle.ReconcileStatusData
 	)
@@ -7053,7 +7053,7 @@ var _ = Describe("Snapshot status", func() {
 		vm := builder.DummyVirtualMachine()
 		vm.Name = "snapshot-status-test"
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,

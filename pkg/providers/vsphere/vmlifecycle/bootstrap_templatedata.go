@@ -25,7 +25,7 @@ import (
 )
 
 func GetTemplateRenderFunc(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	bsArgs *BootstrapArgs,
 ) TemplateRenderFunc {
 

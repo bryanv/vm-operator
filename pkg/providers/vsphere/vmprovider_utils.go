@@ -83,12 +83,12 @@ func errorMessageFromTaskInfoWithKey(taskInfo *vimtypes.TaskInfo, key string) st
 }
 
 func GetVirtualMachineClass(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) (vmopv1.VirtualMachineClass, error) {
 
 	// TODO(akutz) Do we still need to check the second condition?
 	if vmopv1util.IsClasslessVM(*vmCtx.VM) &&
-		pkgcfg.FromContext(vmCtx).Features.VMImportNewNet {
+		pkgcfg.FromContext(vmCtx.Context).Features.VMImportNewNet {
 
 		// If VM was not deployed from a class, then synthesize the class from
 		// the underlying VM.
@@ -110,7 +110,7 @@ func GetVirtualMachineClass(
 }
 
 func getVirtualMachineClassFromVM(
-	vmCtx pkgctx.VirtualMachineContext) (vmopv1.VirtualMachineClass, error) {
+	vmCtx *pkgctx.VirtualMachineContext) (vmopv1.VirtualMachineClass, error) {
 
 	if vmCtx.MoVM.Config == nil {
 		return vmopv1.VirtualMachineClass{},
@@ -141,7 +141,7 @@ func getVirtualMachineClassFromVM(
 }
 
 func getVirtualMachineClassFromClassName(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) (vmopv1.VirtualMachineClass, error) {
 
 	var (
@@ -152,7 +152,7 @@ func getVirtualMachineClassFromClassName(
 		}
 	)
 
-	if err := k8sClient.Get(vmCtx, key, &obj); err != nil {
+	if err := k8sClient.Get(vmCtx.Context, key, &obj); err != nil {
 		return vmopv1.VirtualMachineClass{}, err
 	}
 
@@ -169,7 +169,7 @@ func getVirtualMachineClassFromClassName(
 // workflow for imported VMs, and that is perfectly legal. However, this
 // function marks a VM in error during the create workflow if spec.image is nil.
 func GetVirtualMachineImageSpecAndStatus(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) (ctrlclient.Object, vmopv1.VirtualMachineImageSpec, vmopv1.VirtualMachineImageStatus, error) {
 
 	if vmCtx.VM.Spec.Image == nil {
@@ -199,14 +199,14 @@ func GetVirtualMachineImageSpecAndStatus(
 	switch vmCtx.VM.Spec.Image.Kind {
 	case "VirtualMachineImage":
 		var img vmopv1.VirtualMachineImage
-		if objErr = k8sClient.Get(vmCtx, key, &img); objErr == nil {
+		if objErr = k8sClient.Get(vmCtx.Context, key, &img); objErr == nil {
 			obj, spec, status = &img, img.Spec, img.Status
 		}
 
 	case "ClusterVirtualMachineImage":
 		key.Namespace = ""
 		var img vmopv1.ClusterVirtualMachineImage
-		if objErr = k8sClient.Get(vmCtx, key, &img); objErr == nil {
+		if objErr = k8sClient.Get(vmCtx.Context, key, &img); objErr == nil {
 			obj, spec, status = &img, img.Spec, img.Status
 		}
 	case "":
@@ -218,7 +218,7 @@ func GetVirtualMachineImageSpecAndStatus(
 		// does what the webhook does -- looks up the image by both vmi and
 		// friendly name.
 		if img, err := vmopv1util.ResolveImageName(
-			vmCtx,
+			vmCtx.Context,
 			k8sClient,
 			vmCtx.VM.Namespace,
 			vmCtx.VM.Spec.Image.Name); err != nil {
@@ -310,7 +310,7 @@ func GetVirtualMachineImageSpecAndStatus(
 }
 
 func getSecretData(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	resName, resKey string,
 	isCloudInitSecret bool) (map[string]string, error) {
@@ -328,7 +328,7 @@ func getSecretData(
 	key := ctrlclient.ObjectKey{Name: resName, Namespace: vmCtx.VM.Namespace}
 	if useConfigMap {
 		configMap := &corev1.ConfigMap{}
-		if err := k8sClient.Get(vmCtx, key, configMap); err != nil {
+		if err := k8sClient.Get(vmCtx.Context, key, configMap); err != nil {
 			reason, msg := errToConditionReasonAndMessage(err)
 			conditions.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionBootstrapReady, reason, "%s", msg)
 			return nil, err
@@ -337,7 +337,7 @@ func getSecretData(
 		data = configMap.Data
 	} else {
 		secret := &corev1.Secret{}
-		if err := k8sClient.Get(vmCtx, key, secret); err != nil {
+		if err := k8sClient.Get(vmCtx.Context, key, secret); err != nil {
 			reason, msg := errToConditionReasonAndMessage(err)
 			conditions.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionBootstrapReady, reason, "%s", msg)
 			return nil, err
@@ -387,7 +387,7 @@ func getSecretData(
 }
 
 func GetVirtualMachineBootstrap(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) (vmlifecycle.BootstrapData, error) {
 
 	bootstrapSpec := vmCtx.VM.Spec.Bootstrap
@@ -405,7 +405,7 @@ func GetVirtualMachineBootstrap(
 	if v := bootstrapSpec.CloudInit; v != nil {
 		if cooked := v.CloudConfig; cooked != nil {
 			out, err := cloudinit.GetCloudConfigSecretData(
-				vmCtx,
+				vmCtx.Context,
 				k8sClient,
 				vmCtx.VM.Namespace,
 				*cooked)
@@ -427,7 +427,7 @@ func GetVirtualMachineBootstrap(
 	} else if v := bootstrapSpec.Sysprep; v != nil {
 		if cooked := v.Sysprep; cooked != nil {
 			out, err := sysprep.GetSysprepSecretData(
-				vmCtx,
+				vmCtx.Context,
 				k8sClient,
 				vmCtx.VM.Namespace,
 				cooked)
@@ -448,7 +448,7 @@ func GetVirtualMachineBootstrap(
 		}
 	} else if v := bootstrapSpec.LinuxPrep; v != nil {
 		out, err := linuxprep.GetLinuxPrepSecretData(
-			vmCtx,
+			vmCtx.Context,
 			k8sClient,
 			vmCtx.VM.Namespace,
 			v)
@@ -517,7 +517,7 @@ func GetVirtualMachineBootstrap(
 }
 
 func GetVMSetResourcePolicy(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) (*vmopv1.VirtualMachineSetResourcePolicy, error) {
 
 	var rpName string
@@ -531,7 +531,7 @@ func GetVMSetResourcePolicy(
 
 	key := ctrlclient.ObjectKey{Name: rpName, Namespace: vmCtx.VM.Namespace}
 	resourcePolicy := &vmopv1.VirtualMachineSetResourcePolicy{}
-	if err := k8sClient.Get(vmCtx, key, resourcePolicy); err != nil {
+	if err := k8sClient.Get(vmCtx.Context, key, resourcePolicy); err != nil {
 		reason, msg := errToConditionReasonAndMessage(err)
 		conditions.MarkFalse(vmCtx.VM, vmopv1.VirtualMachineConditionVMSetResourcePolicyReady, reason, "%s", msg)
 		return nil, err
@@ -554,7 +554,7 @@ func GetVMSetResourcePolicy(
 // AddInstanceStorageVolumes checks if VM class is configured with instance storage volumes and appends the
 // volumes to the VM's Spec if not already done. Return true if the VM had or now has instance storage volumes.
 func AddInstanceStorageVolumes(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	is vmopv1.InstanceStorage) (bool, bool) {
 
 	if vmopv1util.IsInstanceStoragePresent(vmCtx.VM) {
@@ -721,7 +721,7 @@ func GetVirtualMachineImageCache(
 // GetAttachedDiskUUIDToPVC returns a map of disk UUID to PVC object for all
 // attached disks by checking for volumes that have a PersistentVolumeClaim.
 func GetAttachedDiskUUIDToPVC(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) (map[string]corev1.PersistentVolumeClaim, error) {
 
 	var (
@@ -729,7 +729,7 @@ func GetAttachedDiskUUIDToPVC(
 		moVM = vmCtx.MoVM
 	)
 
-	info, ok := pkgvol.FromContext(vmCtx)
+	info, ok := pkgvol.FromContext(vmCtx.Context)
 	if !ok {
 		info = pkgvol.GetVolumeInfoFromVM(vm, moVM)
 	}
@@ -747,7 +747,7 @@ func GetAttachedDiskUUIDToPVC(
 		if vol != nil && vol.PersistentVolumeClaim != nil {
 			pvcObj := corev1.PersistentVolumeClaim{}
 			objKey := ctrlclient.ObjectKey{Name: vol.PersistentVolumeClaim.ClaimName, Namespace: vmCtx.VM.Namespace}
-			if err := k8sClient.Get(vmCtx, objKey, &pvcObj); err != nil {
+			if err := k8sClient.Get(vmCtx.Context, objKey, &pvcObj); err != nil {
 				return nil, err
 			}
 
@@ -758,13 +758,13 @@ func GetAttachedDiskUUIDToPVC(
 	return diskUUIDToPVC, nil
 }
 
-func GetAttachedClassicDiskUUIDs(vmCtx pkgctx.VirtualMachineContext) map[string]struct{} {
+func GetAttachedClassicDiskUUIDs(vmCtx *pkgctx.VirtualMachineContext) map[string]struct{} {
 	var (
 		vm   = vmCtx.VM
 		moVM = vmCtx.MoVM
 	)
 
-	info, ok := pkgvol.FromContext(vmCtx)
+	info, ok := pkgvol.FromContext(vmCtx.Context)
 	if !ok {
 		info = pkgvol.GetVolumeInfoFromVM(vm, moVM)
 	}
@@ -790,14 +790,14 @@ func GetAttachedClassicDiskUUIDs(vmCtx pkgctx.VirtualMachineContext) map[string]
 // GetAdditionalResourcesForBackup returns a list of Kubernetes client objects
 // that are relevant for VM backup (e.g. bootstrap referenced resources).
 func GetAdditionalResourcesForBackup(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) ([]ctrlclient.Object, error) {
 	var objects []ctrlclient.Object
 
 	if bootstrapSpec := vmCtx.VM.Spec.Bootstrap; bootstrapSpec != nil {
 		if v := bootstrapSpec.CloudInit; v != nil {
 			if cooked := v.CloudConfig; cooked != nil {
-				out, err := cloudinit.GetSecretResources(vmCtx, k8sClient, vmCtx.VM.Namespace, *cooked)
+				out, err := cloudinit.GetSecretResources(vmCtx.Context, k8sClient, vmCtx.VM.Namespace, *cooked)
 				if err != nil {
 					return nil, err
 				}
@@ -816,7 +816,7 @@ func GetAdditionalResourcesForBackup(
 			}
 		} else if v := bootstrapSpec.Sysprep; v != nil {
 			if cooked := v.Sysprep; cooked != nil {
-				out, err := sysprep.GetSecretResources(vmCtx, k8sClient, vmCtx.VM.Namespace, cooked)
+				out, err := sysprep.GetSecretResources(vmCtx.Context, k8sClient, vmCtx.VM.Namespace, cooked)
 				if err != nil {
 					return nil, err
 				}
@@ -834,7 +834,7 @@ func GetAdditionalResourcesForBackup(
 				objects = append(objects, obj)
 			}
 		} else if v := bootstrapSpec.LinuxPrep; v != nil {
-			out, err := linuxprep.GetSecretResources(vmCtx, k8sClient, vmCtx.VM.Namespace, v)
+			out, err := linuxprep.GetSecretResources(vmCtx.Context, k8sClient, vmCtx.VM.Namespace, v)
 			if err != nil {
 				return nil, err
 			}
@@ -879,20 +879,20 @@ func GetAdditionalResourcesForBackup(
 }
 
 func getSecretOrConfigMapObject(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	resourceName string,
 	configMapFallback bool) (ctrlclient.Object, error) {
 	key := ctrlclient.ObjectKey{Name: resourceName, Namespace: vmCtx.VM.Namespace}
 	secret := &corev1.Secret{}
-	err := k8sClient.Get(vmCtx, key, secret)
+	err := k8sClient.Get(vmCtx.Context, key, secret)
 	if err != nil {
 		configMap := &corev1.ConfigMap{}
 		// For backwards compat if we cannot find the Secret, fallback to a ConfigMap. In v1a1, either a
 		// Secret and ConfigMap was supported for metadata (bootstrap) as separate fields, but v1a2 only
 		// supports Secrets.
 		if configMapFallback && apierrors.IsNotFound(err) {
-			if k8sClient.Get(vmCtx, key, configMap) == nil {
+			if k8sClient.Get(vmCtx.Context, key, configMap) == nil {
 				// GVK is dropped when getting a core K8s resource from client.
 				// Add it in backup so that the resource can be applied successfully during restore.
 				configMap.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
@@ -910,7 +910,7 @@ func getSecretOrConfigMapObject(
 	return secret, err
 }
 
-func isVMPaused(vmCtx pkgctx.VirtualMachineContext) bool {
+func isVMPaused(vmCtx *pkgctx.VirtualMachineContext) bool {
 	byAdmin := paused.ByAdmin(vmCtx.MoVM)
 	byDevOps := paused.ByDevOps(vmCtx.VM)
 
@@ -933,7 +933,7 @@ func isVMPaused(vmCtx pkgctx.VirtualMachineContext) bool {
 }
 
 func ensureValidvTPMConfig(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vmClass vmopv1.VirtualMachineClass,
 	devices []vimtypes.BaseVirtualDevice) error {
 
@@ -943,7 +943,7 @@ func ensureValidvTPMConfig(
 			// the VM being created specifies a class which is
 			// configured with a vTPM. If the specified class is
 			// not configured with a vTPM, then return an error.
-			classConfigSpec, err := GetVMClassConfigSpec(vmCtx, vmClass.Spec.ConfigSpec)
+			classConfigSpec, err := GetVMClassConfigSpec(vmCtx.Context, vmClass.Spec.ConfigSpec)
 			if err != nil {
 				return fmt.Errorf("failed to get configSpec from vm class: %w", err)
 			}

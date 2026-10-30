@@ -23,7 +23,7 @@ import (
 // in the "update" pre-power on path. That operates on a ConfigInfo so we'd need to populate that from
 // the config we build here.
 func CreateConfigSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	configSpec vimtypes.VirtualMachineConfigSpec,
 	vmClassSpec vmopv1.VirtualMachineClassSpec,
 	vmImageStatus vmopv1.VirtualMachineImageStatus,
@@ -43,7 +43,7 @@ func CreateConfigSpec(
 		Type:         vmopv1.ManagedByExtensionType,
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.ExtensionCompatConstraint {
+	if pkgcfg.FromContext(vmCtx.Context).Features.ExtensionCompatConstraint {
 		configSpec.ExtensionCompatibilityConstraint = extensionCompatibilityConstraintSet()
 	} else {
 		configSpec.ExtensionCompatibilityConstraint = nil
@@ -170,7 +170,7 @@ func CreateConfigSpec(
 // Placement. configSpec will likely be - or at least derived from - the
 // ConfigSpec returned by CreateConfigSpec above.
 func CreateConfigSpecForPlacement(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	configSpec vimtypes.VirtualMachineConfigSpec,
 	storageClassesToIDs map[string]string) (vimtypes.VirtualMachineConfigSpec, error) {
 
@@ -294,7 +294,7 @@ func CreateConfigSpecForPlacement(
 		})
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.InstanceStorage {
+	if pkgcfg.FromContext(vmCtx.Context).Features.InstanceStorage {
 		isVolumes := vmopv1util.FilterInstanceStorageVolumes(vmCtx.VM)
 
 		for idx, dev := range CreateInstanceStorageDiskDevices(isVolumes) {
@@ -354,7 +354,7 @@ func CreateConfigSpecForPlacement(
 // is enabled, except for a VKS node VM (CAPI labels), since its host
 // anti-affinity is handled via cluster modules instead.
 func CalculateAffinityConstraints(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	isCreateVM bool,
 ) AffinityRuleConstraints {
 	features := pkgcfg.FromContext(vmCtx.Context).Features

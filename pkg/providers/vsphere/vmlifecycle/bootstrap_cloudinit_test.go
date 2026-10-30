@@ -63,7 +63,7 @@ var _ = Describe("CloudInit Bootstrap", func() {
 			custSpec   *vimtypes.CustomizationSpec
 			err        error
 
-			vmCtx         pkgctx.VirtualMachineContext
+			vmCtx         *pkgctx.VirtualMachineContext
 			vm            *vmopv1.VirtualMachine
 			cloudInitSpec *vmopv1.VirtualMachineBootstrapCloudInitSpec
 		)
@@ -80,7 +80,7 @@ var _ = Describe("CloudInit Bootstrap", func() {
 				},
 			}
 
-			vmCtx = pkgctx.VirtualMachineContext{
+			vmCtx = &pkgctx.VirtualMachineContext{
 				Context: context.Background(),
 				Logger:  suite.GetLogger(),
 				VM:      vm,

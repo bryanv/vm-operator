@@ -50,7 +50,7 @@ var _ = Describe("LinuxPrep Bootstrap", func() {
 			customizationLatch *bool
 			err                error
 
-			vmCtx          pkgctx.VirtualMachineContext
+			vmCtx          *pkgctx.VirtualMachineContext
 			vm             *vmopv1.VirtualMachine
 			linuxPrepSpec  *vmopv1.VirtualMachineBootstrapLinuxPrepSpec
 			vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec
@@ -85,7 +85,7 @@ var _ = Describe("LinuxPrep Bootstrap", func() {
 				},
 			}
 
-			vmCtx = pkgctx.VirtualMachineContext{
+			vmCtx = &pkgctx.VirtualMachineContext{
 				Context: pkgcfg.NewContext(),
 				Logger:  suite.GetLogger(),
 				VM:      vm,
@@ -131,7 +131,7 @@ var _ = Describe("LinuxPrep Bootstrap", func() {
 
 		When("GuestCustomizationVCDParity is enabled", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.GuestCustomizationVCDParity = true
 				})
 			})

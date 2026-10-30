@@ -30,7 +30,7 @@ import (
 
 //nolint:gocyclo
 func fastDeploy(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vimClient *vim25.Client,
 	createArgs *CreateArgs) (vmRef *vimtypes.ManagedObjectReference, retErr error) {
 
@@ -77,7 +77,7 @@ func fastDeploy(
 		//
 		// The datastore supports TLD creation, so just use file manager.
 		//
-		if err := fm.MakeDirectory(vmCtx, vmDir, datacenter, true); err != nil {
+		if err := fm.MakeDirectory(vmCtx.Context, vmDir, datacenter, true); err != nil {
 			return nil, fmt.Errorf("failed to create vm dir %q: %w", vmDir, err)
 		}
 		vmDirPath = vmDir
@@ -88,7 +88,7 @@ func fastDeploy(
 		//
 		nm = object.NewDatastoreNamespaceManager(vimClient)
 		vdp, err := nm.CreateDirectory(
-			vmCtx,
+			vmCtx.Context,
 			object.NewDatastore(vimClient, createArgs.Datastores[0].MoRef),
 			vmDirName,
 			"")
@@ -266,7 +266,7 @@ func fastDeploy(
 	// Copy any non-disk files to the target directory.
 	for i := range dstFilePaths {
 		task, err := fm.CopyDatastoreFile(
-			vmCtx,
+			vmCtx.Context,
 			srcFilePaths[i],
 			datacenter,
 			dstFilePaths[i],
@@ -274,7 +274,7 @@ func fastDeploy(
 		if err != nil {
 			return nil, err
 		}
-		if err = task.Wait(vmCtx); err != nil {
+		if err = task.Wait(vmCtx.Context); err != nil {
 			return nil, err
 		}
 	}
@@ -347,7 +347,7 @@ func fastDeploy(
 	default:
 		fastDeployMode = vmCtx.VM.Annotations[pkgconst.FastDeployAnnotationKey]
 		if fastDeployMode == "" {
-			fastDeployMode = pkgcfg.FromContext(vmCtx).FastDeployMode
+			fastDeployMode = pkgcfg.FromContext(vmCtx.Context).FastDeployMode
 			fastDeployModeReason = "global default"
 		} else {
 			fastDeployModeReason = "from annotation"
@@ -362,7 +362,7 @@ func fastDeploy(
 
 	if strings.EqualFold(fastDeployMode, pkgconst.FastDeployModeLinked) {
 		return fastDeployLinked(
-			vmCtx,
+			vmCtx.Context,
 			folder,
 			pool,
 			host,
@@ -376,7 +376,7 @@ func fastDeploy(
 	}
 
 	return fastDeployDirect(
-		vmCtx,
+		vmCtx.Context,
 		datacenter,
 		folder,
 		pool,

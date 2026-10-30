@@ -32,7 +32,7 @@ func snapShotTests() {
 	var (
 		ctx        *builder.TestContextForVCSim
 		vcVM       *object.VirtualMachine
-		vmCtx      pkgctx.VirtualMachineContext
+		vmCtx      *pkgctx.VirtualMachineContext
 		vmSnapshot vmopv1.VirtualMachineSnapshot
 		testConfig builder.VCSimTestConfig
 		vm         *vmopv1.VirtualMachine
@@ -61,14 +61,14 @@ func snapShotTests() {
 		vm.Spec.CurrentSnapshotName = vmSnapshot.Name
 
 		logger := testutil.GinkgoLogr(5)
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: logr.NewContext(ctx, logger),
 			Logger:  logger.WithValues("vmName", vcVM.Name()),
 			VM:      vm,
 		}
 
 		Expect(vcVM.Properties(
-			vmCtx,
+			vmCtx.Context,
 			vcVM.Reference(),
 			vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)).To(Succeed())
 	})
@@ -154,7 +154,7 @@ func snapShotTests() {
 				Expect(snapNode).ToNot(BeNil())
 				// Fetch the newest snapshot tree.
 				Expect(vcVM.Properties(
-					vmCtx,
+					vmCtx.Context,
 					vcVM.Reference(),
 					vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)).To(Succeed())
 			})
@@ -176,7 +176,7 @@ func snapShotTests() {
 					Expect(snapNode).ToNot(BeNil())
 					// Fetch the newest snapshot tree.
 					Expect(vcVM.Properties(
-						vmCtx,
+						vmCtx.Context,
 						vcVM.Reference(),
 						vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)).To(Succeed())
 				})
@@ -330,7 +330,7 @@ func snapShotTests() {
 
 			It("succeeds", func() {
 				total, fcdTotal, err := virtualmachine.GetSnapshotSize(
-					vmCtx, vmCtx.MoVM, moVM.Snapshot.CurrentSnapshot)
+					vmCtx.Context, vmCtx.MoVM, moVM.Snapshot.CurrentSnapshot)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(total).To(Equal(total))
 				Expect(fcdTotal).To(BeZero())
@@ -338,7 +338,7 @@ func snapShotTests() {
 
 			When("the snapshot is nil", func() {
 				It("returns 0", func() {
-					total, fcdTotal, err := virtualmachine.GetSnapshotSize(vmCtx, vmCtx.MoVM, nil)
+					total, fcdTotal, err := virtualmachine.GetSnapshotSize(vmCtx.Context, vmCtx.MoVM, nil)
 					Expect(err).To(HaveOccurred())
 					Expect(total).To(BeZero())
 					Expect(fcdTotal).To(BeZero())
@@ -349,7 +349,7 @@ func snapShotTests() {
 				It("returns 0", func() {
 					vmCtx.MoVM.LayoutEx = nil
 					total, fcdTotal, err := virtualmachine.GetSnapshotSize(
-						vmCtx, vmCtx.MoVM, moVM.Snapshot.CurrentSnapshot)
+						vmCtx.Context, vmCtx.MoVM, moVM.Snapshot.CurrentSnapshot)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(total).To(BeZero())
 					Expect(fcdTotal).To(BeZero())
@@ -360,7 +360,7 @@ func snapShotTests() {
 				It("returns snapshot size", func() {
 					vmCtx.MoVM.Config.Hardware.Device = nil
 					total, fcdTotal, err := virtualmachine.GetSnapshotSize(
-						vmCtx, vmCtx.MoVM, moVM.Snapshot.CurrentSnapshot)
+						vmCtx.Context, vmCtx.MoVM, moVM.Snapshot.CurrentSnapshot)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(total).To(Equal(total))
 					Expect(fcdTotal).To(BeZero())
@@ -371,13 +371,13 @@ func snapShotTests() {
 		Context("Mock VM with two snapshots, 1 disk and 1 FCD", func() {
 			var snapshot1, snapshot2 vimtypes.ManagedObjectReference
 			JustBeforeEach(func() {
-				snapshot1, snapshot2 = mockVMWithSnapshotAndPVCs(&vmCtx)
+				snapshot1, snapshot2 = mockVMWithSnapshotAndPVCs(vmCtx)
 			})
 
 			When("Get the snapshot size of Snapshot-1", func() {
 				It("returns the size", func() {
 					total, fcdTotal, err := virtualmachine.GetSnapshotSize(
-						vmCtx, vmCtx.MoVM, &snapshot1)
+						vmCtx.Context, vmCtx.MoVM, &snapshot1)
 					Expect(err).NotTo(HaveOccurred())
 					// 3, 4, 17, 18
 					Expect(total).To(Equal(int64(0.5*oneGiBInBytes + 500 + 500 + 2*oneGiBInBytes)))
@@ -390,7 +390,7 @@ func snapShotTests() {
 					})
 					It("return the wrong size, since it can't filter FCD", func() {
 						total, fcdTotal, err := virtualmachine.GetSnapshotSize(
-							vmCtx, vmCtx.MoVM, &snapshot1)
+							vmCtx.Context, vmCtx.MoVM, &snapshot1)
 						Expect(err).NotTo(HaveOccurred())
 						// 3, 4, 17, 18, 13, 14
 						Expect(total).To(Equal(int64(0.5*oneGiBInBytes + 500 + 500 + 2*oneGiBInBytes +
@@ -403,7 +403,7 @@ func snapShotTests() {
 			When("Get the snapshot size of Snapshot-2", func() {
 				It("returns the size", func() {
 					total, fcdTotal, err := virtualmachine.GetSnapshotSize(
-						vmCtx, vmCtx.MoVM, &snapshot2)
+						vmCtx.Context, vmCtx.MoVM, &snapshot2)
 					Expect(err).NotTo(HaveOccurred())
 					// 5, 6, 19
 					Expect(total).To(Equal(int64(1*oneGiBInBytes + 500 + 1*oneGiBInBytes)))
@@ -445,7 +445,7 @@ func snapShotTests() {
 			})
 			It("succeeds", func() {
 				total, fcdTotal, err := virtualmachine.GetAllSnapshotSize(
-					vmCtx, vmCtx.MoVM)
+					vmCtx.Context, vmCtx.MoVM)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(total).To(Equal(total))
 				Expect(fcdTotal).To(BeZero())
@@ -456,7 +456,7 @@ func snapShotTests() {
 					vmCtx.MoVM.LayoutEx.Snapshot = nil
 				})
 				It("returns 0", func() {
-					total, fcdTotal, err := virtualmachine.GetAllSnapshotSize(vmCtx, vmCtx.MoVM)
+					total, fcdTotal, err := virtualmachine.GetAllSnapshotSize(vmCtx.Context, vmCtx.MoVM)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(total).To(BeZero())
 					Expect(fcdTotal).To(BeZero())
@@ -468,7 +468,7 @@ func snapShotTests() {
 					vmCtx.MoVM.LayoutEx = nil
 				})
 				It("returns 0", func() {
-					total, fcdTotal, err := virtualmachine.GetAllSnapshotSize(vmCtx, vmCtx.MoVM)
+					total, fcdTotal, err := virtualmachine.GetAllSnapshotSize(vmCtx.Context, vmCtx.MoVM)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(total).To(BeZero())
 					Expect(fcdTotal).To(BeZero())
@@ -480,12 +480,12 @@ func snapShotTests() {
 		Context("mocking the moVM", func() {
 			Context("Mock VM with two snapshots, 1 disk and 1 FCD", func() {
 				JustBeforeEach(func() {
-					mockVMWithSnapshotAndPVCs(&vmCtx)
+					mockVMWithSnapshotAndPVCs(vmCtx)
 				})
 
 				When("Get the snapshot size of both Snapshot-1 and Snapshot-2", func() {
 					It("return correct total", func() {
-						total, fcdTotal, err := virtualmachine.GetAllSnapshotSize(vmCtx, vmCtx.MoVM)
+						total, fcdTotal, err := virtualmachine.GetAllSnapshotSize(vmCtx.Context, vmCtx.MoVM)
 						Expect(err).NotTo(HaveOccurred())
 						// (5, 6, 19), (3, 4, 17, 18)
 						Expect(total).To(Equal(

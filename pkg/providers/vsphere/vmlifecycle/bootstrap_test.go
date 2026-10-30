@@ -249,7 +249,7 @@ var _ = Describe("DoBootstrap", func() {
 		bsArgs     vmlifecycle.BootstrapArgs
 		bsErr      error
 		vcVM       *object.VirtualMachine
-		vmCtx      pkgctx.VirtualMachineContext
+		vmCtx      *pkgctx.VirtualMachineContext
 		configInfo *vimtypes.VirtualMachineConfigInfo
 	)
 
@@ -264,7 +264,7 @@ var _ = Describe("DoBootstrap", func() {
 		vm.Name = "bootstrap-test"
 		vm.Namespace = nsInfo.Namespace
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -287,7 +287,7 @@ var _ = Describe("DoBootstrap", func() {
 			cs.DeviceChange, err = devices.SelectByType(&vimtypes.VirtualEthernetCard{}).
 				ConfigSpec(vimtypes.VirtualDeviceConfigSpecOperationRemove)
 			Expect(err).ToNot(HaveOccurred())
-			task, err := vcVM.Reconfigure(vmCtx, cs)
+			task, err := vcVM.Reconfigure(vmCtx.Context, cs)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(task.Wait(ctx)).To(Succeed())
 		}

@@ -20,13 +20,13 @@ import (
 )
 
 func BootStrapLinuxPrep(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	config *vimtypes.VirtualMachineConfigInfo,
 	linuxPrepSpec *vmopv1.VirtualMachineBootstrapLinuxPrepSpec,
 	vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec,
 	bsArgs *BootstrapArgs) (*vimtypes.VirtualMachineConfigSpec, *vimtypes.CustomizationSpec, *bool, error) {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 	logger.V(4).Info("Reconciling LinuxPrep bootstrap state")
 
 	if !vmCtx.IsOffToOn() {
@@ -54,7 +54,7 @@ func BootStrapLinuxPrep(
 		HwClockUTC: linuxPrepSpec.HardwareClockIsUTC,
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.GuestCustomizationVCDParity {
+	if pkgcfg.FromContext(vmCtx.Context).Features.GuestCustomizationVCDParity {
 		if linuxPrepSpec.ExpirePasswordAfterNextLogin {
 			identity.ResetPassword = ptr.To(true)
 		}

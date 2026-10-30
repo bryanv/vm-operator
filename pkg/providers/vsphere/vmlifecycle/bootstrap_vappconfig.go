@@ -20,12 +20,12 @@ import (
 )
 
 func BootstrapVAppConfig(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	config *vimtypes.VirtualMachineConfigInfo,
 	vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec,
 	bsArgs *BootstrapArgs) (*vimtypes.VirtualMachineConfigSpec, *vimtypes.CustomizationSpec, error) {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 	logger.V(4).Info("Reconciling vApp bootstrap state")
 
 	var (

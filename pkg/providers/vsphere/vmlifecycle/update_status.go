@@ -54,7 +54,7 @@ type ReconcileStatusData struct {
 }
 
 func ReconcileStatus(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	vcVM *object.VirtualMachine,
 	data ReconcileStatusData) error {
@@ -113,7 +113,7 @@ var anno2ConditionRegex = regexp.MustCompile(`^condition.vmoperator.vmware.com.p
 // reconcileStatusAnno2Conditions sets conditions on the VM based on
 // annotation values.
 func reconcileStatusAnno2Conditions(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -156,7 +156,7 @@ func reconcileStatusAnno2Conditions(
 }
 
 func reconcileStatusClass(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -178,14 +178,14 @@ func reconcileStatusClass(
 	}
 
 	if pkgcfg.FromContext(vmCtx.Context).Features.VMResizeCPUMemory {
-		MarkVMClassConfigurationSynced(vmCtx, vmCtx.VM, k8sClient)
+		MarkVMClassConfigurationSynced(vmCtx.Context, vmCtx.VM, k8sClient)
 	}
 
 	return nil
 }
 
 func reconcileStatusGroup(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error {
@@ -193,7 +193,7 @@ func reconcileStatusGroup(
 	var errs []error
 
 	if err := vmopv1util.UpdateGroupLinkedCondition(
-		vmCtx,
+		vmCtx.Context,
 		vmCtx.VM,
 		k8sClient,
 	); err != nil {
@@ -204,7 +204,7 @@ func reconcileStatusGroup(
 }
 
 func reconcileStatusHardware(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -362,7 +362,7 @@ func reconcileStatusHardware(
 // condition reflects whether the spec is fully synced to the live VM state and is
 // refreshed on every reconcile loop regardless of whether a reconfigure was needed.
 func reconcileComputeConfigSynced(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -402,7 +402,7 @@ func reconcileComputeConfigSynced(
 }
 
 func reconcileStatusPowerState(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -417,7 +417,7 @@ func reconcileStatusPowerState(
 // from vCenter, including identifiers (UniqueID, BiosUUID, InstanceUUID)
 // and provider-specific information like the creation timestamp.
 func reconcileStatusPlatform(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -441,7 +441,7 @@ func reconcileStatusPlatform(
 }
 
 func reconcileStatusHardwareVersion(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -454,7 +454,7 @@ func reconcileStatusHardwareVersion(
 }
 
 func reconcileStatusZone(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	vcVM *object.VirtualMachine,
 	_ ReconcileStatusData) []error {
@@ -468,12 +468,12 @@ func reconcileStatusZone(
 	// but in case the value was accidentally changed by like kube-admin relook the zone.
 	if zoneLabel == "" || zoneLabel != zoneStatus {
 		clusterMoRef, err := vcenter.GetResourcePoolOwnerMoRef(
-			vmCtx, vcVM.Client(), vmCtx.MoVM.ResourcePool.Value)
+			vmCtx.Context, vcVM.Client(), vmCtx.MoVM.ResourcePool.Value)
 		if err != nil {
 			errs = append(errs, err)
 		} else {
 			zoneName, err := topology.LookupZoneForClusterMoID(
-				vmCtx, k8sClient, clusterMoRef.Value)
+				vmCtx.Context, k8sClient, clusterMoRef.Value)
 			if err != nil {
 				errs = append(errs, err)
 			} else {
@@ -490,7 +490,7 @@ func reconcileStatusZone(
 }
 
 func reconcileStatusSnapshot(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error {
@@ -504,7 +504,7 @@ func reconcileStatusSnapshot(
 }
 
 func reconcileStatusGuest(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	data ReconcileStatusData) []error { //nolint:unparam
@@ -547,7 +547,7 @@ func reconcileStatusGuest(
 
 // reconcileStatusStorage updates the status for all storage-related fields.
 func reconcileStatusStorage(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error {
@@ -562,7 +562,7 @@ func reconcileStatusStorage(
 }
 
 func reconcileStatusNodeName(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	vcVM *object.VirtualMachine,
 	_ ReconcileStatusData) []error {
@@ -570,7 +570,7 @@ func reconcileStatusNodeName(
 	var errs []error
 
 	nodeName, err := getRuntimeHostHostname(
-		vmCtx, vcVM, vmCtx.MoVM.Summary.Runtime.Host)
+		vmCtx.Context, vcVM, vmCtx.MoVM.Summary.Runtime.Host)
 	if err != nil {
 		errs = append(errs, err)
 	} else {
@@ -584,7 +584,7 @@ func reconcileStatusNodeName(
 // readiness probes.
 // Please note, this function returns early if the configured probe is TCP.
 func reconcileStatusProbe(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -625,7 +625,7 @@ func reconcileStatusProbe(
 
 	// Emit event when the condition is added or its status changes.
 	if c := conditions.Get(vmCtx.VM, cond.Type); c == nil || c.Status != cond.Status {
-		recorder := vmoprecord.FromContext(vmCtx)
+		recorder := vmoprecord.FromContext(vmCtx.Context)
 		if cond.Status == metav1.ConditionTrue {
 			recorder.Eventf(vmCtx.VM, probeReasonReady, "")
 		} else {
@@ -633,7 +633,7 @@ func reconcileStatusProbe(
 		}
 
 		// Log the time when the VM changes its readiness condition.
-		pkglog.FromContextOrDefault(vmCtx).Info(
+		pkglog.FromContextOrDefault(vmCtx.Context).Info(
 			"VM resource readiness probe condition updated",
 			"condition.status", cond.Status,
 			"time", cond.LastTransitionTime,
@@ -1375,7 +1375,7 @@ func updateChangeBlockTracking(vm *vmopv1.VirtualMachine, moVM mo.VirtualMachine
 	}
 }
 
-func updateStorageUsage(vmCtx pkgctx.VirtualMachineContext) []error {
+func updateStorageUsage(vmCtx *pkgctx.VirtualMachineContext) []error {
 
 	var (
 		other           int64
@@ -1436,7 +1436,7 @@ func updateStorageUsage(vmCtx pkgctx.VirtualMachineContext) []error {
 	// Get the storage consumed by snapshots.
 	if snapEnabled {
 		var err error
-		vmSnapshotUsed, volSnapshotUsed, err = virtualmachine.GetAllSnapshotSize(vmCtx, moVM)
+		vmSnapshotUsed, volSnapshotUsed, err = virtualmachine.GetAllSnapshotSize(vmCtx.Context, moVM)
 		if err != nil {
 			errs = append(errs,
 				fmt.Errorf("failed to compute snapshot size of VM: %w", err),
@@ -1499,7 +1499,7 @@ func updateStorageUsage(vmCtx pkgctx.VirtualMachineContext) []error {
 	return errs
 }
 
-func updateVolumeStatus(vmCtx pkgctx.VirtualMachineContext) {
+func updateVolumeStatus(vmCtx *pkgctx.VirtualMachineContext) {
 	var (
 		moVM         = vmCtx.MoVM
 		vm           = vmCtx.VM
@@ -1517,7 +1517,7 @@ func updateVolumeStatus(vmCtx pkgctx.VirtualMachineContext) {
 		return
 	}
 
-	info, ok := pkgvol.FromContext(vmCtx)
+	info, ok := pkgvol.FromContext(vmCtx.Context)
 	if !ok {
 		info = pkgvol.GetVolumeInfoFromVM(vm, moVM)
 	}
@@ -1574,7 +1574,7 @@ func updateVolumeStatus(vmCtx pkgctx.VirtualMachineContext) {
 			// The disk is already in the list of volume statuses, so update the
 			// existing status with the usage information.
 			ddi, _ := vmdk.GetVirtualDiskInfoByUUID(
-				vmCtx,
+				vmCtx.Context,
 				nil,         /* no client since props aren't re-fetched */
 				moVM,        /* use props from this object */
 				false,       /* do not refetch props */
@@ -1633,7 +1633,7 @@ func updateVolumeStatus(vmCtx pkgctx.VirtualMachineContext) {
 			// The disk is a classic, non-FCD that must be added to the list
 			// of volume statuses.
 			ddi, _ := vmdk.GetVirtualDiskInfoByUUID(
-				vmCtx,
+				vmCtx.Context,
 				nil,         /* no client since props aren't re-fetched */
 				moVM,        /* use props from this object */
 				false,       /* do not refetch props */
@@ -1822,7 +1822,7 @@ func updateProbeStatusGuestInfo(
 // recursively updating snapshots' childrenList status
 // and updates the VM's current and root snapshots status.
 func SyncVMSnapshotTreeStatus(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) error {
 	vmCtx.Logger.V(4).Info("Syncing snapshot tree status")
 
@@ -1840,7 +1840,7 @@ func SyncVMSnapshotTreeStatus(
 // updateSnapshotTreeChildrenStatus updates Status.Children for
 // every snapshot in the VM's snapshot tree.
 func updateSnapshotTreeChildrenStatus(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) error {
 	mo := vmCtx.MoVM
 	if mo.Snapshot == nil || len(mo.Snapshot.RootSnapshotList) == 0 {
@@ -1859,7 +1859,7 @@ func updateSnapshotTreeChildrenStatus(
 // for the current snapshot (if CR exists),
 // and ensures its Status.Children is up-to-date.
 func updateSnapshotChildrenStatus(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	node vimtypes.VirtualMachineSnapshotTree,
 ) (*vmopv1.VirtualMachineSnapshotReference, error) {
@@ -1900,7 +1900,7 @@ func updateSnapshotChildrenStatus(
 	if !sameChildrenList(curSnapshot.Status.Children, children) {
 		patch := ctrlclient.MergeFrom(curSnapshot.DeepCopy())
 		curSnapshot.Status.Children = children
-		if err := k8sClient.Status().Patch(vmCtx, curSnapshot, patch); err != nil {
+		if err := k8sClient.Status().Patch(vmCtx.Context, curSnapshot, patch); err != nil {
 			return nil, fmt.Errorf("failed to update snapshot children status %q: %w",
 				curSnapshot.Name, err)
 		}
@@ -1919,7 +1919,7 @@ func updateSnapshotChildrenStatus(
 // If the snapshot custom resource is not found, it returns nil.
 // Return other errors otherwise.
 func getSnapshotCR(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	snapshotName string,
 ) (*vmopv1.VirtualMachineSnapshot, error) {
@@ -1930,7 +1930,7 @@ func getSnapshotCR(
 		Namespace: vmCtx.VM.Namespace,
 	}
 
-	if err := k8sClient.Get(vmCtx, objKey, vmSnapshot); err != nil {
+	if err := k8sClient.Get(vmCtx.Context, objKey, vmSnapshot); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get VirtualMachineSnapshot %q: %w",
 				snapshotName, err)
@@ -1947,7 +1947,7 @@ func getSnapshotCR(
 // updateCurrentSnapshotStatus updates the VM status to reflect the
 // current snapshot on the VM.
 func updateCurrentSnapshotStatus(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) error {
 
 	vmCtx.Logger.V(5).Info("Updating current snapshot in VM status")
@@ -2025,7 +2025,7 @@ func updateCurrentSnapshotStatus(
 // updateRootSnapshots updates the VM status to reflect the
 // root snapshots on the VM.
 func updateRootSnapshots(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) error {
 	vmCtx.Logger.V(4).Info("Updating root snapshots in VM status")
 
@@ -2098,7 +2098,7 @@ func sameChildrenList(a, b []vmopv1.VirtualMachineSnapshotReference) bool {
 // reconcileStatusController updates the VM's status.hardware.controllers field
 // with information about all the controller types.
 func reconcileStatusController(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -2246,7 +2246,7 @@ func reconcileStatusController(
 // running in the same pass: whichever last touches the condition this cycle
 // wins, and both independently agree on non-error cases.
 func reconcileStatusExtraConfig(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -2315,7 +2315,7 @@ func reconcileStatusExtraConfig(
 	// mistaken for an ExtraConfig mismatch) and route it by vmxmode, mirroring
 	// extraconfig.Reconcile's use of the same diff.
 	applied, deferred, powerCyclePending := extraconfig.VMExtraConfigDiff(
-		vmCtx, vm, observed, managedKeys, nil)
+		vmCtx.Context, vm, observed, managedKeys, nil)
 
 	switch {
 	case len(deferred) > 0:
@@ -2369,7 +2369,7 @@ func reconcileStatusExtraConfig(
 // OnResult running in the same pass: whichever last touches the condition
 // this cycle wins, and both independently agree on non-error cases.
 func reconcileStatusNetworkExtraConfig(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ ctrlclient.Client,
 	_ *object.VirtualMachine,
 	_ ReconcileStatusData) []error { //nolint:unparam
@@ -2394,7 +2394,7 @@ func reconcileStatusNetworkExtraConfig(
 	// route it by vmxmode, mirroring networkextraconfig.Reconcile's use of
 	// the same diff.
 	applied, deferred, powerCyclePending := networkextraconfig.NICExtraConfigDiff(
-		vmCtx, observed, overlay, nil, poweredOn)
+		vmCtx.Context, observed, overlay, nil, poweredOn)
 	blockedPowerOff = append(blockedPowerOff, deferred...)
 
 	// A prior cycle may have left vmx.reboot.powerCycle=TRUE on the VM: see
@@ -2448,7 +2448,7 @@ func reconcileStatusNetworkExtraConfig(
 // assembled desired-state overlay for the diff in reconcileStatusNetworkExtraConfig,
 // plus any prerequisite/power-off blockers collected along the way.
 func reconcileStatusNetworkExtraConfigInterfaces(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	moVM mo.VirtualMachine,
 	configInfo vimtypes.VirtualMachineConfigInfo,
 	observed pkgutil.OptionValues,
@@ -2457,7 +2457,7 @@ func reconcileStatusNetworkExtraConfigInterfaces(
 
 	vm := vmCtx.VM
 	sortedNICKeys := vmopv1util.SortedVMXNet3NICKeys()
-	log := pkglog.FromContextOrDefault(vmCtx)
+	log := pkglog.FromContextOrDefault(vmCtx.Context)
 
 	for i, iface := range vm.Spec.Network.Interfaces {
 		matchedDev := matcher(iface, i)
@@ -2475,7 +2475,7 @@ func reconcileStatusNetworkExtraConfigInterfaces(
 		managed := extraconfig.LoadDeviceManagedKeys(observed, mkKey)
 		prefix := vmopv1util.EthernetExtraConfigPrefix(devKey)
 
-		overlay = append(overlay, networkextraconfig.DesiredNICExtraConfig(vmCtx, iface, devKey, managed)...)
+		overlay = append(overlay, networkextraconfig.DesiredNICExtraConfig(vmCtx.Context, iface, devKey, managed)...)
 
 		// First-class ExtraConfig fields: expand template keys with the
 		// device's namespace index to get the live VMX key.
@@ -2489,7 +2489,7 @@ func reconcileStatusNetworkExtraConfigInterfaces(
 
 		// Managed bag keys. Same "also check spec-requested keys" reasoning
 		// as reconcileStatusExtraConfig's bagKeyCandidates.
-		bagKeyCandidates := networkextraconfig.NICSpecBagKeys(vmCtx, iface)
+		bagKeyCandidates := networkextraconfig.NICSpecBagKeys(vmCtx.Context, iface)
 		bagKeyCandidates.Insert(managed...)
 		for _, k := range sets.List(bagKeyCandidates) {
 			fullKey := prefix + k

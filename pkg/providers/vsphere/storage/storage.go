@@ -38,10 +38,10 @@ func getStorageClassAndPolicyID(
 }
 
 func GetVMStorageData(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client) (VMStorageData, error) {
 
-	storageClassNames, pvcs, err := getVMStorageClassNamesAndPVCs(vmCtx, vmCtx.VM, client)
+	storageClassNames, pvcs, err := getVMStorageClassNamesAndPVCs(vmCtx.Context, vmCtx.VM, client)
 	if err != nil {
 		return VMStorageData{}, err
 	}
@@ -54,7 +54,7 @@ func GetVMStorageData(
 
 	for _, name := range storageClassNames {
 		if _, ok := data.StorageClassToPolicyID[name]; !ok {
-			storageClass, policyID, err := getStorageClassAndPolicyID(vmCtx, client, name)
+			storageClass, policyID, err := getStorageClassAndPolicyID(vmCtx.Context, client, name)
 			if err != nil {
 				return VMStorageData{}, err
 			}

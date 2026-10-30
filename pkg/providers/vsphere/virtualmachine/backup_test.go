@@ -51,7 +51,7 @@ func backupTests() {
 	var (
 		ctx           *builder.TestContextForVCSim
 		vcVM          *object.VirtualMachine
-		vmCtx         pkgctx.VirtualMachineContext
+		vmCtx         *pkgctx.VirtualMachineContext
 		testConfig    builder.VCSimTestConfig
 		vcSimDiskUUID string
 	)
@@ -96,13 +96,13 @@ func backupTests() {
 				Expect(err).NotTo(HaveOccurred())
 
 				logger := testutil.GinkgoLogr(5)
-				vmCtx = pkgctx.VirtualMachineContext{
+				vmCtx = &pkgctx.VirtualMachineContext{
 					Context: logr.NewContext(ctx, logger),
 					Logger:  logger.WithValues("vmName", vcVM.Name()),
 					VM:      builder.DummyVirtualMachine(),
 				}
 
-				err = vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+				err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Add last-apply annotation and managed fields to verify they are not backed up in VM's ExtraConfig.
@@ -112,7 +112,24 @@ func backupTests() {
 
 			AfterEach(func() {
 				// Backing up the YAML should not result in an update op being flagged.
-				Expect(ctxop.IsUpdate(vmCtx)).To(BeFalse())
+				Expect(ctxop.IsUpdate(vmCtx.Context)).To(BeFalse())
+			})
+
+			It("should fetch missing backup properties without replacing the caller's managed object", func() {
+				vmCtx.MoVM.Config = nil
+				originalMoVM := vmCtx.MoVM
+				opts := virtualmachine.BackupVirtualMachineOptions{
+					VMCtx: vmCtx,
+					VcVM:  vcVM,
+				}
+				if IncrementalRestore {
+					opts.BackupVersion = vT1
+				}
+
+				Expect(virtualmachine.BackupVirtualMachine(opts)).To(MatchError(virtualmachine.ErrBackingUp))
+				Expect(vmCtx.MoVM).To(Equal(originalMoVM))
+				verifyBackupDataInExtraConfig(ctx, vcVM, backupapi.VMResourceYAMLExtraConfigKey,
+					getExpectedBackupObjectYAML(vmCtx.VM.DeepCopy()), true)
 			})
 
 			Context("Backup VM Resource YAML", func() {
@@ -170,7 +187,7 @@ func backupTests() {
 							})
 						}
 
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
@@ -233,7 +250,7 @@ func backupTests() {
 							})
 						}
 
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
@@ -294,7 +311,7 @@ func backupTests() {
 							})
 						}
 
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
@@ -354,12 +371,12 @@ func backupTests() {
 								Value: vT2,
 							})
 						}
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
 
-						err = vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+						err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 						Expect(err).NotTo(HaveOccurred())
 					})
 
@@ -435,7 +452,7 @@ func backupTests() {
 							})
 						}
 
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
@@ -497,7 +514,7 @@ func backupTests() {
 							})
 						}
 
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
@@ -562,12 +579,12 @@ func backupTests() {
 							})
 						}
 
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
 
-						err = vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+						err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 						Expect(err).NotTo(HaveOccurred())
 					})
 
@@ -673,7 +690,7 @@ func backupTests() {
 							})
 						}
 
-						_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+						_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 							ExtraConfig: extraConfig,
 						})
 						Expect(err).NotTo(HaveOccurred())
@@ -733,7 +750,7 @@ func backupTests() {
 
 						Expect(virtualmachine.BackupVirtualMachine(backupOpts)).To(MatchError(virtualmachine.ErrBackingUp))
 
-						err := vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &backupOpts.VMCtx.MoVM)
+						err := vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &backupOpts.VMCtx.MoVM)
 						Expect(err).NotTo(HaveOccurred())
 
 						backupOpts.DiskUUIDToPVC = nil
@@ -777,12 +794,12 @@ func backupTests() {
 								},
 							}
 
-							_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+							_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 								ExtraConfig: extraConfig,
 							})
 							Expect(err).NotTo(HaveOccurred())
 
-							err = vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+							err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 							Expect(err).NotTo(HaveOccurred())
 						})
 
@@ -848,12 +865,12 @@ func backupTests() {
 								},
 							}
 
-							_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+							_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 								ExtraConfig: extraConfig,
 							})
 							Expect(err).NotTo(HaveOccurred())
 
-							err = vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+							err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 							Expect(err).NotTo(HaveOccurred())
 						})
 
@@ -895,7 +912,7 @@ func backupTests() {
 								},
 							}
 
-							_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+							_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 								ExtraConfig: extraConfig,
 							})
 							Expect(err).NotTo(HaveOccurred())
@@ -936,12 +953,12 @@ func backupTests() {
 								},
 							}
 
-							_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+							_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 								ExtraConfig: extraConfig,
 							})
 							Expect(err).NotTo(HaveOccurred())
 
-							err = vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+							err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 							Expect(err).NotTo(HaveOccurred())
 						})
 
@@ -981,12 +998,12 @@ func backupTests() {
 								},
 							}
 
-							_, err = vcVM.Reconfigure(vmCtx, vimtypes.VirtualMachineConfigSpec{
+							_, err = vcVM.Reconfigure(vmCtx.Context, vimtypes.VirtualMachineConfigSpec{
 								ExtraConfig: extraConfig,
 							})
 							Expect(err).NotTo(HaveOccurred())
 
-							err = vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+							err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 							Expect(err).NotTo(HaveOccurred())
 						})
 
@@ -1056,7 +1073,7 @@ func backupTests() {
 							}
 							Expect(virtualmachine.BackupVirtualMachine(backupOpts)).To(MatchError(virtualmachine.ErrBackingUp))
 
-							err := vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+							err := vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 							Expect(err).NotTo(HaveOccurred())
 						})
 
@@ -1085,7 +1102,7 @@ func backupTests() {
 							}
 							Expect(virtualmachine.BackupVirtualMachine(backupOpts)).To(MatchError(virtualmachine.ErrBackingUp))
 
-							err := vcVM.Properties(vmCtx, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
+							err := vcVM.Properties(vmCtx.Context, vcVM.Reference(), vsphere.VMUpdatePropertiesSelector, &vmCtx.MoVM)
 							Expect(err).NotTo(HaveOccurred())
 						})
 

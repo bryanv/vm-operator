@@ -77,7 +77,7 @@ var (
 )
 
 func DoBootstrap( //nolint:gocyclo
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	config *vimtypes.VirtualMachineConfigInfo,
 	bootstrapArgs BootstrapArgs) error {
@@ -245,7 +245,7 @@ func DoBootstrap( //nolint:gocyclo
 // GetBootstrapArgs returns the information used to bootstrap the VM via
 // one of the many, possible bootstrap engines.
 func GetBootstrapArgs(
-	ctx pkgctx.VirtualMachineContext,
+	ctx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	bootstraps []network.Bootstrap,
 	updatedEthCards bool,
@@ -306,7 +306,7 @@ func GetBootstrapArgs(
 	}
 
 	if getDNSInformationFromConfigMap {
-		ns, ss, err := config.GetDNSInformationFromConfigMap(ctx, k8sClient)
+		ns, ss, err := config.GetDNSInformationFromConfigMap(ctx.Context, k8sClient)
 		if err != nil && ctrlclient.IgnoreNotFound(err) != nil {
 			// This ConfigMap doesn't exist in certain test envs.
 			return BootstrapArgs{}, err
@@ -349,7 +349,7 @@ func GetBootstrapArgs(
 }
 
 func doReconfigure(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	configSpec *vimtypes.VirtualMachineConfigSpec) error {
 
@@ -357,7 +357,7 @@ func doReconfigure(
 	if !apiEquality.Semantic.DeepEqual(configSpec, defaultConfigSpec) {
 		logConfigSpec(vmCtx, *configSpec)
 
-		if _, err := resources.NewVMFromObject(vcVM).Reconfigure(vmCtx, configSpec); err != nil {
+		if _, err := resources.NewVMFromObject(vcVM).Reconfigure(vmCtx.Context, configSpec); err != nil {
 			vmCtx.Logger.Error(err, "customization reconfigure failed")
 			return err
 		}
@@ -367,7 +367,7 @@ func doReconfigure(
 }
 
 func doCustomize(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	config *vimtypes.VirtualMachineConfigInfo,
 	customSpec *vimtypes.CustomizationSpec) error {
@@ -390,7 +390,7 @@ func doCustomize(
 
 	logCustomizationSpec(vmCtx, *customSpec)
 
-	if err := resources.NewVMFromObject(vcVM).Customize(vmCtx, *customSpec); err != nil {
+	if err := resources.NewVMFromObject(vcVM).Customize(vmCtx.Context, *customSpec); err != nil {
 		// isCustomizationPendingExtraConfig() above is supposed to prevent this error, but
 		// handle it explicitly here just in case so VM reconciliation can proceed.
 		if !fault.Is(err, &vimtypes.CustomizationPending{}) {
@@ -413,10 +413,10 @@ func IsCustomizationPendingExtraConfig(extraConfig []vimtypes.BaseOptionValue) b
 }
 
 func logConfigSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	configSpec vimtypes.VirtualMachineConfigSpec) {
 
-	if !pkgcfg.FromContext(vmCtx).LogSensitiveData {
+	if !pkgcfg.FromContext(vmCtx.Context).LogSensitiveData {
 		configSpec = SanitizeConfigSpec(configSpec)
 	}
 
@@ -463,10 +463,10 @@ func SanitizeConfigSpec(cs vimtypes.VirtualMachineConfigSpec) vimtypes.VirtualMa
 }
 
 func logCustomizationSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	customizationSpec vimtypes.CustomizationSpec) {
 
-	if !pkgcfg.FromContext(vmCtx).LogSensitiveData {
+	if !pkgcfg.FromContext(vmCtx.Context).LogSensitiveData {
 		customizationSpec = SanitizeCustomizationSpec(customizationSpec)
 	}
 

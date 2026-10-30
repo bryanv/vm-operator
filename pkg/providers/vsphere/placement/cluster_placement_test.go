@@ -60,10 +60,10 @@ func createValidRecommendation() (vimtypes.ClusterRecommendation, *vimtypes.Virt
 }
 
 var _ = Describe("ParsePlaceVMResponse", func() {
-	var vmCtx pkgctx.VirtualMachineContext
+	var vmCtx *pkgctx.VirtualMachineContext
 
 	BeforeEach(func() {
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: context.TODO(),
 			VM:      builder.DummyVirtualMachine(),
 			Logger:  suite.GetLogger(),

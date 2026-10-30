@@ -23,15 +23,15 @@ type Session struct {
 	ClusterMoRef types.ManagedObjectReference
 }
 
-func (s *Session) invokeFsrVirtualMachine(vmCtx pkgctx.VirtualMachineContext) error {
+func (s *Session) invokeFsrVirtualMachine(vmCtx *pkgctx.VirtualMachineContext) error {
 	vmCtx.Logger.Info("Invoking FSR on VM")
 
-	task, err := internal.VirtualMachineFSR(vmCtx, vmCtx.MoVM.Self, s.Client.VimClient())
+	task, err := internal.VirtualMachineFSR(vmCtx.Context, vmCtx.MoVM.Self, s.Client.VimClient())
 	if err != nil {
 		return fmt.Errorf("failed to invoke FSR: %w", err)
 	}
 
-	if err = task.Wait(vmCtx); err != nil {
+	if err = task.Wait(vmCtx.Context); err != nil {
 		return fmt.Errorf("failed to wait on FSR task: %w", err)
 	}
 

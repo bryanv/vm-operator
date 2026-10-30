@@ -35,7 +35,7 @@ var _ = Describe("TemplateVMMetadata", func() {
 	)
 
 	var (
-		vmCtx  pkgctx.VirtualMachineContext
+		vmCtx  *pkgctx.VirtualMachineContext
 		vm     *vmopv1.VirtualMachine
 		bsArgs *vmlifecycle.BootstrapArgs
 	)
@@ -48,7 +48,7 @@ var _ = Describe("TemplateVMMetadata", func() {
 			},
 		}
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: context.Background(),
 			Logger:  suite.GetLogger().WithName("bootstrap-template-tests"),
 			VM:      vm,

@@ -24,11 +24,11 @@ var VMDeletePropertiesSelector = []string{
 }
 
 func DeleteVirtualMachine(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) error {
 
 	if _, err := vmutil.SetAndWaitOnPowerState(
-		logr.NewContext(vmCtx, vmCtx.Logger),
+		logr.NewContext(vmCtx.Context, vmCtx.Logger),
 		vcVM.Client(),
 		vmutil.ManagedObjectFromObject(vcVM),
 		false,
@@ -38,12 +38,12 @@ func DeleteVirtualMachine(
 		return err
 	}
 
-	t, err := vcVM.Destroy(vmCtx)
+	t, err := vcVM.Destroy(vmCtx.Context)
 	if err != nil {
 		return err
 	}
 
-	if taskInfo, err := t.WaitForResult(vmCtx); err != nil {
+	if taskInfo, err := t.WaitForResult(vmCtx.Context); err != nil {
 		if taskInfo != nil {
 			vmCtx.Logger.V(5).Error(err, "destroy VM task failed", "taskInfo", taskInfo)
 		}

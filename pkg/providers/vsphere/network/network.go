@@ -486,19 +486,19 @@ func getNetworkInterfaceBacking(
 //     Note that for existing v1a1 VMs we may need to add legacy name support here to
 //     find their interface CRs.
 func CreateAndWaitForNetworkInterfaces(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	vimClient *vim25.Client,
 	finder *find.Finder,
 	clusterMoRef *vimtypes.ManagedObjectReference,
 	networkSpec *vmopv1.VirtualMachineNetworkSpec) ([]Device, error) {
 
-	if !pkgcfg.FromContext(vmCtx).Features.PerNamespaceNetworkProvider {
-		switch pkgcfg.FromContext(vmCtx).NetworkProviderType {
+	if !pkgcfg.FromContext(vmCtx.Context).Features.PerNamespaceNetworkProvider {
+		switch pkgcfg.FromContext(vmCtx.Context).NetworkProviderType {
 		case pkgcfg.NetworkProviderTypeNamed:
 			// Named network is a testing only hack that does not have a CR so
 			// handle it separately.
-			return createAndWaitNamedNetworkInterfaces(vmCtx, vmCtx.VM, finder)
+			return createAndWaitNamedNetworkInterfaces(vmCtx.Context, vmCtx.VM, finder)
 		case "":
 			return nil, fmt.Errorf("no network provider set")
 		default:
@@ -536,7 +536,7 @@ func CreateAndWaitForNetworkInterfaces(
 			continue
 		}
 
-		if pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers {
+		if pkgcfg.FromContext(vmCtx.Context).Features.VMNetworkUnitNumbers {
 			dev.UnitNumber = interfaceSpec.UnitNumber
 		}
 
@@ -723,19 +723,19 @@ func createNetOPNetworkInterface(
 }
 
 func createAndWaitNetOPNetworkInterface(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	vimClient *vim25.Client,
 	clusterMoRef *vimtypes.ManagedObjectReference,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 ) (Device, error) {
 
-	netIf, err := createNetOPNetworkInterface(vmCtx, vmCtx.VM, client, interfaceSpec)
+	netIf, err := createNetOPNetworkInterface(vmCtx.Context, vmCtx.VM, client, interfaceSpec)
 	if err != nil {
 		return Device{}, err
 	}
 
-	dev, err := getNetOPNetworkInterfaceDevice(vmCtx, vimClient, netIf, clusterMoRef, interfaceSpec)
+	dev, err := getNetOPNetworkInterfaceDevice(vmCtx.Context, vimClient, netIf, clusterMoRef, interfaceSpec)
 	if err != nil {
 		if errors.Is(err, ErrNetworkInterfaceNotReady) {
 			netIf, err = waitForReadyNetworkInterface(vmCtx, client, netIf.Name)
@@ -744,7 +744,7 @@ func createAndWaitNetOPNetworkInterface(
 			return Device{}, err
 		}
 
-		dev, err = getNetOPNetworkInterfaceDevice(vmCtx, vimClient, netIf, clusterMoRef, interfaceSpec)
+		dev, err = getNetOPNetworkInterfaceDevice(vmCtx.Context, vimClient, netIf, clusterMoRef, interfaceSpec)
 		if err != nil {
 			return Device{}, err
 		}
@@ -867,7 +867,7 @@ func findNetOPCondition(
 }
 
 func waitForReadyNetworkInterface(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	name string) (*netopv1alpha1.NetworkInterface, error) {
 
@@ -875,8 +875,8 @@ func waitForReadyNetworkInterface(
 	netIfKey := types.NamespacedName{Namespace: vmCtx.VM.Namespace, Name: name}
 
 	// TODO: Watch() this type instead.
-	err := wait.PollUntilContextTimeout(vmCtx, retryInterval, RetryTimeout, true, func(_ context.Context) (bool, error) {
-		if err := client.Get(vmCtx, netIfKey, netIf); err != nil {
+	err := wait.PollUntilContextTimeout(vmCtx.Context, retryInterval, RetryTimeout, true, func(_ context.Context) (bool, error) {
+		if err := client.Get(vmCtx.Context, netIfKey, netIf); err != nil {
 			return false, ctrlclient.IgnoreNotFound(err)
 		}
 
@@ -976,19 +976,19 @@ func createNCPNetworkInterface(
 }
 
 func createAndWaitNCPNetworkInterface(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	vimClient *vim25.Client,
 	clusterMoRef *vimtypes.ManagedObjectReference,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 ) (Device, error) {
 
-	vnetIf, err := createNCPNetworkInterface(vmCtx, vmCtx.VM, client, interfaceSpec)
+	vnetIf, err := createNCPNetworkInterface(vmCtx.Context, vmCtx.VM, client, interfaceSpec)
 	if err != nil {
 		return Device{}, err
 	}
 
-	dev, err := getNCPNetworkInterfaceDevice(vmCtx, vimClient, clusterMoRef, vnetIf, interfaceSpec)
+	dev, err := getNCPNetworkInterfaceDevice(vmCtx.Context, vimClient, clusterMoRef, vnetIf, interfaceSpec)
 	if err != nil {
 		if errors.Is(err, ErrNetworkInterfaceNotReady) {
 			vnetIf, err = waitForReadyNCPNetworkInterface(vmCtx, client, vnetIf.Name)
@@ -997,7 +997,7 @@ func createAndWaitNCPNetworkInterface(
 			return Device{}, err
 		}
 
-		dev, err = getNCPNetworkInterfaceDevice(vmCtx, vimClient, clusterMoRef, vnetIf, interfaceSpec)
+		dev, err = getNCPNetworkInterfaceDevice(vmCtx.Context, vimClient, clusterMoRef, vnetIf, interfaceSpec)
 		if err != nil {
 			return Device{}, err
 		}
@@ -1128,19 +1128,19 @@ func createVPCNetworkInterface(
 }
 
 func createAndWaitVPCNetworkInterface(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	vimClient *vim25.Client,
 	clusterMoRef *vimtypes.ManagedObjectReference,
 	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
 ) (Device, error) {
 
-	subnetPort, err := createVPCNetworkInterface(vmCtx, vmCtx.VM, client, interfaceSpec)
+	subnetPort, err := createVPCNetworkInterface(vmCtx.Context, vmCtx.VM, client, interfaceSpec)
 	if err != nil {
 		return Device{}, err
 	}
 
-	dev, err := getVPCSubnetPortDevice(vmCtx, vimClient, clusterMoRef, subnetPort, interfaceSpec)
+	dev, err := getVPCSubnetPortDevice(vmCtx.Context, vimClient, clusterMoRef, subnetPort, interfaceSpec)
 	if err != nil {
 		if errors.Is(err, ErrNetworkInterfaceNotReady) {
 			subnetPort, err = waitForReadyVPCSubnetPort(vmCtx, client, subnetPort.Name)
@@ -1149,7 +1149,7 @@ func createAndWaitVPCNetworkInterface(
 			return Device{}, err
 		}
 
-		dev, err = getVPCSubnetPortDevice(vmCtx, vimClient, clusterMoRef, subnetPort, interfaceSpec)
+		dev, err = getVPCSubnetPortDevice(vmCtx.Context, vimClient, clusterMoRef, subnetPort, interfaceSpec)
 		if err != nil {
 			return Device{}, err
 		}
@@ -1159,7 +1159,7 @@ func createAndWaitVPCNetworkInterface(
 }
 
 func waitForReadyVPCSubnetPort(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	name string) (*vpcv1alpha1.SubnetPort, error) {
 
@@ -1167,8 +1167,8 @@ func waitForReadyVPCSubnetPort(
 	subnetPortKey := types.NamespacedName{Namespace: vmCtx.VM.Namespace, Name: name}
 
 	// TODO: Watch() this type instead.
-	err := wait.PollUntilContextTimeout(vmCtx, retryInterval, RetryTimeout, true, func(_ context.Context) (bool, error) {
-		if err := client.Get(vmCtx, subnetPortKey, subnetPort); err != nil {
+	err := wait.PollUntilContextTimeout(vmCtx.Context, retryInterval, RetryTimeout, true, func(_ context.Context) (bool, error) {
+		if err := client.Get(vmCtx.Context, subnetPortKey, subnetPort); err != nil {
 			return false, ctrlclient.IgnoreNotFound(err)
 		}
 
@@ -1200,7 +1200,7 @@ func waitForReadyVPCSubnetPort(
 }
 
 func waitForReadyNCPNetworkInterface(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	name string) (*ncpv1alpha1.VirtualNetworkInterface, error) {
 
@@ -1208,8 +1208,8 @@ func waitForReadyNCPNetworkInterface(
 	vnetIfKey := types.NamespacedName{Namespace: vmCtx.VM.Namespace, Name: name}
 
 	// TODO: Watch() this type instead.
-	err := wait.PollUntilContextTimeout(vmCtx, retryInterval, RetryTimeout, true, func(_ context.Context) (bool, error) {
-		if err := client.Get(vmCtx, vnetIfKey, vnetIf); err != nil {
+	err := wait.PollUntilContextTimeout(vmCtx.Context, retryInterval, RetryTimeout, true, func(_ context.Context) (bool, error) {
+		if err := client.Get(vmCtx.Context, vnetIfKey, vnetIf); err != nil {
 			return false, ctrlclient.IgnoreNotFound(err)
 		}
 

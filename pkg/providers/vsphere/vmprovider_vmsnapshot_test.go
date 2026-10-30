@@ -51,7 +51,7 @@ var _ = Describe(
 			vmSnapshot  *vmopv1.VirtualMachineSnapshot
 			vcVM        *object.VirtualMachine
 			vm          *vmopv1.VirtualMachine
-			vmCtx       pkgctx.VirtualMachineContext
+			vmCtx       *pkgctx.VirtualMachineContext
 		)
 
 		BeforeEach(func() {
@@ -78,7 +78,7 @@ var _ = Describe(
 
 			By("Creating snapshot on vSphere")
 			logger := testutil.GinkgoLogr(5)
-			vmCtx = pkgctx.VirtualMachineContext{
+			vmCtx = &pkgctx.VirtualMachineContext{
 				Context: logr.NewContext(ctx, logger),
 				Logger:  logger.WithValues("vmName", vcVM.Name()),
 				VM:      vm,
@@ -99,7 +99,7 @@ var _ = Describe(
 			initObjects = nil
 			vmProvider = nil
 			vmSnapshot = nil
-			vmCtx = pkgctx.VirtualMachineContext{}
+			vmCtx = &pkgctx.VirtualMachineContext{}
 			vm = nil
 			nsInfo = builder.WorkloadNamespaceInfo{}
 		})

@@ -61,7 +61,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 		parentCtx  context.Context
 		ctx        *builder.TestContextForVCSim
 
-		vmCtx       pkgctx.VirtualMachineContext
+		vmCtx       *pkgctx.VirtualMachineContext
 		vm          *vmopv1.VirtualMachine
 		networkSpec *vmopv1.VirtualMachineNetworkSpec
 
@@ -93,7 +93,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 	JustBeforeEach(func() {
 		ctx = builder.NewTestContextForVCSim(parentCtx, testConfig, initObjects...)
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithName("network_test"),
 			VM:      vm,
@@ -150,7 +150,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					Expect(backingInfo.Port.PortgroupKey).To(Equal(dvpg.Reference().Value))
 				})
 
-				bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+				bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 				Expect(err).ToNot(HaveOccurred())
 				bs := bootstraps[0]
 				Expect(bs.DHCP4).To(BeFalse())
@@ -315,7 +315,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 				Expect(dev.Backing.Reference()).To(Equal(ctx.GetNetwork(0).Backing.Reference()))
 				Expect(dev.InterfaceName).To(Equal(interfaceName))
 
-				bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+				bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 				Expect(err).ToNot(HaveOccurred())
 				bs := bootstraps[0]
 				Expect(bs.GuestDeviceName).To(Equal(interfaceName))
@@ -457,7 +457,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					Expect(dev.Backing.Reference()).To(Equal(ctx.GetNetwork(0).Backing.Reference()))
 					Expect(dev.InterfaceName).To(Equal(interfaceName))
 
-					bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+					bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 					Expect(err).ToNot(HaveOccurred())
 					bs := bootstraps[0]
 					Expect(bs.GuestDeviceName).To(Equal(interfaceName))
@@ -937,7 +937,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 				Expect(ok).To(BeTrue())
 				Expect(opaqueNetwork.OpaqueNetworkId).To(Equal(ctx.GetNetwork(0).LogicalSwitchUUID))
 
-				bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+				bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 				Expect(err).ToNot(HaveOccurred())
 				bs := bootstraps[0]
 				Expect(bs.IPConfigs).To(HaveLen(2))
@@ -1050,7 +1050,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					Expect(ok).To(BeTrue())
 					Expect(opaqueNetwork.OpaqueNetworkId).To(Equal(ctx.GetNetwork(0).LogicalSwitchUUID))
 
-					bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+					bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 					Expect(err).ToNot(HaveOccurred())
 					bs := bootstraps[0]
 					Expect(bs.IPConfigs).To(HaveLen(2))
@@ -1177,7 +1177,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 				Expect(ok).To(BeTrue())
 				Expect(opaqueNetwork.OpaqueNetworkId).To(Equal(ctx.GetNetwork(0).LogicalSwitchUUID))
 
-				bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+				bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 				Expect(err).ToNot(HaveOccurred())
 				bs := bootstraps[0]
 				Expect(bs.IPConfigs).To(HaveLen(2))
@@ -1265,7 +1265,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					dev := devices[0]
 					Expect(dev.MacAddress).To(Equal(expectedMACAddress))
 
-					bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+					bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 					Expect(err).ToNot(HaveOccurred())
 					bs := bootstraps[0]
 					Expect(bs.IPConfigs).To(HaveLen(1))
@@ -1355,7 +1355,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					dev := devices[0]
 					Expect(dev.MacAddress).To(Equal(expectedMACAddress))
 
-					bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+					bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 					Expect(err).ToNot(HaveOccurred())
 					bs := bootstraps[0]
 					Expect(bs.IPConfigs).To(HaveLen(3))
@@ -1435,7 +1435,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					dev := devices[0]
 					Expect(dev.MacAddress).To(Equal(expectedMACAddress))
 
-					bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+					bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 					Expect(err).ToNot(HaveOccurred())
 					bs := bootstraps[0]
 					Expect(bs.IPConfigs).To(HaveLen(4))
@@ -1545,7 +1545,7 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					dev := devices[0]
 					Expect(dev.MacAddress).To(Equal(expectedMACAddress))
 
-					bootstraps, err := network.BuildBootstraps(vmCtx, vm, devices)
+					bootstraps, err := network.BuildBootstraps(vmCtx.Context, vm, devices)
 					Expect(err).ToNot(HaveOccurred())
 					bs := bootstraps[0]
 					Expect(bs.IPConfigs).To(HaveLen(7))

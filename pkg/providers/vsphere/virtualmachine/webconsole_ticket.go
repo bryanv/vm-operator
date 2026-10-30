@@ -23,13 +23,13 @@ import (
 )
 
 func GetWebConsoleTicket(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vm *object.VirtualMachine,
 	pubKey string) (string, error) {
 
 	vmCtx.Logger.V(5).Info("GetWebMKSTicket")
 
-	ticket, err := vm.AcquireTicket(vmCtx, string(vimtypes.VirtualMachineTicketTypeWebmks))
+	ticket, err := vm.AcquireTicket(vmCtx.Context, string(vimtypes.VirtualMachineTicketTypeWebmks))
 	if err != nil {
 		return "", err
 	}

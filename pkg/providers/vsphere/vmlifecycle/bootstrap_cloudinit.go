@@ -104,12 +104,12 @@ func BootStrapCloudInitInstanceID(
 }
 
 func BootStrapCloudInit(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	config *vimtypes.VirtualMachineConfigInfo,
 	cloudInitSpec *vmopv1.VirtualMachineBootstrapCloudInitSpec,
 	bsArgs *BootstrapArgs) (*vimtypes.VirtualMachineConfigSpec, *vimtypes.CustomizationSpec, error) {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 	logger.V(4).Info("Reconciling Cloud-Init bootstrap state")
 
 	if bsArgs.UpdatedEthCards {
@@ -168,11 +168,11 @@ func BootStrapCloudInit(
 
 	switch vmCtx.VM.Annotations[constants.CloudInitTypeAnnotation] {
 	case constants.CloudInitTypeValueCloudInitPrep:
-		configSpec, customSpec, err = GetCloudInitPrepCustSpec(vmCtx, config, metadata, userdata)
+		configSpec, customSpec, err = GetCloudInitPrepCustSpec(vmCtx.Context, config, metadata, userdata)
 	case constants.CloudInitTypeValueGuestInfo, "":
 		fallthrough
 	default:
-		configSpec, err = GetCloudInitGuestInfoCustSpec(vmCtx, config, metadata, userdata)
+		configSpec, err = GetCloudInitGuestInfoCustSpec(vmCtx.Context, config, metadata, userdata)
 	}
 
 	if err != nil {

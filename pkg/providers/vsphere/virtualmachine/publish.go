@@ -31,7 +31,7 @@ const (
 )
 
 func CreateOVF(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client *rest.Client,
 	vmPubReq *vmopv1.VirtualMachinePublishRequest,
 	cl *imgregv1a1.ContentLibrary,
@@ -66,14 +66,14 @@ func CreateOVF(
 	// Use vmpublish uid as the act id passed down to the content library service, so that we can track
 	// the task status by the act id.
 	return vcenter.NewManager(client).CreateOVF(
-		pkgutil.WithVAPIActivationID(vmCtx, client, actID),
+		pkgutil.WithVAPIActivationID(vmCtx.Context, client, actID),
 		ovf)
 }
 
 // CloneVM clones a source virtual machine, as a VM template, into an inventory-backed
 // content library as defined by the VirtualMachinePublishRequest object.
 func CloneVM(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vimClient *vim25.Client,
 	vmPubReq *vmopv1.VirtualMachinePublishRequest,
 	cl *imgregv1.ContentLibrary,
@@ -94,7 +94,7 @@ func CloneVM(
 			Value: vmCtx.VM.Status.UniqueID,
 		})
 
-	if err := vm.Properties(vmCtx, vm.Reference(), []string{"config.extraConfig", "config.hardware.device"}, &moVM); err != nil {
+	if err := vm.Properties(vmCtx.Context, vm.Reference(), []string{"config.extraConfig", "config.hardware.device"}, &moVM); err != nil {
 		return "", err
 	}
 
@@ -180,7 +180,7 @@ func CloneVM(
 		"cloneTarget", cl.Spec.ID)
 
 	cloneTask, err := vm.Clone(
-		vmCtx,
+		vmCtx.Context,
 		object.NewFolder(vimClient, folderRef),
 		targetName,
 		cloneSpec)
@@ -189,7 +189,7 @@ func CloneVM(
 		return "", fmt.Errorf("failed to call clone api: %w", err)
 	}
 
-	cloneTaskInfo, err := cloneTask.WaitForResult(vmCtx)
+	cloneTaskInfo, err := cloneTask.WaitForResult(vmCtx.Context)
 	if err != nil {
 		return "", fmt.Errorf("failed to clone VM to template: %w", err)
 	}

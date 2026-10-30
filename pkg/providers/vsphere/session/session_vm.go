@@ -15,7 +15,7 @@ import (
 )
 
 func updateVirtualDiskDeviceChanges(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	virtualDisks object.VirtualDeviceList) ([]vimtypes.BaseVirtualDeviceConfigSpec, error) {
 
 	advanced := vmCtx.VM.Spec.Advanced
@@ -106,7 +106,7 @@ func updateVirtualDiskDeviceChanges(
 // and the name of the PVC that backs it, if any. The disk is nil if the VM has
 // no disks.
 func getBootDiskInfo(
-	vmCtx pkgctx.VirtualMachineContext) (*pkgvol.VirtualDiskInfo, string) {
+	vmCtx *pkgctx.VirtualMachineContext) (*pkgvol.VirtualDiskInfo, string) {
 
 	info := pkgvol.GetVolumeInfoFromVM(vmCtx.VM, vmCtx.MoVM)
 	if len(info.Disks) == 0 {

@@ -35,7 +35,7 @@ var _ = Describe("VPCPostRestoreBackingFixup", Label(testlabels.VCSim), func() {
 		testConfig builder.VCSimTestConfig
 		ctx        *builder.TestContextForVCSim
 
-		vmCtx       pkgctx.VirtualMachineContext
+		vmCtx       *pkgctx.VirtualMachineContext
 		vm          *vmopv1.VirtualMachine
 		initObjects []client.Object
 
@@ -62,7 +62,7 @@ var _ = Describe("VPCPostRestoreBackingFixup", Label(testlabels.VCSim), func() {
 		ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
 		logger := suite.GetLogger().WithName("vpc_restore_test")
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: logr.NewContext(ctx, logger),
 			Logger:  logger,
 			VM:      vm,

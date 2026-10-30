@@ -29,12 +29,12 @@ var _ = Describe("GetVMStorageData", func() {
 		initObjects []client.Object
 		client      client.Client
 
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 	)
 
 	BeforeEach(func() {
 		vm := builder.DummyBasicVirtualMachine("storage-test", "storage-test-ns")
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: context.Background(),
 			Logger:  logf.Log,
 			VM:      vm,

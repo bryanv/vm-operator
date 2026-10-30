@@ -36,13 +36,13 @@ var _ = Describe("Utils", func() {
 		k8sClient   client.Client
 		initObjects []client.Object
 
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 	)
 
 	BeforeEach(func() {
 		vm := builder.DummyBasicVirtualMachine("test-vm", "dummy-ns")
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: pkgcfg.WithConfig(pkgcfg.Config{MaxDeployThreadsOnProvider: 16}),
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,
@@ -101,7 +101,7 @@ var _ = Describe("Utils", func() {
 				Context("FSS_WCP_MOBILITY_VM_IMPORT_NEW_NET", func() {
 					When("fss disabled", func() {
 						BeforeEach(func() {
-							pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+							pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 								config.Features.VMImportNewNet = false
 							})
 						})
@@ -111,7 +111,7 @@ var _ = Describe("Utils", func() {
 					})
 					When("fss enabled", func() {
 						BeforeEach(func() {
-							pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+							pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 								config.Features.VMImportNewNet = true
 							})
 						})
@@ -125,7 +125,7 @@ var _ = Describe("Utils", func() {
 				Context("FSS_WCP_MOBILITY_VM_IMPORT_NEW_NET", func() {
 					When("fss disabled", func() {
 						BeforeEach(func() {
-							pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+							pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 								config.Features.VMImportNewNet = false
 							})
 						})
@@ -135,7 +135,7 @@ var _ = Describe("Utils", func() {
 					})
 					When("fss enabled", func() {
 						BeforeEach(func() {
-							pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+							pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 								config.Features.VMImportNewNet = true
 							})
 						})
@@ -153,7 +153,7 @@ var _ = Describe("Utils", func() {
 			Context("FSS_WCP_MOBILITY_VM_IMPORT_NEW_NET", func() {
 				When("fss disabled", func() {
 					BeforeEach(func() {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.VMImportNewNet = false
 						})
 					})
@@ -163,7 +163,7 @@ var _ = Describe("Utils", func() {
 				})
 				When("fss enabled", func() {
 					BeforeEach(func() {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.VMImportNewNet = true
 						})
 					})
@@ -1495,7 +1495,7 @@ var _ = Describe("Utils", func() {
 		When("className is empty", func() {
 			It("returns empty config spec", func() {
 				configSpec, err := vsphere.GetVMClassConfigSpecFromClassName(
-					vmCtx, k8sClient, "", vmCtx.VM.Namespace)
+					vmCtx.Context, k8sClient, "", vmCtx.VM.Namespace)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(configSpec).To(Equal(vimtypes.VirtualMachineConfigSpec{}))
 			})
@@ -1504,7 +1504,7 @@ var _ = Describe("Utils", func() {
 		When("VM Class does not exist", func() {
 			It("returns an error", func() {
 				configSpec, err := vsphere.GetVMClassConfigSpecFromClassName(
-					vmCtx, k8sClient, "non-existent-class", vmCtx.VM.Namespace)
+					vmCtx.Context, k8sClient, "non-existent-class", vmCtx.VM.Namespace)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to get VM Class"))
 				Expect(configSpec).To(Equal(vimtypes.VirtualMachineConfigSpec{}))
@@ -1525,7 +1525,7 @@ var _ = Describe("Utils", func() {
 
 			It("returns config spec from ConfigSpec field", func() {
 				configSpec, err := vsphere.GetVMClassConfigSpecFromClassName(
-					vmCtx, k8sClient, vmClass.Name, vmCtx.VM.Namespace)
+					vmCtx.Context, k8sClient, vmClass.Name, vmCtx.VM.Namespace)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(configSpec.Name).To(Equal("test-vm"))
 				Expect(configSpec.NumCPUs).To(Equal(int32(2)))
@@ -1545,7 +1545,7 @@ var _ = Describe("Utils", func() {
 
 			It("returns config spec from hardware devices", func() {
 				configSpec, err := vsphere.GetVMClassConfigSpecFromClassName(
-					vmCtx, k8sClient, vmClass.Name, vmCtx.VM.Namespace)
+					vmCtx.Context, k8sClient, vmClass.Name, vmCtx.VM.Namespace)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(configSpec).ToNot(BeNil())
 			})
@@ -1606,7 +1606,7 @@ var _ = Describe("Utils", func() {
 		When("OVF ConfigMap does not exist", func() {
 			It("returns an error", func() {
 				configSpec, err := vsphere.GetConfigSpecFromOVFCache(
-					vmCtx, k8sClient, *vmiCache)
+					vmCtx.Context, k8sClient, *vmiCache)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to get ovf configmap"))
 				Expect(configSpec).To(Equal(vimtypes.VirtualMachineConfigSpec{}))
@@ -1620,7 +1620,7 @@ var _ = Describe("Utils", func() {
 
 			It("returns config spec from OVF", func() {
 				configSpec, err := vsphere.GetConfigSpecFromOVFCache(
-					vmCtx, k8sClient, *vmiCache)
+					vmCtx.Context, k8sClient, *vmiCache)
 				// Verify the function successfully parses the OVF ConfigMap
 				Expect(err).ToNot(HaveOccurred())
 				Expect(configSpec).ToNot(BeNil())
@@ -1659,7 +1659,7 @@ var _ = Describe("Utils", func() {
 		When("VirtualMachineImageCache does not exist", func() {
 			It("returns an error", func() {
 				cache, err := vsphere.GetVirtualMachineImageCache(
-					vmCtx, k8sClient, itemID, itemVersion, imageType, podNamespace)
+					vmCtx.Context, k8sClient, itemID, itemVersion, imageType, podNamespace)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to get vmi cache object"))
 				Expect(cache).To(Equal(vmopv1.VirtualMachineImageCache{}))
@@ -1674,7 +1674,7 @@ var _ = Describe("Utils", func() {
 
 			It("returns the cache", func() {
 				cache, err := vsphere.GetVirtualMachineImageCache(
-					vmCtx, k8sClient, itemID, itemVersion, imageType, podNamespace)
+					vmCtx.Context, k8sClient, itemID, itemVersion, imageType, podNamespace)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(cache.Name).To(Equal(util.VMIName(itemID)))
 			})
@@ -1691,7 +1691,7 @@ var _ = Describe("Utils", func() {
 
 			It("returns an error", func() {
 				cache, err := vsphere.GetVirtualMachineImageCache(
-					vmCtx, k8sClient, itemID, itemVersion, imageType, podNamespace)
+					vmCtx.Context, k8sClient, itemID, itemVersion, imageType, podNamespace)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to get hardware"))
 				Expect(cache).To(Equal(vmopv1.VirtualMachineImageCache{}))
@@ -1705,7 +1705,7 @@ var _ = Describe("Utils", func() {
 
 			It("returns an error", func() {
 				cache, err := vsphere.GetVirtualMachineImageCache(
-					vmCtx, k8sClient, itemID, itemVersion, imageType, podNamespace)
+					vmCtx.Context, k8sClient, itemID, itemVersion, imageType, podNamespace)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("hardware not ready"))
 				Expect(cache).To(Equal(vmopv1.VirtualMachineImageCache{}))
@@ -1721,7 +1721,7 @@ var _ = Describe("Utils", func() {
 
 			It("returns an error", func() {
 				cache, err := vsphere.GetVirtualMachineImageCache(
-					vmCtx, k8sClient, itemID, itemVersion, imageType, podNamespace)
+					vmCtx.Context, k8sClient, itemID, itemVersion, imageType, podNamespace)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("hardware not ready"))
 				Expect(cache).To(Equal(vmopv1.VirtualMachineImageCache{}))

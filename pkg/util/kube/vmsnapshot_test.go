@@ -268,13 +268,13 @@ var _ = Describe("PatchSnapshotSuccessStatus", func() {
 		k8sClient   ctrlclient.Client
 		initObjects []ctrlclient.Object
 
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 	)
 
 	BeforeEach(func() {
 		vm := builder.DummyBasicVirtualMachine("test-vm", "dummy-ns")
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: context.Background(),
 			VM:      vm,
 		}
@@ -342,7 +342,7 @@ var _ = Describe("PatchSnapshotSuccessStatus", func() {
 					},
 				}
 				err := kubeutil.PatchSnapshotSuccessStatus(
-					vmCtx,
+					vmCtx.Context,
 					logr.Discard(),
 					k8sClient,
 					vmSnapshot,
@@ -353,7 +353,7 @@ var _ = Describe("PatchSnapshotSuccessStatus", func() {
 
 				snapObj := &vmopv1.VirtualMachineSnapshot{}
 				Expect(k8sClient.Get(
-					vmCtx,
+					vmCtx.Context,
 					ctrlclient.ObjectKey{
 						Name:      vmSnapshot.Name,
 						Namespace: vmSnapshot.Namespace},
@@ -381,7 +381,7 @@ var _ = Describe("PatchSnapshotSuccessStatus", func() {
 					snapNode.State = vimtypes.VirtualMachinePowerStatePoweredOff
 				}
 
-				Expect(kubeutil.PatchSnapshotSuccessStatus(vmCtx,
+				Expect(kubeutil.PatchSnapshotSuccessStatus(vmCtx.Context,
 					logr.Discard(),
 					k8sClient,
 					vmSnapshot,
@@ -390,7 +390,7 @@ var _ = Describe("PatchSnapshotSuccessStatus", func() {
 					nil)).To(Succeed())
 
 				snapObj := &vmopv1.VirtualMachineSnapshot{}
-				Expect(k8sClient.Get(vmCtx,
+				Expect(k8sClient.Get(vmCtx.Context,
 					ctrlclient.ObjectKey{Name: vmSnapshot.Name, Namespace: vmSnapshot.Namespace}, snapObj)).
 					To(Succeed())
 				Expect(snapObj.Status.PowerState).To(Equal(expectedPowerState))

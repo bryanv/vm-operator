@@ -221,7 +221,7 @@ func unitTestsReconcile() {
 
 			It("Should call add to Prober Manager if ReconcileNormal fails", func() {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						return errors.New(providerError)
@@ -245,13 +245,13 @@ func unitTestsReconcile() {
 
 		When("blocking create", func() {
 			JustBeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.AsyncCreateEnabled = false
 				})
 			})
 			It("Should emit a CreateSuccess event if ReconcileNormal causes a successful VM creation", func() {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						ctxop.MarkCreate(ctx)
@@ -264,7 +264,7 @@ func unitTestsReconcile() {
 
 			It("Should emit a CreatePending event if ReconcileNormal returns a NoRequeueErr during create", func() {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						ctxop.MarkCreate(ctx)
@@ -278,7 +278,7 @@ func unitTestsReconcile() {
 
 			It("Should emit CreateFailure event if ReconcileNormal causes a failed VM create", func() {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						ctxop.MarkCreate(ctx)
@@ -293,14 +293,14 @@ func unitTestsReconcile() {
 
 		When("non-blocking create", func() {
 			JustBeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.AsyncCreateEnabled = true
 					config.AsyncSignalEnabled = true
 				})
 			})
 			It("Should emit a CreateSuccess event if ReconcileNormal causes a successful VM creation", func() {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						ctxop.MarkCreate(ctx)
@@ -313,7 +313,7 @@ func unitTestsReconcile() {
 
 			It("Should emit a CreatePending event if ReconcileNormal returns a NoRequeueErr during create", func() {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						ctxop.MarkCreate(ctx)
@@ -327,7 +327,7 @@ func unitTestsReconcile() {
 
 			It("Should emit CreateFailure event if ReconcileNormal causes a failed VM create", func() {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						ctxop.MarkCreate(ctx)
@@ -358,7 +358,7 @@ func unitTestsReconcile() {
 
 		It("Should emit UpdateSuccess event if ReconcileNormal causes a successful VM update", func() {
 			providerfake.SetCreateOrUpdateFunction(
-				vmCtx,
+				vmCtx.Context,
 				fakeVMProvider,
 				func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 					ctxop.MarkUpdate(ctx)
@@ -373,7 +373,7 @@ func unitTestsReconcile() {
 		DescribeTable("Should emit UpdateSuccess event if ReconcileNormal causes a successful VM update that returns a NoRequeueErr",
 			func(noRequeueErr error) {
 				providerfake.SetCreateOrUpdateFunction(
-					vmCtx,
+					vmCtx.Context,
 					fakeVMProvider,
 					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 						ctxop.MarkUpdate(ctx)
@@ -397,7 +397,7 @@ func unitTestsReconcile() {
 
 		It("Should emit UpdateFailure event if ReconcileNormal causes a failed VM update", func() {
 			providerfake.SetCreateOrUpdateFunction(
-				vmCtx,
+				vmCtx.Context,
 				fakeVMProvider,
 				func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 					ctxop.MarkUpdate(ctx)
@@ -411,7 +411,7 @@ func unitTestsReconcile() {
 
 		It("Should emit ReconcileNormalFailure if ReconcileNormal fails for neither create or update op", func() {
 			providerfake.SetCreateOrUpdateFunction(
-				vmCtx,
+				vmCtx.Context,
 				fakeVMProvider,
 				func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
 					return errors.New("fake")

@@ -131,7 +131,7 @@ func CheckPlacementRelocateSpec(spec *vimtypes.VirtualMachineRelocateSpec) error
 }
 
 func ParseRelocateVMResponse(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	res *vimtypes.PlacementResult) *vimtypes.VirtualMachineRelocateSpec {
 
 	for _, r := range res.Recommendations {
@@ -154,7 +154,7 @@ func ParseRelocateVMResponse(
 }
 
 func CloneVMRelocateSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	cluster *object.ClusterComputeResource,
 	vmRef vimtypes.ManagedObjectReference,
 	cloneSpec *vimtypes.VirtualMachineCloneSpec) (*vimtypes.VirtualMachineRelocateSpec, error) {
@@ -167,7 +167,7 @@ func CloneVMRelocateSpec(
 		Vm:            &vmRef,
 	}
 
-	resp, err := cluster.PlaceVm(vmCtx, placementSpec)
+	resp, err := cluster.PlaceVm(vmCtx.Context, placementSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +182,7 @@ func CloneVMRelocateSpec(
 
 // PlaceVMForCreate determines the suitable placement candidate in the cluster.
 func PlaceVMForCreate(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	cluster *object.ClusterComputeResource,
 	configSpec vimtypes.VirtualMachineConfigSpec) (*Recommendation, error) {
 
@@ -193,7 +193,7 @@ func PlaceVMForCreate(
 
 	vmCtx.Logger.V(4).Info("PlaceVM request", "placementSpec", vimtypes.ToString(placementSpec))
 
-	resp, err := cluster.PlaceVm(vmCtx, placementSpec)
+	resp, err := cluster.PlaceVm(vmCtx.Context, placementSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func PlaceVMForCreate(
 
 		for _, a := range r.Action {
 			if pa, ok := a.(*vimtypes.PlacementAction); ok {
-				if rec := relocateSpecToRecommendation(vmCtx, pa.RelocateSpec); rec != nil {
+				if rec := relocateSpecToRecommendation(vmCtx.Context, pa.RelocateSpec); rec != nil {
 					return rec, nil
 				}
 			}

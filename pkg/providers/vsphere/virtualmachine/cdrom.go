@@ -84,7 +84,7 @@ func UpdateCdromDeviceChangesWithSharedDisks(
 		return errors.New("rest client not found in context")
 	}
 
-	vmCtx := pkgctx.VirtualMachineContext{
+	vmCtx := &pkgctx.VirtualMachineContext{
 		Context: ctx,
 		Logger:  pkglog.FromContextOrDefault(ctx),
 		VM:      vm,
@@ -179,12 +179,12 @@ func UpdateCdromDeviceChangesWithSharedDisks(
 // automatic controller assignment (VMSharedDisks disabled).
 // It creates controllers on demand if needed.
 func UpdateCdromDeviceChangesLegacy(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	restClient *rest.Client,
 	k8sClient ctrlclient.Client,
 	curDevices object.VirtualDeviceList) ([]vimtypes.BaseVirtualDeviceConfigSpec, error) {
 
-	if pkgcfg.FromContext(vmCtx).Features.VMSharedDisks {
+	if pkgcfg.FromContext(vmCtx.Context).Features.VMSharedDisks {
 		return nil, nil
 	}
 
@@ -295,7 +295,7 @@ func removeObsoleteCdroms(
 // UpdateConfigSpecCdromDeviceConnection updates the connection state of the
 // VM's existing CD-ROM devices to match what specifies in VM.Spec.Cdrom list.
 func UpdateConfigSpecCdromDeviceConnection(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	restClient *rest.Client,
 	k8sClient ctrlclient.Client,
 	config *vimtypes.VirtualMachineConfigInfo,
@@ -318,7 +318,7 @@ func UpdateConfigSpecCdromDeviceConnection(
 		imageRef := specCdrom.Image
 		// Sync the content library file if needed to connect the CD-ROM device.
 		syncFile := ptr.Deref(specCdrom.Connected)
-		bFileName, err := GetBackingFileNameByImageRef(vmCtx, k8sClient, imageRef, vmCtx.VM.Namespace, syncFile, libManager)
+		bFileName, err := GetBackingFileNameByImageRef(vmCtx.Context, k8sClient, imageRef, vmCtx.VM.Namespace, syncFile, libManager)
 		if err != nil {
 			return fmt.Errorf("error getting backing file name by image ref %s: %w", imageRef, err)
 		}
@@ -488,7 +488,7 @@ func getCdromByBackingFileName(
 // the spec and looking it up in the current devices. It returns the backing
 // file name and the CD-ROM device if found.
 func findCdromBySpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	spec vmopv1.VirtualMachineCdromSpec,
 	curDevices object.VirtualDeviceList,
@@ -497,7 +497,7 @@ func findCdromBySpec(
 	// Sync the content library file if needed to connect the CD-ROM device.
 	syncFile := ptr.Deref(spec.Connected)
 	bFileName, err := GetBackingFileNameByImageRef(
-		vmCtx, k8sClient, spec.Image, vmCtx.VM.Namespace, syncFile, libManager)
+		vmCtx.Context, k8sClient, spec.Image, vmCtx.VM.Namespace, syncFile, libManager)
 	if err != nil {
 		return "", nil, fmt.Errorf(
 			"error getting backing file name by image ref %s: %w", spec.Image, err)

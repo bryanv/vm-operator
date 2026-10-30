@@ -256,7 +256,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 	var (
 		client      ctrlclient.Client
 		initObjs    []ctrlclient.Object
-		vmCtx       pkgctx.VirtualMachineContext
+		vmCtx       *pkgctx.VirtualMachineContext
 		devices     object.VirtualDeviceList
 		devKeyToIdx map[int32]int
 	)
@@ -272,7 +272,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 			},
 		}
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: pkgcfg.NewContextWithDefaultConfig(),
 			Logger:  suite.GetLogger().WithName("map_eth_devices"),
 			VM:      vm,
@@ -299,7 +299,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 	Context("Mutable networks is not enable", func() {
 		BeforeEach(func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.MutableNetworks = false
 			})
 		})
@@ -332,14 +332,14 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 	Context("Mutable networks is enabled", func() {
 		BeforeEach(func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.MutableNetworks = true
 			})
 		})
 
 		Context("VDS", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.NetworkProviderType = pkgcfg.NetworkProviderTypeVDS
 				})
 			})
@@ -468,7 +468,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 		Context("NSXT", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.NetworkProviderType = pkgcfg.NetworkProviderTypeNSXT
 				})
 			})
@@ -534,7 +534,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 		Context("VPC", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.NetworkProviderType = pkgcfg.NetworkProviderTypeVPC
 				})
 			})
@@ -675,7 +675,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 			const networkName = "my-network"
 
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.NetworkProviderType = pkgcfg.NetworkProviderTypeNamed
 				})
 
@@ -702,7 +702,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 			Context("PerNamespaceNetworkProvider is disabled", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.PerNamespaceNetworkProvider = false
 					})
 				})
@@ -725,7 +725,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 			Context("PerNamespaceNetworkProvider is enabled", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.PerNamespaceNetworkProvider = true
 					})
 				})
@@ -765,7 +765,7 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 
 		Context("Mixed VDS and VPC", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.PerNamespaceNetworkProvider = true
 				})
 			})

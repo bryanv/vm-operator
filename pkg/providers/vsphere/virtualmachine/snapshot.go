@@ -28,7 +28,7 @@ const snapshotMemoryKeyAbsentValue = -1
 
 // SnapshotArgs contains the options for createSnapshot.
 type SnapshotArgs struct {
-	VMCtx          pkgctx.VirtualMachineContext
+	VMCtx          *pkgctx.VirtualMachineContext
 	VcVM           *object.VirtualMachine
 	VMSnapshot     vmopv1.VirtualMachineSnapshot
 	RemoveChildren bool
@@ -90,7 +90,7 @@ func CreateSnapshot(args SnapshotArgs) (*vimtypes.VirtualMachineSnapshotTree, er
 	}
 
 	t, err := args.VcVM.CreateSnapshotEx(
-		args.VMCtx,
+		args.VMCtx.Context,
 		snapObj.Name,
 		snapObj.Spec.Description,
 		snapObj.Spec.Memory,
@@ -99,7 +99,7 @@ func CreateSnapshot(args SnapshotArgs) (*vimtypes.VirtualMachineSnapshotTree, er
 		return nil, err
 	}
 
-	taskInfo, err := t.WaitForResult(args.VMCtx)
+	taskInfo, err := t.WaitForResult(args.VMCtx.Context)
 	if err != nil {
 		if taskInfo != nil {
 			args.VMCtx.Logger.V(4).Error(err, "create snapshot task failed",
@@ -111,7 +111,7 @@ func CreateSnapshot(args SnapshotArgs) (*vimtypes.VirtualMachineSnapshotTree, er
 	// Fetch the newest snapshot tree.
 	moVM := mo.VirtualMachine{}
 	if err := args.VcVM.Properties(
-		args.VMCtx,
+		args.VMCtx.Context,
 		args.VcVM.Reference(),
 		[]string{"snapshot"},
 		&moVM); err != nil {
@@ -130,7 +130,7 @@ func CreateSnapshot(args SnapshotArgs) (*vimtypes.VirtualMachineSnapshotTree, er
 
 func DeleteSnapshot(args SnapshotArgs) error {
 	t, err := args.VcVM.RemoveSnapshot(
-		args.VMCtx,
+		args.VMCtx.Context,
 		args.VMSnapshot.Name,
 		args.RemoveChildren,
 		args.Consolidate)
@@ -145,7 +145,7 @@ func DeleteSnapshot(args SnapshotArgs) error {
 		return err
 	}
 
-	if err := t.Wait(args.VMCtx); err != nil {
+	if err := t.Wait(args.VMCtx.Context); err != nil {
 		args.VMCtx.Logger.V(4).Error(err, "delete snapshot task failed")
 		return err
 	}

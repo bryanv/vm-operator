@@ -23,7 +23,7 @@ import (
 
 // ListNetworkInterfaces lists all the network interfaces for the VM.
 func ListNetworkInterfaces(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 ) ([]ctrlclient.Object, error) {
 	return listInterfacesWithIgnore(vmCtx, client, nil)
@@ -32,7 +32,7 @@ func ListNetworkInterfaces(
 // ListOrphanedNetworkInterfaces gets the interfaces for a VM that are not
 // referenced by the VM Spec.Network.Interfaces.
 func ListOrphanedNetworkInterfaces(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	devices []Device,
 ) ([]ctrlclient.Object, error) {
@@ -55,12 +55,12 @@ func qualifiedInterfaceKey(providerType pkgcfg.NetworkProviderType, name string)
 }
 
 func listInterfacesWithIgnore(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	ignore sets.Set[string],
 ) ([]ctrlclient.Object, error) {
 
-	networkTypes, err := netsetutil.GetSupportedProviderTypes(vmCtx, client, vmCtx.VM.Namespace)
+	networkTypes, err := netsetutil.GetSupportedProviderTypes(vmCtx.Context, client, vmCtx.VM.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func listInterfacesWithIgnore(
 
 	if slices.Contains(networkTypes, pkgcfg.NetworkProviderTypeVDS) {
 		var list netopv1alpha1.NetworkInterfaceList
-		if err := client.List(vmCtx, &list, listOpts...); err != nil {
+		if err := client.List(vmCtx.Context, &list, listOpts...); err != nil {
 			return nil, err
 		}
 
@@ -90,7 +90,7 @@ func listInterfacesWithIgnore(
 
 	if slices.Contains(networkTypes, pkgcfg.NetworkProviderTypeNSXT) {
 		var list ncpv1alpha1.VirtualNetworkInterfaceList
-		if err := client.List(vmCtx, &list, listOpts...); err != nil {
+		if err := client.List(vmCtx.Context, &list, listOpts...); err != nil {
 			return nil, err
 		}
 
@@ -104,7 +104,7 @@ func listInterfacesWithIgnore(
 
 	if slices.Contains(networkTypes, pkgcfg.NetworkProviderTypeVPC) {
 		var list vpcv1alpha1.SubnetPortList
-		if err := client.List(vmCtx, &list, listOpts...); err != nil {
+		if err := client.List(vmCtx.Context, &list, listOpts...); err != nil {
 			return nil, err
 		}
 

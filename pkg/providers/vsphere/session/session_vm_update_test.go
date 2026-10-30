@@ -716,7 +716,7 @@ var _ = Describe("UpdateVirtualMachine", func() {
 		sess       *session.Session
 		vm         *vmopv1.VirtualMachine
 		vcVM       *object.VirtualMachine
-		vmCtx      pkgctx.VirtualMachineContext
+		vmCtx      *pkgctx.VirtualMachineContext
 		updateArgs *session.VMUpdateArgs
 		resizeArgs *session.VMResizeArgs
 		vmProps    = vsphere.VMUpdatePropertiesSelector
@@ -759,13 +759,13 @@ var _ = Describe("UpdateVirtualMachine", func() {
 		Expect(vmList).ToNot(BeEmpty())
 		vcVM = vmList[0]
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctxop.WithContext(ctx),
 			Logger:  suite.GetLogger().WithName(vcVM.Name()),
 			VM:      vm,
 		}
 
-		pkgcfg.UpdateContext(vmCtx, func(config *pkgcfg.Config) {
+		pkgcfg.UpdateContext(vmCtx.Context, func(config *pkgcfg.Config) {
 			config.NetworkProviderType = pkgcfg.NetworkProviderTypeNamed
 		})
 
@@ -832,8 +832,31 @@ var _ = Describe("UpdateVirtualMachine", func() {
 	assertUpdate := func() {
 		GinkgoHelper()
 
-		Expect(ctxop.IsUpdate(vmCtx)).To(BeTrue())
+		Expect(ctxop.IsUpdate(vmCtx.Context)).To(BeTrue())
 	}
+
+	It("should preserve inherited task state and keep client enrichment local", func() {
+		vmCtx.Context = pkgctx.WithVMRecentTasks(vmCtx.Context, []vimtypes.TaskInfo{{
+			DescriptionId: "VirtualMachine.reconfigure",
+			State:         vimtypes.TaskInfoStateRunning,
+		}})
+		originalContext := vmCtx.Context
+		originalRestClient := pkgctx.GetRestClient(originalContext)
+		originalFinder := pkgctx.GetFinder(originalContext)
+		pkgcfg.UpdateContext(originalContext, func(config *pkgcfg.Config) {
+			config.Features.AllDisksArePVCs = true
+		})
+		unexpectedArgs := func() (*session.VMUpdateArgs, error) {
+			Fail("an in-flight task should prevent full config reconciliation")
+			return nil, nil
+		}
+
+		Expect(sess.UpdateVirtualMachine(vmCtx, vcVM, unexpectedArgs, getResizeArgs)).To(MatchError(session.ErrReconfigure))
+		Expect(vmCtx.Context).To(BeIdenticalTo(originalContext))
+		Expect(pkgctx.GetRestClient(vmCtx.Context)).To(BeIdenticalTo(originalRestClient))
+		Expect(pkgctx.GetFinder(vmCtx.Context)).To(BeIdenticalTo(originalFinder))
+		Expect(pkgctx.HasVMRunningTask(vmCtx.Context, false)).To(BeTrue())
+	})
 
 	When("VM is powered off", func() {
 		JustBeforeEach(func() {
@@ -2207,7 +2230,7 @@ var _ = Describe("UpdateVirtualMachine", func() {
 			Expect(sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)).To(Succeed())
 			Expect(vmCtx.VM.Annotations[pkgconst.ClusterModuleUUIDAnnotationKey]).To(
 				Equal(dummyRP.Status.ClusterModules[0].ModuleUuid))
-			added, err := cmProvider.IsMoRefModuleMember(vmCtx, dummyRP.Status.ClusterModules[0].ModuleUuid, vmCtx.MoVM.Self)
+			added, err := cmProvider.IsMoRefModuleMember(vmCtx.Context, dummyRP.Status.ClusterModules[0].ModuleUuid, vmCtx.MoVM.Self)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(added).To(BeTrue())
 		}
@@ -2256,10 +2279,10 @@ var _ = Describe("UpdateVirtualMachine", func() {
 			})
 
 			By("set up a dummy cluster module and update VirtualMachineSetResourcePolicy status", func() {
-				cmID, err := cmProvider.CreateModule(vmCtx, sess.ClusterMoRef)
+				cmID, err := cmProvider.CreateModule(vmCtx.Context, sess.ClusterMoRef)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cmID).ToNot(BeEmpty())
-				exist, err := cmProvider.DoesModuleExist(vmCtx, cmID, sess.ClusterMoRef)
+				exist, err := cmProvider.DoesModuleExist(vmCtx.Context, cmID, sess.ClusterMoRef)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(exist).To(BeTrue())
 				dummyRP.Status.ClusterModules[0].ModuleUuid = cmID
@@ -2270,7 +2293,7 @@ var _ = Describe("UpdateVirtualMachine", func() {
 
 			By("simulate cluster module changes", func() {
 				Expect(cmProvider.DeleteModule(ctx, dummyRP.Status.ClusterModules[0].ModuleUuid)).To(Succeed())
-				exist, err := cmProvider.DoesModuleExist(vmCtx, dummyRP.Status.ClusterModules[0].ModuleUuid, sess.ClusterMoRef)
+				exist, err := cmProvider.DoesModuleExist(vmCtx.Context, dummyRP.Status.ClusterModules[0].ModuleUuid, sess.ClusterMoRef)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(exist).To(BeFalse())
 
@@ -2289,7 +2312,7 @@ var _ = Describe("UpdateVirtualMachine", func() {
 var _ = Describe("UpdateVMGuestIDReconfiguredCondition", func() {
 
 	var (
-		vmCtx      pkgctx.VirtualMachineContext
+		vmCtx      *pkgctx.VirtualMachineContext
 		vmopVM     vmopv1.VirtualMachine
 		configSpec vimtypes.VirtualMachineConfigSpec
 		taskInfo   *vimtypes.TaskInfo
@@ -2307,7 +2330,7 @@ var _ = Describe("UpdateVMGuestIDReconfiguredCondition", func() {
 				},
 			},
 		}
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			VM: &vmopVM,
 		}
 		configSpec = vimtypes.VirtualMachineConfigSpec{}

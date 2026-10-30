@@ -30,7 +30,7 @@ func getVM() {
 		nsInfo     builder.WorkloadNamespaceInfo
 		testConfig builder.VCSimTestConfig
 
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 	)
 
 	BeforeEach(func() {
@@ -42,7 +42,7 @@ func getVM() {
 		vm.Name = "getvm-test"
 		vm.Namespace = nsInfo.Namespace
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,

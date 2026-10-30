@@ -95,7 +95,7 @@ func (vs *vSphereVMProvider) vmGroupGetVMPlacementArgs(
 				"vm", vm.Name,
 			)
 
-			vmCtx := pkgctx.VirtualMachineContext{
+			vmCtx := &pkgctx.VirtualMachineContext{
 				Context: ctx,
 				Logger:  logger,
 				VM:      vm,
@@ -183,7 +183,7 @@ func setVMPlacementReadyCondErr(
 }
 
 func (vs *vSphereVMProvider) vmGroupGetVMCreatePrereqs(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client) (*VMCreateArgs, error) {
 
 	// This reuses parts of the VM controller driven create VM path to
@@ -218,7 +218,7 @@ func (vs *vSphereVMProvider) vmGroupGetVMCreatePrereqs(
 }
 
 func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vcclient.Client,
 	createArgs *VMCreateArgs) (*vimtypes.VirtualMachineConfigSpec, error) {
 
@@ -229,9 +229,9 @@ func (vs *vSphereVMProvider) vmGroupGetVMPlacementConfigSpec(
 	{
 		// Partial vmCreateDoPlacement():
 
-		if pkgcfg.FromContext(vmCtx).Features.VSpherePolicies {
+		if pkgcfg.FromContext(vmCtx.Context).Features.VSpherePolicies {
 			if err := vmconfpolicy.Reconcile(
-				pkgctx.WithRestClient(vmCtx, vcClient.RestClient()),
+				pkgctx.WithRestClient(vmCtx.Context, vcClient.RestClient()),
 				vs.k8sClient,
 				vcClient.Client.VimClient(),
 				vmCtx.VM,

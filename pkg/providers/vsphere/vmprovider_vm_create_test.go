@@ -24,6 +24,7 @@ import (
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
@@ -179,6 +180,22 @@ func vmCreateTests() {
 		It("should succeed", func() {
 			Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
 			Expect(vm.Status.UniqueID).ToNot(BeEmpty())
+		})
+
+		It("should create asynchronously without mutating the caller's VM", func() {
+			chanErr, err := vmProvider.CreateOrUpdateVirtualMachineAsync(ctx, vm)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(chanErr).ToNot(BeNil())
+			originalVM := vm.DeepCopy()
+
+			Eventually(chanErr).Should(Receive(MatchError(vsphere.ErrCreate)))
+			Eventually(chanErr).Should(BeClosed())
+			Expect(vm).To(Equal(originalVM))
+
+			created := &vmopv1.VirtualMachine{}
+			Expect(ctx.Client.Get(ctx, client.ObjectKeyFromObject(vm), created)).To(Succeed())
+			Expect(created.Status.UniqueID).ToNot(BeEmpty())
+			Expect(conditions.IsTrue(created, vmopv1.VirtualMachineConditionCreated)).To(BeTrue())
 		})
 
 		When("there is an error getting the pre-reqs", func() {

@@ -959,7 +959,7 @@ var _ = Describe("SetPowerStateSyncedCondition", func() {
 
 	var (
 		vm    *vmopv1.VirtualMachine
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 	)
 
 	BeforeEach(func() {
@@ -971,7 +971,7 @@ var _ = Describe("SetPowerStateSyncedCondition", func() {
 				PowerState: vmopv1.VirtualMachinePowerStateOff,
 			},
 		}
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: pkgcfg.NewContextWithDefaultConfig(),
 			Logger:  suite.GetLogger(),
 			VM:      vm,
@@ -1006,7 +1006,7 @@ var _ = Describe("SetPowerStateSyncedCondition", func() {
 
 		When("the VMEviction feature is enabled", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMEviction = true
 				})
 			})
@@ -1027,7 +1027,7 @@ var _ = Describe("SetPowerStateSyncedCondition", func() {
 
 		When("the VMEviction feature is disabled", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMEviction = false
 				})
 			})

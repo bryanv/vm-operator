@@ -509,7 +509,7 @@ func (vs *vSphereVMProvider) UpdateContentLibraryItem(ctx context.Context, itemI
 }
 
 func (vs *vSphereVMProvider) getVM(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client *vcclient.Client,
 	notFoundReturnErr bool) (*object.VirtualMachine, error) {
 

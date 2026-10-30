@@ -51,7 +51,7 @@ type DatastoreRef struct {
 }
 
 func CreateVirtualMachine(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	restClient *rest.Client,
 	vimClient *vim25.Client,

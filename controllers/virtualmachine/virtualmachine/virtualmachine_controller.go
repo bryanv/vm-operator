@@ -512,11 +512,11 @@ func requeueDelay(
 	if ignoredCreateErr(err) ||
 		!pkgcond.IsTrue(ctx.VM, vmopv1.VirtualMachineConditionCreated) {
 
-		return pkgcfg.FromContext(ctx).CreateVMRequeueDelay
+		return pkgcfg.FromContext(ctx.Context).CreateVMRequeueDelay
 	}
 
 	// Do not requeue for the IP address if async signal is enabled.
-	if pkgcfg.FromContext(ctx).AsyncSignalEnabled {
+	if pkgcfg.FromContext(ctx.Context).AsyncSignalEnabled {
 		return 0
 	}
 
@@ -525,7 +525,7 @@ func requeueDelay(
 		if networkSpec != nil && !networkSpec.Disabled {
 			networkStatus := ctx.VM.Status.Network
 			if networkStatus == nil || (networkStatus.PrimaryIP4 == "" && networkStatus.PrimaryIP6 == "") {
-				return pkgcfg.FromContext(ctx).PoweredOnVMHasIPRequeueDelay
+				return pkgcfg.FromContext(ctx.Context).PoweredOnVMHasIPRequeueDelay
 			}
 		}
 	}
@@ -568,7 +568,7 @@ func (r *Reconciler) ReconcileDelete(ctx *pkgctx.VirtualMachineContext) (reterr 
 			// a clean state without any ExtraConfig keys or ManagedBy fields.
 			// TODO: we should also remove any tags added to the VM for
 			// affinity / anti-affinity or policy evaluations.
-			if err := r.VMProvider.CleanupVirtualMachine(ctx, ctx.VM); err != nil {
+			if err := r.VMProvider.CleanupVirtualMachine(ctx.Context, ctx.VM); err != nil {
 				return fmt.Errorf("failed to cleanup VM Operator modifications: %w", err)
 			}
 
@@ -578,7 +578,7 @@ func (r *Reconciler) ReconcileDelete(ctx *pkgctx.VirtualMachineContext) (reterr 
 				r.Recorder.EmitEvent(ctx.VM, "Delete", reterr, false)
 			}()
 
-			if err := r.VMProvider.DeleteVirtualMachine(ctx, ctx.VM); err != nil {
+			if err := r.VMProvider.DeleteVirtualMachine(ctx.Context, ctx.VM); err != nil {
 				return err
 			}
 		}
@@ -590,7 +590,7 @@ func (r *Reconciler) ReconcileDelete(ctx *pkgctx.VirtualMachineContext) (reterr 
 		// deletion. This runs regardless of whether the underlying vCenter
 		// VM was deleted or merely unregistered above, since the Kubernetes
 		// cascade-delete risk exists either way.
-		if err := kubeutil.RemoveStaleVMOwnerRefFromPVCs(ctx, r.Client, ctx.VM); err != nil {
+		if err := kubeutil.RemoveStaleVMOwnerRefFromPVCs(ctx.Context, r.Client, ctx.VM); err != nil {
 			return fmt.Errorf("failed to remove stale pvc owner refs: %w", err)
 		}
 
@@ -636,7 +636,7 @@ func (r *Reconciler) ReconcileNormal(ctx *pkgctx.VirtualMachineContext) (reterr 
 		l.Info("Finished Reconciling VirtualMachine")
 	}()
 
-	if pkgcfg.FromContext(ctx).Features.FastDeploy {
+	if pkgcfg.FromContext(ctx.Context).Features.FastDeploy {
 		// Do not proceed unless the VMI cache this VM needs is ready.
 		if !r.isVMICacheReady(ctx) {
 			return pkgerr.NoRequeueError{Message: "disk image cache is not ready"}
@@ -648,21 +648,21 @@ func (r *Reconciler) ReconcileNormal(ctx *pkgctx.VirtualMachineContext) (reterr 
 		chanErr <-chan error
 	)
 
-	if pkgcfg.FromContext(ctx).AsyncSignalEnabled &&
-		pkgcfg.FromContext(ctx).AsyncCreateEnabled {
+	if pkgcfg.FromContext(ctx.Context).AsyncSignalEnabled &&
+		pkgcfg.FromContext(ctx.Context).AsyncCreateEnabled {
 		//
 		// Non-blocking create
 		//
-		chanErr, err = r.VMProvider.CreateOrUpdateVirtualMachineAsync(ctx, ctx.VM)
+		chanErr, err = r.VMProvider.CreateOrUpdateVirtualMachineAsync(ctx.Context, ctx.VM)
 	} else {
 		//
 		// Blocking create
 		//
-		err = r.VMProvider.CreateOrUpdateVirtualMachine(ctx, ctx.VM)
+		err = r.VMProvider.CreateOrUpdateVirtualMachine(ctx.Context, ctx.VM)
 	}
 
 	switch {
-	case ctxop.IsCreate(ctx) && !ignoredCreateErr(err):
+	case ctxop.IsCreate(ctx.Context) && !ignoredCreateErr(err):
 
 		if chanErr == nil {
 			//
@@ -681,7 +681,7 @@ func (r *Reconciler) ReconcileNormal(ctx *pkgctx.VirtualMachineContext) (reterr 
 				go r.handleNonBlockingCreateErr(ctx.VM.DeepCopy(), chanErr)
 			}
 		}
-	case ctxop.IsUpdate(ctx):
+	case ctxop.IsUpdate(ctx.Context):
 
 		r.Recorder.EmitEvent(
 			ctx.VM, "Update", filterNoRequeueErr(err), false)
@@ -693,7 +693,7 @@ func (r *Reconciler) ReconcileNormal(ctx *pkgctx.VirtualMachineContext) (reterr 
 			ctx.VM, "ReconcileNormal", filterNoRequeueErr(err), true)
 	}
 
-	if !pkgcfg.FromContext(ctx).AsyncSignalEnabled {
+	if !pkgcfg.FromContext(ctx.Context).AsyncSignalEnabled {
 
 		// Add the VM to the probe manager. This is idempotent.
 		r.Prober.AddToProberManager(ctx.VM)
@@ -725,7 +725,7 @@ func ignoredCreateErr(err error) bool {
 func (r *Reconciler) handleBlockingCreateErr(
 	ctx *pkgctx.VirtualMachineContext, err error) error {
 
-	if pkgcfg.FromContext(ctx).Features.FastDeploy {
+	if pkgcfg.FromContext(ctx.Context).Features.FastDeploy {
 		if pkgerr.WatchVMICacheIfNotReady(err, ctx.VM) {
 			// If the cache is not yet ready then do not return an error,
 			// but simultaneously, do not reflect a successful create. The
@@ -768,12 +768,12 @@ func (r *Reconciler) isVMICacheReady(ctx *pkgctx.VirtualMachineContext) bool {
 	var (
 		vmic    vmopv1.VirtualMachineImageCache
 		vmicKey = client.ObjectKey{
-			Namespace: pkgcfg.FromContext(ctx).PodNamespace,
+			Namespace: pkgcfg.FromContext(ctx.Context).PodNamespace,
 			Name:      vmicName,
 		}
 	)
 
-	if err := r.Client.Get(ctx, vmicKey, &vmic); err != nil {
+	if err := r.Client.Get(ctx.Context, vmicKey, &vmic); err != nil {
 		ctx.Logger.Error(
 			err,
 			"Skipping due to failure getting vmicache object")

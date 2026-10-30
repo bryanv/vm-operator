@@ -74,13 +74,13 @@ var (
 	ErrGroupPlacementZoneMismatch = errors.New("group placement recommended zone different than requested zone")
 )
 
-func doesVMNeedPlacement(vmCtx pkgctx.VirtualMachineContext) (res Result) {
+func doesVMNeedPlacement(vmCtx *pkgctx.VirtualMachineContext) (res Result) {
 	if zoneName := vmCtx.VM.Labels[corev1.LabelTopologyZone]; zoneName != "" {
 		// Zone has already been selected.
 		res.ZoneName = zoneName
 	}
 
-	f := pkgcfg.FromContext(vmCtx).Features
+	f := pkgcfg.FromContext(vmCtx.Context).Features
 	res.needDatastorePlacement = f.FastDeploy
 
 	if f.InstanceStorage {
@@ -253,7 +253,7 @@ func rpMoIDToCluster(
 
 // getPlaceVMRecommendation calls DRS PlaceVM to determine clusters suitable for placement.
 func getPlaceVMRecommendation(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vim25.Client,
 	candidates map[string][]string,
 	configSpec vimtypes.VirtualMachineConfigSpec) (Recommendation, error) {
@@ -268,7 +268,7 @@ func getPlaceVMRecommendation(
 				Value: rpMoID,
 			}
 
-			cluster, err := rpMoIDToCluster(vmCtx, vcClient, rpMoRef)
+			cluster, err := rpMoIDToCluster(vmCtx.Context, vcClient, rpMoRef)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("error getting cluster for zone %s RP %s: %w",
 					zoneName, rpMoID, err))
@@ -314,7 +314,7 @@ func getPlaceVMRecommendation(
 }
 
 func getPlacementRecommendation(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcClient *vim25.Client,
 	finder *find.Finder,
 	candidates map[string][]string,
@@ -347,7 +347,7 @@ func getPlacementRecommendation(
 
 	case len(candidates) > 1 || needDatastorePlacement:
 		recs, err := getClusterPlacementRecommendations(
-			vmCtx,
+			vmCtx.Context,
 			vcClient,
 			finder,
 			candidateRPMoRefs,
@@ -382,7 +382,7 @@ func getPlacementRecommendation(
 // Placement determines if the VM needs placement, and if so, calls DRS to determine the
 // best placement location.
 func Placement(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
 	vcClient *vim25.Client,
 	finder *find.Finder,
@@ -398,7 +398,7 @@ func Placement(
 	}
 
 	candidates, err := getPlacementCandidates(
-		vmCtx,
+		vmCtx.Context,
 		client,
 		vcClient,
 		curResult.ZoneName,
@@ -471,7 +471,7 @@ func Placement(
 
 	if curResult.needDatastorePlacement {
 		// Get the name and type of the datastores.
-		if err := getDatastoreProperties(vmCtx, vcClient, &recommendation); err != nil {
+		if err := getDatastoreProperties(vmCtx.Context, vcClient, &recommendation); err != nil {
 			return nil, err
 		}
 	}

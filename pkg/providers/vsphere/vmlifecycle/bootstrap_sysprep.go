@@ -21,13 +21,13 @@ import (
 )
 
 func BootstrapSysPrep(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	config *vimtypes.VirtualMachineConfigInfo,
 	sysPrepSpec *vmopv1.VirtualMachineBootstrapSysprepSpec,
 	vAppConfigSpec *vmopv1.VirtualMachineBootstrapVAppConfigSpec,
 	bsArgs *BootstrapArgs) (*vimtypes.VirtualMachineConfigSpec, *vimtypes.CustomizationSpec, *bool, error) {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 	logger.V(4).Info("Reconciling Sysprep bootstrap state")
 
 	if !vmCtx.IsOffToOn() {
@@ -102,7 +102,7 @@ func BootstrapSysPrep(
 }
 
 func convertTo(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	from *vmopv1sysprep.Sysprep,
 	bsArgs *BootstrapArgs) *vimtypes.CustomizationSysprep {
 
@@ -168,7 +168,7 @@ func convertTo(
 		sysprepCustomization.LicenseFilePrintData = convertLicenseFilePrintDataTo(from.LicenseFilePrintData)
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.GuestCustomizationVCDParity {
+	if pkgcfg.FromContext(vmCtx.Context).Features.GuestCustomizationVCDParity {
 		if bootstrapData.Sysprep != nil {
 			sysprepCustomization.ScriptText = bootstrapData.Sysprep.ScriptText
 		}

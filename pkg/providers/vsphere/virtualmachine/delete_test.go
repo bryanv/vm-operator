@@ -21,7 +21,7 @@ func deleteTests() {
 	var (
 		ctx   *builder.TestContextForVCSim
 		vcVM  *object.VirtualMachine
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 	)
 
 	BeforeEach(func() {
@@ -31,7 +31,7 @@ func deleteTests() {
 		vcVM, err = ctx.Finder.VirtualMachine(ctx, "DC0_C0_RP0_VM0")
 		Expect(err).ToNot(HaveOccurred())
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vcVM.Name()),
 			VM:      builder.DummyVirtualMachine(),
@@ -40,7 +40,7 @@ func deleteTests() {
 
 	JustBeforeEach(func() {
 		// The provider DeleteVirtualMachine() will grab these properties.
-		Expect(vcVM.Properties(vmCtx, vcVM.Reference(),
+		Expect(vcVM.Properties(vmCtx.Context, vcVM.Reference(),
 			virtualmachine.VMDeletePropertiesSelector, &vmCtx.MoVM)).To(Succeed())
 	})
 

@@ -229,7 +229,7 @@ func reconcileBootOrder(
 			}
 
 			logger := pkglog.FromContextOrDefault(ctx)
-			vmCtx := pkgctx.VirtualMachineContext{
+			vmCtx := &pkgctx.VirtualMachineContext{
 				Context: ctx,
 				Logger:  logger,
 				VM:      vm,

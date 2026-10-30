@@ -35,7 +35,7 @@ var _ = Describe("CreateConfigSpec", func() {
 
 	var (
 		vm              *vmopv1.VirtualMachine
-		vmCtx           pkgctx.VirtualMachineContext
+		vmCtx           *pkgctx.VirtualMachineContext
 		vmClassSpec     vmopv1.VirtualMachineClassSpec
 		vmImageStatus   vmopv1.VirtualMachineImageStatus
 		minCPUFreq      uint64
@@ -67,7 +67,7 @@ var _ = Describe("CreateConfigSpec", func() {
 		vm.Spec.Volumes = nil
 		vm.Spec.MinHardwareVersion = 0
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: pkgcfg.NewContext(),
 			Logger:  suite.GetLogger().WithValues("vmName", vm.GetName()),
 			VM:      vm,
@@ -170,7 +170,7 @@ var _ = Describe("CreateConfigSpec", func() {
 
 		When("ExtensionCompatConstraint capability is enabled", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.ExtensionCompatConstraint = true
 				})
 			})
@@ -533,7 +533,7 @@ var _ = Describe("CreateConfigSpec", func() {
 
 	Context("AF/AAF policies", func() {
 		BeforeEach(func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.VMPlacementPolicies = true
 				config.Features.VMAffinityDuringExecution = true
 			})
@@ -786,7 +786,7 @@ var _ = Describe("CreateConfigSpec", func() {
 
 		When("VMAffinityDuringExecution feature flag is disabled", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMAffinityDuringExecution = false
 				})
 
@@ -817,7 +817,7 @@ var _ = Describe("CreateConfigSpec", func() {
 
 		When("VMHardAffinityDuringExecution feature flag is enabled", func() {
 			BeforeEach(func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMHardAffinityDuringExecution = true
 				})
 
@@ -884,7 +884,7 @@ var _ = Describe("CreateConfigSpec", func() {
 var _ = Describe("CreateConfigSpecForPlacement", func() {
 
 	var (
-		vmCtx               pkgctx.VirtualMachineContext
+		vmCtx               *pkgctx.VirtualMachineContext
 		storageClassesToIDs map[string]string
 		baseConfigSpec      vimtypes.VirtualMachineConfigSpec
 		configSpec          vimtypes.VirtualMachineConfigSpec
@@ -895,7 +895,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 		storageClassesToIDs = map[string]string{}
 
 		vm := builder.DummyVirtualMachine()
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: pkgcfg.NewContext(),
 			Logger:  suite.GetLogger().WithValues("vmName", vm.GetName()),
 			VM:      vm,
@@ -1077,7 +1077,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 		const storagePolicyID = "storage-id-42"
 
 		BeforeEach(func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.InstanceStorage = true
 			})
 
@@ -1093,7 +1093,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 
 	Context("AF/AAF policies", func() {
 		BeforeEach(func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.VMPlacementPolicies = true
 			})
 		})
@@ -1443,7 +1443,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 
 			When("VMAffinityDuringExecution feature is enabled", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.VMAffinityDuringExecution = true
 					})
 				})
@@ -1993,7 +1993,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 
 			When("VMAffinityDuringExecution and VMHardAffinityDuringExecution features are enabled", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.VMAffinityDuringExecution = true
 						config.Features.VMHardAffinityDuringExecution = true
 					})
@@ -2083,7 +2083,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 				)
 
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.VMAffinityDuringExecution = true
 						config.Features.VMHardAffinityDuringExecution = true
 					})
@@ -2119,7 +2119,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 
 				Context("zone terms for every strictness", func() {
 					BeforeEach(func() {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.VMPlacementPolicies = true
 						})
 						vmCtx.VM.Spec.Affinity = &vmopv1.AffinitySpec{
@@ -2202,7 +2202,7 @@ var _ = Describe("CreateConfigSpecForPlacement", func() {
 
 			When("VMHardAffinityDuringExecution feature is disabled", func() {
 				BeforeEach(func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.VMAffinityDuringExecution = true
 						config.Features.VMHardAffinityDuringExecution = false
 					})
@@ -2551,14 +2551,14 @@ var _ = Describe("ConfigSpecFromVMClassDevices", func() {
 var _ = Describe("CalculateAffinityConstraints", func() {
 	var (
 		vm    *vmopv1.VirtualMachine
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 	)
 
 	BeforeEach(func() {
 		vm = builder.DummyVirtualMachine()
 		vm.Name = "test-vm"
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: pkgcfg.NewContext(),
 			Logger:  suite.GetLogger().WithValues("vmName", vm.GetName()),
 			VM:      vm,
@@ -2568,7 +2568,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 	Describe("Feature flag combinations", func() {
 		When("both flags are disabled", func() {
 			It("should disable both host and zone rules", func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = false
 					config.Features.VMAffinityDuringExecution = false
 				})
@@ -2581,7 +2581,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 
 		When("only VMPlacementPolicies is enabled", func() {
 			It("should enable only zone rules", func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = true
 					config.Features.VMAffinityDuringExecution = false
 				})
@@ -2594,7 +2594,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 
 		When("only VMAffinityDuringExecution is enabled", func() {
 			It("should enable only host rules", func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = false
 					config.Features.VMAffinityDuringExecution = true
 				})
@@ -2607,7 +2607,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 
 		When("both flags are enabled", func() {
 			It("should enable both host and zone rules", func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = true
 					config.Features.VMAffinityDuringExecution = true
 				})
@@ -2629,7 +2629,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 			})
 
 			It("should disable host rules but allow zone rules when it has no zone label", func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = true
 					config.Features.VMAffinityDuringExecution = true
 				})
@@ -2640,7 +2640,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 			})
 
 			It("should allow zone rules when VMPlacementPolicies is enabled and VMAffinityDuringExecution is disabled", func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = true
 					config.Features.VMAffinityDuringExecution = false
 				})
@@ -2656,7 +2656,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 				})
 
 				It("should disable both host and zone rules when VMAffinityDuringExecution is enabled", func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.VMPlacementPolicies = true
 						config.Features.VMAffinityDuringExecution = true
 					})
@@ -2667,7 +2667,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 				})
 
 				It("should disable zone rules even when VMAffinityDuringExecution is disabled", func() {
-					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 						config.Features.VMPlacementPolicies = true
 						config.Features.VMAffinityDuringExecution = false
 					})
@@ -2687,7 +2687,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 			})
 
 			It("should allow host rules when VMAffinityDuringExecution is enabled", func() {
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = true
 					config.Features.VMAffinityDuringExecution = true
 				})
@@ -2701,7 +2701,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 
 	Describe("Workflow context", func() {
 		BeforeEach(func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.VMPlacementPolicies = true
 				config.Features.VMAffinityDuringExecution = true
 			})
@@ -2726,7 +2726,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 
 	Describe("VMHardAffinityDuringExecution", func() {
 		BeforeEach(func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.VMPlacementPolicies = true
 				config.Features.VMAffinityDuringExecution = true
 				config.Features.VMHardAffinityDuringExecution = true
@@ -2753,7 +2753,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 		})
 
 		It("should still disable zone rules when VMPlacementPolicies is disabled", func() {
-			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+			pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 				config.Features.VMPlacementPolicies = false
 			})
 			constraints := virtualmachine.CalculateAffinityConstraints(vmCtx, true)
@@ -2788,7 +2788,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 				vm.Labels = map[string]string{
 					kubeutil.CAPWClusterRoleLabelKey: "worker",
 				}
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = true
 					config.Features.VMAffinityDuringExecution = true
 				})
@@ -2806,7 +2806,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 				vm.Labels = map[string]string{
 					kubeutil.CAPWClusterRoleLabelKey: "worker",
 				}
-				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 					config.Features.VMPlacementPolicies = true
 					config.Features.VMAffinityDuringExecution = true
 				})
@@ -2854,7 +2854,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 					}
 
 					for _, tc := range testCases {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.VMPlacementPolicies = tc.vmPlacement
 							config.Features.VMAffinityDuringExecution = tc.vmAffinity
 						})
@@ -2881,7 +2881,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 					}
 
 					for _, tc := range testCases {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.VMPlacementPolicies = tc.vmPlacement
 							config.Features.VMAffinityDuringExecution = tc.vmAffinity
 						})
@@ -2918,7 +2918,7 @@ var _ = Describe("CalculateAffinityConstraints", func() {
 					}
 
 					for _, tc := range testCases {
-						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						pkgcfg.SetContext(vmCtx.Context, func(config *pkgcfg.Config) {
 							config.Features.VMPlacementPolicies = tc.vmPlacement
 							config.Features.VMAffinityDuringExecution = tc.vmAffinity
 						})

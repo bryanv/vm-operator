@@ -119,7 +119,7 @@ func (vs *vSphereVMProvider) GetSnapshotSize(
 		return 0, fmt.Errorf("failed to find snapshot %q: %w", vmSnapshotName, err)
 	}
 
-	total, _, err := virtualmachine.GetSnapshotSize(vmCtx, moVM, &vmSnapshot.Snapshot)
+	total, _, err := virtualmachine.GetSnapshotSize(vmCtx.Context, moVM, &vmSnapshot.Snapshot)
 	return total, err
 }
 
@@ -144,7 +144,7 @@ func (vs *vSphereVMProvider) SyncVMSnapshotTreeStatus(
 		return fmt.Errorf("failed to get VirtualMachine %q: %w", vmCtx.VM.Name, err)
 	}
 
-	err = vcVM.Properties(vmCtx, vcVM.Reference(), []string{"snapshot"}, &vmCtx.MoVM)
+	err = vcVM.Properties(vmCtx.Context, vcVM.Reference(), []string{"snapshot"}, &vmCtx.MoVM)
 	if err != nil {
 		return fmt.Errorf("failed to get snapshot: %w", err)
 	}
@@ -155,7 +155,7 @@ func (vs *vSphereVMProvider) SyncVMSnapshotTreeStatus(
 
 // markSnapshotInProgress marks a snapshot as currently being processed.
 func markSnapshotInProgress(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	vmSnapshot *vmopv1.VirtualMachineSnapshot) error {
 	// Create a patch to set the InProgress condition
@@ -169,7 +169,7 @@ func markSnapshotInProgress(
 		"snapshot in progress")
 
 	// Use Patch instead of Update to avoid conflicts with snapshot controller
-	if err := k8sClient.Status().Patch(vmCtx, vmSnapshot, patch); err != nil {
+	if err := k8sClient.Status().Patch(vmCtx.Context, vmSnapshot, patch); err != nil {
 		return fmt.Errorf("failed to mark snapshot as in progress: %w", err)
 	}
 
@@ -178,7 +178,7 @@ func markSnapshotInProgress(
 }
 
 // markSnapshotFailed marks a snapshot as failed and clears the in-progress status.
-func markSnapshotFailed(vmCtx pkgctx.VirtualMachineContext,
+func markSnapshotFailed(vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	vmSnapshot *vmopv1.VirtualMachineSnapshot, err error) error {
 	// Create a patch to update the snapshot status.
@@ -192,7 +192,7 @@ func markSnapshotFailed(vmCtx pkgctx.VirtualMachineContext,
 		err)
 
 	// Use Patch instead of Update to avoid conflicts with snapshot controller (best effort)
-	if updateErr := k8sClient.Status().Patch(vmCtx, vmSnapshot, patch); updateErr != nil {
+	if updateErr := k8sClient.Status().Patch(vmCtx.Context, vmSnapshot, patch); updateErr != nil {
 		return fmt.Errorf("failed to update snapshot status after failure: %w", updateErr)
 	}
 
@@ -204,7 +204,7 @@ func markSnapshotFailed(vmCtx pkgctx.VirtualMachineContext,
 // indicate it is blocked waiting for unmanaged disk CnsRegisterVolume objects
 // to complete registration before the snapshot can be triggered.
 func markSnapshotWaitingForDiskRegistration(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	vmSnapshot *vmopv1.VirtualMachineSnapshot) error {
 
@@ -219,7 +219,7 @@ func markSnapshotWaitingForDiskRegistration(
 		vmopv1.VirtualMachineSnapshotCreatedCondition,
 		vmopv1.VirtualMachineSnapshotWaitingForDiskRegistrationReason,
 		"Snapshot cannot be created until all unmanaged disk registrations complete")
-	if err := k8sClient.Status().Patch(vmCtx, vmSnapshot, patch); err != nil {
+	if err := k8sClient.Status().Patch(vmCtx.Context, vmSnapshot, patch); err != nil {
 		return fmt.Errorf("failed to patch snapshot status: %w", err)
 	}
 	vmCtx.Logger.V(4).Info("Marked snapshot as waiting for disk registration",
@@ -231,12 +231,12 @@ func markSnapshotWaitingForDiskRegistration(
 // for this VM. The lookup is indexed so it scales with matching snapshots,
 // not with every snapshot in the namespace.
 func getVirtualMachineSnapshotsForVM(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) ([]vmopv1.VirtualMachineSnapshot, error) {
 
 	var snapshotList vmopv1.VirtualMachineSnapshotList
 	if err := k8sClient.List(
-		vmCtx,
+		vmCtx.Context,
 		&snapshotList,
 		ctrlclient.InNamespace(vmCtx.VM.Namespace),
 		ctrlclient.MatchingFields{kubeutil.VMSnapshotVMNameFieldIndex: vmCtx.VM.Name},
@@ -251,7 +251,7 @@ func getVirtualMachineSnapshotsForVM(
 }
 
 func (vs *vSphereVMProvider) reconcileSnapshotRevert(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) error {
 
 	if err := vs.reconcileSnapshotRevertCheckTask(vmCtx, vcVM); err != nil {
@@ -262,10 +262,10 @@ func (vs *vSphereVMProvider) reconcileSnapshotRevert(
 }
 
 func (vs *vSphereVMProvider) reconcileSnapshotRevertCheckTask(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	_ *object.VirtualMachine) error {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 	logger.V(4).Info("Reconciling snapshot task")
 
 	//
@@ -273,7 +273,7 @@ func (vs *vSphereVMProvider) reconcileSnapshotRevertCheckTask(
 	// reconciliation if so. This includes create snapshot, delete snapshot,
 	// and revert snapshot operations.
 	//
-	if pkgctx.HasVMRunningSnapshotTask(vmCtx) {
+	if pkgctx.HasVMRunningSnapshotTask(vmCtx.Context) {
 		return pkgerr.NoRequeueNoErr("snapshot operation in progress")
 	}
 
@@ -292,10 +292,14 @@ func (vs *vSphereVMProvider) reconcileSnapshotRevertCheckTask(
 }
 
 func (vs *vSphereVMProvider) reconcileSnapshotRevertDoTask(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine) error {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	// Keep snapshot logging context local to this operation.
+	localCtx := *vmCtx
+	vmCtx = &localCtx
+
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 	logger.V(4).Info("Reconciling snapshot revert")
 
 	// If no spec.currentSnapshot is specified, nothing to revert to.
@@ -335,7 +339,7 @@ func (vs *vSphereVMProvider) reconcileSnapshotRevertDoTask(
 	// Check if the snapshot exists.
 	obj := &vmopv1.VirtualMachineSnapshot{}
 	if err := vs.k8sClient.Get(
-		vmCtx,
+		vmCtx.Context,
 		ctrlclient.ObjectKey{
 			Name:      desiredSnapshotName,
 			Namespace: vmCtx.VM.Namespace,
@@ -492,22 +496,22 @@ func (vs *vSphereVMProvider) reconcileSnapshotRevertDoTask(
 
 // performSnapshotRevert executes the actual snapshot revert operation.
 func (vs *vSphereVMProvider) performSnapshotRevert(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	snapObj *vimtypes.ManagedObjectReference,
 	snapshotName string) error {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 
 	// TODO (AKP): Add support for suppresspoweron option.
-	task, err := vcVM.RevertToSnapshot(vmCtx, snapObj.Value, false)
+	task, err := vcVM.RevertToSnapshot(vmCtx.Context, snapObj.Value, false)
 	if err != nil {
 		return fmt.Errorf("failed to call revert snapshot %q: %w",
 			snapshotName, err)
 	}
 
 	// Wait for the revert task to complete
-	taskInfo, err := task.WaitForResult(vmCtx)
+	taskInfo, err := task.WaitForResult(vmCtx.Context)
 	if err != nil {
 		var conditionMessage string
 
@@ -575,7 +579,7 @@ func (vs *vSphereVMProvider) performSnapshotRevert(
 
 // restoreVMSpecFromSnapshot extracts and applies the VM spec from the snapshot.
 func (vs *vSphereVMProvider) restoreVMSpecFromSnapshot(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	snapCR *vmopv1.VirtualMachineSnapshot,
 	snapNode *vimtypes.VirtualMachineSnapshotTree) error {
@@ -638,19 +642,19 @@ func (vs *vSphereVMProvider) restoreVMSpecFromSnapshot(
 
 // getVMYamlFromSnapshot extracts the VM YAML from snapshot's ExtraConfig.
 func (vs *vSphereVMProvider) getVMYamlFromSnapshot(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
 	snap *vmopv1.VirtualMachineSnapshot,
 	snapRef vimtypes.ManagedObjectReference) (string, error) {
 
 	var (
 		moSnap mo.VirtualMachineSnapshot
-		logger = pkglog.FromContextOrDefault(vmCtx)
+		logger = pkglog.FromContextOrDefault(vmCtx.Context)
 	)
 
 	// Fetch the config stored with the snapshot.
 	if err := vcVM.Properties(
-		vmCtx, snapRef, []string{"config"}, &moSnap); err != nil {
+		vmCtx.Context, snapRef, []string{"config"}, &moSnap); err != nil {
 
 		return "", fmt.Errorf("failed to fetch snapshot config: %w", err)
 	}
@@ -680,11 +684,11 @@ func (vs *vSphereVMProvider) getVMYamlFromSnapshot(
 }
 
 func getVMYamlFromSnapshotFromSynthesizedSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	snapCR *vmopv1.VirtualMachineSnapshot,
 	moSnap mo.VirtualMachineSnapshot) (string, error) {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 
 	if _, ok := snapCR.Annotations[vmopv1.ImportedSnapshotAnnotation]; !ok {
 		logger.Info("Unsupported revert attempted for snapshot "+
@@ -847,7 +851,7 @@ func synthesizeVMSpecForSnapshot(
 // CnsRegisterVolume objects, so that snapshots do not appear stuck with empty
 // conditions.
 func ReconcileSnapshotWaitForCRVCondition(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client) error {
 
 	vmSnapshots, err := getVirtualMachineSnapshotsForVM(vmCtx, k8sClient)
@@ -868,11 +872,11 @@ func ReconcileSnapshotWaitForCRVCondition(
 }
 
 // getDisksFromSnapshot retrieves the hardware configuration of the snapshot and extracts the disks.
-func getDisksFromSnapshot(vmCtx pkgctx.VirtualMachineContext, vcVM *object.VirtualMachine, snapRef vimtypes.ManagedObjectReference) ([]vmopv1.VirtualMachineSnapshotDiskStatus, error) {
-	logger := pkglog.FromContextOrDefault(vmCtx)
+func getDisksFromSnapshot(vmCtx *pkgctx.VirtualMachineContext, vcVM *object.VirtualMachine, snapRef vimtypes.ManagedObjectReference) ([]vmopv1.VirtualMachineSnapshotDiskStatus, error) {
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 
 	var moSnap mo.VirtualMachineSnapshot
-	ctx := pkgctx.WithVCOpID(vmCtx, vmCtx.VM, "getDisksFromSnapshot")
+	ctx := pkgctx.WithVCOpID(vmCtx.Context, vmCtx.VM, "getDisksFromSnapshot")
 	if err := vcVM.Properties(ctx, snapRef, []string{"config.hardware.device"}, &moSnap); err != nil {
 		return nil, fmt.Errorf("failed to fetch snapshot hardware configuration: %w", err)
 	}
@@ -912,11 +916,11 @@ func getDisksFromSnapshot(vmCtx pkgctx.VirtualMachineContext, vcVM *object.Virtu
 
 // ReconcileCurrentSnapshot reconciles the current snapshot owned by the VM.
 func ReconcileCurrentSnapshot(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	vcVM *object.VirtualMachine) error {
 
-	logger := pkglog.FromContextOrDefault(vmCtx)
+	logger := pkglog.FromContextOrDefault(vmCtx.Context)
 
 	// Find all VirtualMachineSnapshot objects that reference this VM
 	vmSnapshots, err := getVirtualMachineSnapshotsForVM(vmCtx, k8sClient)
@@ -937,7 +941,7 @@ func ReconcileCurrentSnapshot(
 
 	// When FastDeploy is enabled, wait for disk promotion sync to be ready.
 	// This is prerequisite for the VM disk registration checked in next step.
-	if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
+	if pkgcfg.FromContext(vmCtx.Context).Features.FastDeploy {
 
 		if vmCtx.VM.Spec.PromoteDisksMode != vmopv1.VirtualMachinePromoteDisksModeDisabled &&
 			!pkgcond.IsTrue(vmCtx.VM, vmopv1.VirtualMachineDiskPromotionSynced) {
@@ -950,7 +954,7 @@ func ReconcileCurrentSnapshot(
 	// When AllDisksArePVCs is enabled, wait for VM's disks to be backfilled.
 	// This is because vSphere cannot register disks as PVCs if there's disk
 	// delta caused by snapshot creation.
-	if pkgcfg.FromContext(vmCtx).Features.AllDisksArePVCs {
+	if pkgcfg.FromContext(vmCtx.Context).Features.AllDisksArePVCs {
 
 		if !pkgcond.IsTrue(vmCtx.VM, vmconfunmanagedvolsfil.Condition) {
 			logger.Info("Skipping snapshot as required condition is not ready",
@@ -1049,7 +1053,7 @@ func ReconcileCurrentSnapshot(
 	// VolumeTypeClassic entries directly would block snapshots permanently on
 	// VMs where promoteDiskMode is disabled, because those disks are always
 	// linked clones and their Classic status entries are never cleaned up.
-	if pkgcfg.FromContext(vmCtx).Features.AllDisksArePVCs {
+	if pkgcfg.FromContext(vmCtx.Context).Features.AllDisksArePVCs {
 		if !pkgcond.IsTrue(vmCtx.VM, vmconfunmanagedvolsreg.Condition) {
 			logger.Info("Waiting for disk registration before creating snapshot",
 				"vmCondition", vmconfunmanagedvolsreg.Condition,
@@ -1093,7 +1097,7 @@ func ReconcileCurrentSnapshot(
 	}
 
 	var disks []vmopv1.VirtualMachineSnapshotDiskStatus
-	if pkgcfg.FromContext(vmCtx).Features.CSIBackupAPI {
+	if pkgcfg.FromContext(vmCtx.Context).Features.CSIBackupAPI {
 		disks, err = getDisksFromSnapshot(vmCtx, vcVM, snapNode.Snapshot)
 		if err != nil {
 			if markErr := markSnapshotFailed(vmCtx, k8sClient, snapshotToProcess, err); markErr != nil {
@@ -1106,7 +1110,7 @@ func ReconcileCurrentSnapshot(
 
 	// Update the snapshot status with the successful result
 	if err = kubeutil.PatchSnapshotSuccessStatus(
-		vmCtx,
+		vmCtx.Context,
 		logger,
 		k8sClient,
 		snapshotToProcess,

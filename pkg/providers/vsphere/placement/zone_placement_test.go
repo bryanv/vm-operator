@@ -37,7 +37,7 @@ func vcSimPlacement() {
 		testConfig  builder.VCSimTestConfig
 
 		vm          *vmopv1.VirtualMachine
-		vmCtx       pkgctx.VirtualMachineContext
+		vmCtx       *pkgctx.VirtualMachineContext
 		configSpec  vimtypes.VirtualMachineConfigSpec
 		constraints placement.Constraints
 	)
@@ -96,7 +96,7 @@ func vcSimPlacement() {
 
 		vm.Namespace = nsInfo.Namespace
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithValues("vmName", vm.Name),
 			VM:      vm,

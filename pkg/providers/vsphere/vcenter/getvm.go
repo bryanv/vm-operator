@@ -22,7 +22,7 @@ var errVMNotFound = errors.New("vm not found")
 
 // GetVirtualMachine gets the VM from VC, either by the MoID or the Instance UUID.
 func GetVirtualMachine(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vimClient *vim25.Client,
 	datacenter *object.Datacenter) (*object.VirtualMachine, error) {
 
@@ -57,7 +57,7 @@ func GetVirtualMachine(
 }
 
 func findVMByMoID(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vimClient *vim25.Client,
 	moID string) (*object.VirtualMachine, error) {
 
@@ -67,7 +67,7 @@ func findVMByMoID(
 	}
 
 	vm := mo.VirtualMachine{}
-	if err := property.DefaultCollector(vimClient).RetrieveOne(vmCtx, moRef, []string{"name"}, &vm); err != nil {
+	if err := property.DefaultCollector(vimClient).RetrieveOne(vmCtx.Context, moRef, []string{"name"}, &vm); err != nil {
 		var f *vimtypes.ManagedObjectNotFound
 		if _, ok := fault.As(err, &f); ok {
 			return nil, errVMNotFound
@@ -80,12 +80,12 @@ func findVMByMoID(
 }
 
 func findVMByInstancedUUID(
-	vmCtx pkgctx.VirtualMachineContext,
+	vmCtx *pkgctx.VirtualMachineContext,
 	vimClient *vim25.Client,
 	datacenter *object.Datacenter,
 	uuid string) (*object.VirtualMachine, error) {
 
-	refs, err := object.NewSearchIndex(vimClient).FindAllByUuid(vmCtx, datacenter, uuid, true, vimtypes.NewBool(true))
+	refs, err := object.NewSearchIndex(vimClient).FindAllByUuid(vmCtx.Context, datacenter, uuid, true, vimtypes.NewBool(true))
 	if err != nil {
 		return nil, fmt.Errorf("error finding VM by instance UUID %q: %w", uuid, err)
 	}

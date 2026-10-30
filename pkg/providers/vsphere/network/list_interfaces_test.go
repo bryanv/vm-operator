@@ -35,7 +35,7 @@ var _ = Describe("ListOrphanedNetworkInterfaces", func() {
 		testConfig builder.VCSimTestConfig
 		ctx        *builder.TestContextForVCSim
 
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		vm    *vmopv1.VirtualMachine
 
 		devices     []network.Device
@@ -58,7 +58,7 @@ var _ = Describe("ListOrphanedNetworkInterfaces", func() {
 	JustBeforeEach(func() {
 		ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithName("list_interfaces_test"),
 			VM:      vm,
@@ -166,7 +166,7 @@ var _ = Describe("ListNetworkInterfaces", func() {
 		testConfig builder.VCSimTestConfig
 		ctx        *builder.TestContextForVCSim
 
-		vmCtx pkgctx.VirtualMachineContext
+		vmCtx *pkgctx.VirtualMachineContext
 		vm    *vmopv1.VirtualMachine
 
 		initObjects []ctrlclient.Object
@@ -187,7 +187,7 @@ var _ = Describe("ListNetworkInterfaces", func() {
 	JustBeforeEach(func() {
 		ctx = suite.NewTestContextForVCSim(testConfig, initObjects...)
 
-		vmCtx = pkgctx.VirtualMachineContext{
+		vmCtx = &pkgctx.VirtualMachineContext{
 			Context: ctx,
 			Logger:  suite.GetLogger().WithName("list_interfaces_test"),
 			VM:      vm,
@@ -258,7 +258,7 @@ var _ = Describe("ListNetworkInterfaces", func() {
 				cfg.Features.PerNamespaceNetworkProvider = true
 			})
 			// Re-wrap so vmCtx picks up the updated feature flag.
-			vmCtx = pkgctx.VirtualMachineContext{
+			vmCtx = &pkgctx.VirtualMachineContext{
 				Context: ctx,
 				Logger:  suite.GetLogger().WithName("list_interfaces_test"),
 				VM:      vm,

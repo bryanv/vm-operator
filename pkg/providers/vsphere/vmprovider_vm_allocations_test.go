@@ -260,7 +260,7 @@ func benchmarkAssertPVCs(
 		}
 	}
 	g.Expect(diskIDByUUID).To(gomega.HaveLen(count))
-	mapping, err := vsphere.GetAttachedDiskUUIDToPVC(pkgctx.VirtualMachineContext{Context: ctx, VM: vm, MoVM: state}, ctx.Client)
+	mapping, err := vsphere.GetAttachedDiskUUIDToPVC(&pkgctx.VirtualMachineContext{Context: ctx, VM: vm, MoVM: state}, ctx.Client)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(mapping).To(gomega.HaveLen(count))
 	for i := range count {

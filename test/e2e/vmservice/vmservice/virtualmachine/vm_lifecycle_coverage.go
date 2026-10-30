@@ -238,6 +238,40 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		}
 	})
 
+	// vmop-3589: submit the pause and pending change atomically.
+	It("defers a power-state change while paused and applies it after resume", Label("extended-functional"), func() {
+		createLifecycleVM(ctx, input, vm)
+		DeferCleanup(func() {
+			if input.SkipCleanup {
+				return
+			}
+			// A failed assertion must not leave the annotation blocking VM deletion.
+			Eventually(func(g Gomega) {
+				g.Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+				if _, paused := vm.Annotations[vmopv1.PauseAnnotation]; paused {
+					patch := ctrlclient.MergeFrom(vm.DeepCopy())
+					delete(vm.Annotations, vmopv1.PauseAnnotation)
+					g.Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+				}
+			}).Should(Succeed())
+		})
+		Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+		patch := ctrlclient.MergeFrom(vm.DeepCopy())
+		metav1.SetMetaDataAnnotation(&vm.ObjectMeta, vmopv1.PauseAnnotation, "true")
+		vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+		vm.Spec.PowerOffMode = vmopv1.VirtualMachinePowerOpModeHard
+		Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+		Consistently(func(g Gomega) {
+			g.Expect(lifecycleVMProperties(ctx, input, vm).Runtime.PowerState).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+		}, input.Config.GetIntervals("default", "consistent-virtual-machine-condition")...).Should(Succeed())
+		Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+		patch = ctrlclient.MergeFrom(vm.DeepCopy())
+		delete(vm.Annotations, vmopv1.PauseAnnotation)
+		Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+		vmoperator.WaitForVirtualMachinePowerState(ctx, input.Config, c, vm.Namespace, vm.Name, poweredOffState)
+		Expect(lifecycleVMProperties(ctx, input, vm).Runtime.PowerState).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+	})
+
 }
 
 func createLifecycleVM(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine) {

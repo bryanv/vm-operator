@@ -10,6 +10,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/mo"
@@ -179,6 +180,28 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		Entry("using TrySoft with stopped Tools to require hard fallback", vmopv1.VirtualMachinePowerOpModeTrySoft, true),
 	)
 
+	// vmop-3584: each GuestInfo expression participates in the AND evaluation.
+	It("updates readiness when GuestInfo expressions start and stop matching", Label("core-functional"), func() {
+		vm.Spec.ReadinessProbe = &vmopv1.VirtualMachineReadinessProbeSpec{
+			PeriodSeconds: 2,
+			GuestInfo: []vmopv1.GuestInfoAction{
+				{Key: "e2e.phase", Value: "^ready$"},
+				{Key: "e2e.version", Value: "^v[0-9]+$"},
+			},
+		}
+		createLifecycleVM(ctx, input, vm)
+		waitForLifecycleCondition(ctx, input, vm, vmopv1.ReadyConditionType, metav1.ConditionFalse)
+		setLifecycleGuestInfo(ctx, input, vm, "e2e.phase", "ready")
+		Consistently(func(g Gomega) {
+			g.Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+			g.Expect(apimeta.IsStatusConditionFalse(vm.Status.Conditions, vmopv1.ReadyConditionType)).To(BeTrue())
+		}, input.Config.GetIntervals("default", "consistent-virtual-machine-condition")...).Should(Succeed())
+		setLifecycleGuestInfo(ctx, input, vm, "e2e.version", "v2")
+		waitForLifecycleCondition(ctx, input, vm, vmopv1.ReadyConditionType, metav1.ConditionTrue)
+		setLifecycleGuestInfo(ctx, input, vm, "e2e.phase", "starting")
+		waitForLifecycleCondition(ctx, input, vm, vmopv1.ReadyConditionType, metav1.ConditionFalse)
+	})
+
 }
 
 func createLifecycleVM(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine) {
@@ -205,6 +228,17 @@ func lifecycleVMProperties(ctx context.Context, input lifecycleCoverageInput, vm
 		vimtypes.ManagedObjectReference{Type: "VirtualMachine", Value: moid},
 		[]string{"config", "runtime", "guestHeartbeatStatus"}, &result)).To(Succeed())
 	return result
+}
+
+func setLifecycleGuestInfo(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine, key, value string) {
+	GinkgoHelper()
+	moid := vmoperator.GetVirtualMachineMOID(ctx, input.ClusterProxy.GetClient(), vm.Namespace, vm.Name)
+	vcVM := object.NewVirtualMachine(input.vimClient, vimtypes.ManagedObjectReference{Type: "VirtualMachine", Value: moid})
+	task, err := vcVM.Reconfigure(ctx, vimtypes.VirtualMachineConfigSpec{
+		ExtraConfig: []vimtypes.BaseOptionValue{&vimtypes.OptionValue{Key: "guestinfo." + key, Value: value}},
+	})
+	Expect(err).ToNot(HaveOccurred())
+	Expect(task.Wait(ctx)).To(Succeed())
 }
 
 func runLifecycleGuestCommand(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine, command, want string) {

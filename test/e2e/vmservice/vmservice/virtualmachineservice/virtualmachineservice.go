@@ -7,12 +7,14 @@ package virtualmachineservice
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,6 +22,7 @@ import (
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 
 	"github.com/vmware-tanzu/vm-operator/test/e2e/framework"
+	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/common"
 	e2eConfig "github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/config"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/consts"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/lib/vmoperator"
@@ -106,6 +109,60 @@ func VirtualMachineServiceSpec(ctx context.Context, inputGetter func() SpecInput
 			}
 		}, dumps...)
 	})
+
+	// vmop-3582: exercise the service data path, including port translation.
+	DescribeTable("forwards traffic to a selected VM", Label("core-functional", "experimental"),
+		func(serviceType vmopv1.VirtualMachineServiceType) {
+			if config.InfraConfig.NetworkingTopology != consts.NSX {
+				Skip("Service connectivity requires the NSX jumpbox PodVM")
+			}
+			vmNames = vmNames[:1]
+			vm := &vmopv1.VirtualMachine{
+				ObjectMeta: metav1.ObjectMeta{Name: vmNames[0], Namespace: input.WCPNamespaceName,
+					Labels: map[string]string{selectorKey: "true"}},
+				Spec: vmopv1.VirtualMachineSpec{
+					ImageName: linuxVMIName, ClassName: clusterResources.VMClassName,
+					StorageClass: clusterResources.StorageClassName, PowerState: vmopv1.VirtualMachinePowerStateOn,
+				},
+			}
+			vmoperator.CreateVirtualMachine(ctx, config, input.ClusterProxy, vm, false)
+			vmoperator.WaitForVirtualMachineCreation(ctx, config, svClusterClient, vm.Namespace, vm.Name)
+			service := &vmopv1.VirtualMachineService{
+				ObjectMeta: metav1.ObjectMeta{Name: vmServiceName, Namespace: input.WCPNamespaceName},
+				Spec: vmopv1.VirtualMachineServiceSpec{
+					Type: serviceType, Selector: map[string]string{selectorKey: "true"},
+					IPFamilies: []corev1.IPFamily{corev1.IPv4Protocol},
+					Ports:      []vmopv1.VirtualMachineServicePort{{Name: "ssh", Protocol: "TCP", Port: 2222, TargetPort: 22}},
+				},
+			}
+			Expect(svClusterClient.Create(ctx, service)).To(Succeed())
+			vmoperator.WaitForVirtualMachineServiceEndpointsVMs(ctx, config, svClusterClient, service.Namespace, service.Name, vmNames)
+			var address string
+			Eventually(func(g Gomega) {
+				var backing corev1.Service
+				g.Expect(svClusterClient.Get(ctx, ctrlclient.ObjectKeyFromObject(service), &backing)).To(Succeed())
+				g.Expect(metav1.IsControlledBy(&backing, service)).To(BeTrue())
+				g.Expect(backing.Spec.Type).To(Equal(corev1.ServiceType(serviceType)))
+				if serviceType == vmopv1.VirtualMachineServiceTypeLoadBalancer {
+					g.Expect(svClusterClient.Get(ctx, ctrlclient.ObjectKeyFromObject(service), service)).To(Succeed())
+					g.Expect(service.Status.LoadBalancer.Ingress).ToNot(BeEmpty())
+					address = service.Status.LoadBalancer.Ingress[0].IP
+				} else {
+					address = backing.Spec.ClusterIP
+				}
+				g.Expect(net.ParseIP(address)).ToNot(BeNil())
+			}, config.GetIntervals("default", "wait-virtual-machine-service-endpoints")...).Should(Succeed())
+			vmservice.WaitForPodReady(ctx, config, svClusterClient, input.WCPNamespaceName, consts.JumpboxPodVMName)
+			clusterProxy := input.ClusterProxy.(*common.VMServiceClusterProxy)
+			Eventually(func(g Gomega) {
+				stdout, err := clusterProxy.Exec(ctx, consts.JumpboxPodVMName, "-n", input.WCPNamespaceName,
+					"--", "timeout", "10", "bash", "-c", fmt.Sprintf("head -c 4 < /dev/tcp/%s/2222", address))
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(string(stdout)).To(Equal("SSH-"))
+			}, config.GetIntervals("default", "wait-virtual-machine-service-endpoints")...).Should(Succeed())
+		},
+		Entry("using ClusterIP", vmopv1.VirtualMachineServiceTypeClusterIP),
+	)
 
 	It("Should remove a VM from VirtualMachineService Endpoints once it no longer matches the selector", Label("core-functional", "experimental"), func() {
 		By("Creating a VirtualMachineService selecting VMs with a unique label")

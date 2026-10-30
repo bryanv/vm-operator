@@ -14,7 +14,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/vmware/govmomi/crypto"
+	"github.com/vmware/govmomi/find"
+	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vim25"
+	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -26,6 +30,7 @@ import (
 	vmopv1a3 "github.com/vmware-tanzu/vm-operator/api/v1alpha3"
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	byokv1 "github.com/vmware-tanzu/vm-operator/external/byok/api/v1alpha1"
+	imgregv1a2 "github.com/vmware-tanzu/vm-operator/external/image-registry-operator/api/v1alpha2"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/framework"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/infrastructure/vsphere/vcenter"
@@ -147,6 +152,100 @@ func VMEncryptionSpec(ctx context.Context, inputGetter func() VMEncryptionInput)
 			To(Succeed(), "failed to ensure encryption storage in namespace %s",
 				tmpNamespaceName)
 	})
+
+	// vmop-3645: VM-backed images use a different deployment path from OVFs.
+	DescribeTable("encrypts a VM deployed from an inventory-backed image", Label("extended-functional", "experimental"),
+		func(withEncryptionClass, withVTPM bool) {
+			skipper.SkipUnlessSupervisorCapabilityEnabled(ctx, clusterProxy, consts.InventoryContentLibraryCapabilityName)
+			if withEncryptionClass && !byokFSSEnabled {
+				Skip("BYOK FSS is disabled")
+			}
+			useKeyProvider(ctx, config, cryptoManager, nativeKeyProviderID)
+
+			By("Publishing an ordinary source VM into a dedicated inventory library")
+			sourceName := vmName + "-source"
+			source := buildVMWithPromotionDisabled(tmpNamespaceName, sourceName, vmiName, *clusterResources, nil)
+			vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, source, false)
+			vmoperator.WaitForVirtualMachineCreation(ctx, config, svClusterClient, tmpNamespaceName, sourceName)
+			_, folder := createLibraryFolder(ctx, find.NewFinder(vCenterClient, false), vmName+"-folder")
+			DeferCleanup(vcenter.DeleteFolder, ctx, folder)
+			library := createInventoryContentLibraryCR(ctx, svClusterClient,
+				imgregv1a2.ResourceNamingStrategyPreferItemSourceID, tmpNamespaceName, vmName+"-library", folder.Reference().Value, true, true)
+			DeferCleanup(func() {
+				Expect(ctrlclient.IgnoreNotFound(svClusterClient.Delete(ctx, library))).To(Succeed())
+			})
+			validateContentLibraryV2(ctx, svClusterClient, library, folder, library.Name, tmpNamespaceName, "")
+			publishName := vmName + "-publish"
+			createVMPublishRequest(ctx, *config, clusterProxy,
+				generateVMPublishRequestBuilder(tmpNamespaceName, publishName, sourceName, vmName+"-image", library.Name))
+			DeferCleanup(func() {
+				vmoperator.DeleteVirtualMachinePublishRequest(ctx, svClusterClient, tmpNamespaceName, publishName)
+				vmoperator.WaitForVirtualMachinePublishRequestToBeDeleted(ctx, config, svClusterClient, tmpNamespaceName, publishName)
+			})
+			vmoperator.WaitForVirtualMachinePublishRequestUploaded(ctx, config, svClusterClient, tmpNamespaceName, publishName)
+			vmoperator.VerifyVirtualMachinePublishRequestCondition(ctx, config, svClusterClient, tmpNamespaceName, publishName,
+				metav1.Condition{Type: vmopv1.VirtualMachinePublishRequestConditionComplete, Status: metav1.ConditionTrue})
+			imageName := vmoperator.GetVirtualMachinePublishRequestImageName(ctx, config, svClusterClient, tmpNamespaceName, publishName)
+			expectPublishedImageType(ctx, svClusterClient, tmpNamespaceName, imageName, imgregv1a2.ContentLibraryItemTypeVM)
+			vmoperator.WaitForVirtualMachineImageStatusDisks(ctx, &config.Config, svClusterClient, tmpNamespaceName, imageName)
+
+			vm := buildVMWithPromotionDisabled(tmpNamespaceName, vmName, imageName, *clusterResources, nil)
+			vm.Spec.StorageClass = utils.E2EEncryptionStorageClassName
+			if withVTPM {
+				classSpec := vmservice.CreateSpecE2eVMClassVTPMConfigSpec()
+				classSpec.ID = vmName + "-vtpm"
+				Expect(wcpClient.CreateVMClass(classSpec)).To(Succeed())
+				DeferCleanup(vmservice.VerifyVMClassDeletion, wcpClient, classSpec.ID)
+				Expect(vmservice.EnsureNamespaceHasAccess(wcpClient, classSpec.ID, tmpNamespaceName)).To(Succeed())
+				vm.Spec.ClassName = classSpec.ID
+			}
+			if withEncryptionClass {
+				adminProxy, err := clusterProxy.NewAdminClusterProxy(ctx)
+				Expect(err).ToNot(HaveOccurred())
+				defer adminProxy.Dispose(ctx)
+				adminClient, err := adminProxy.GetAdminClient()
+				Expect(err).ToNot(HaveOccurred())
+				class := &byokv1.EncryptionClass{
+					ObjectMeta: metav1.ObjectMeta{Name: vmName + "-key", Namespace: tmpNamespaceName},
+					Spec:       byokv1.EncryptionClassSpec{KeyProvider: nativeKeyProviderID},
+				}
+				Expect(adminClient.Create(ctx, class)).To(Succeed())
+				vm.Spec.Crypto = &vmopv1.VirtualMachineCryptoSpec{
+					EncryptionClassName: class.Name, UseDefaultKeyProvider: ptr.To(false),
+				}
+			}
+
+			By("Deploying the VM-backed image with encrypted storage")
+			vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vm, false)
+			vmoperator.WaitForVirtualMachineImageCacheReady(ctx, config, svClusterClient, tmpNamespaceName, vmName)
+			vmoperator.WaitForVirtualMachineCreation(ctx, config, svClusterClient, tmpNamespaceName, vmName)
+			moid := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, tmpNamespaceName, vmName)
+			Eventually(func(g Gomega) {
+				var properties mo.VirtualMachine
+				g.Expect(property.DefaultCollector(vCenterClient).RetrieveOne(ctx,
+					types.ManagedObjectReference{Type: "VirtualMachine", Value: moid}, []string{"config"}, &properties)).To(Succeed())
+				g.Expect(properties.Config).ToNot(BeNil())
+				g.Expect(properties.Config.KeyId).ToNot(BeNil())
+				g.Expect(properties.Config.KeyId.ProviderId).ToNot(BeNil())
+				g.Expect(properties.Config.KeyId.ProviderId.Id).To(Equal(nativeKeyProviderID))
+				devices := object.VirtualDeviceList(properties.Config.Hardware.Device)
+				disks := devices.SelectByType((*types.VirtualDisk)(nil))
+				g.Expect(disks).ToNot(BeEmpty())
+				for _, device := range disks {
+					backing, ok := device.(*types.VirtualDisk).Backing.(*types.VirtualDiskFlatVer2BackingInfo)
+					g.Expect(ok).To(BeTrue())
+					g.Expect(backing.KeyId).ToNot(BeNil())
+					g.Expect(backing.KeyId.ProviderId).ToNot(BeNil())
+					g.Expect(backing.KeyId.ProviderId.Id).To(Equal(nativeKeyProviderID))
+				}
+				if withVTPM {
+					g.Expect(devices.SelectByType((*types.VirtualTPM)(nil))).To(HaveLen(1))
+				}
+			}, config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
+			vmoperator.EventuallyBootDiskStoragePolicyMatchesVMStorageClass(ctx, config, vCenterClient, svClusterClient, tmpNamespaceName, vmName)
+		},
+		Entry("using encrypted storage and the native key provider", false, false),
+	)
 
 	It("Should verify boot disk storage policy matches VM spec.storageClass for an encrypted VM", Label("experimental"), func() {
 		useKeyProvider(ctx, config, cryptoManager, nativeKeyProviderID)

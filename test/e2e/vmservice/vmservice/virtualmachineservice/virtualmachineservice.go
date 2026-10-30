@@ -162,6 +162,7 @@ func VirtualMachineServiceSpec(ctx context.Context, inputGetter func() SpecInput
 			}, config.GetIntervals("default", "wait-virtual-machine-service-endpoints")...).Should(Succeed())
 		},
 		Entry("using ClusterIP", vmopv1.VirtualMachineServiceTypeClusterIP),
+		Entry("using LoadBalancer", vmopv1.VirtualMachineServiceTypeLoadBalancer),
 	)
 
 	It("Should remove a VM from VirtualMachineService Endpoints once it no longer matches the selector", Label("core-functional", "experimental"), func() {

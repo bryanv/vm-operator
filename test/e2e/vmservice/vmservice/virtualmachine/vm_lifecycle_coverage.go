@@ -18,6 +18,7 @@ import (
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -212,6 +213,29 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		Eventually(func(g Gomega) {
 			g.Expect(lifecycleVMProperties(ctx, input, vm).GuestHeartbeatStatus).To(Equal(vimtypes.ManagedEntityStatusGreen))
 		}, input.Config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
+	})
+
+	It("updates TCP readiness when the probed port becomes reachable", Label("core-functional"), func() {
+		if input.Config.InfraConfig.NetworkingTopology != consts.NSX {
+			Skip("TCP readiness requires operator connectivity to the NSX workload network")
+		}
+		vm.Spec.ReadinessProbe = &vmopv1.VirtualMachineReadinessProbeSpec{
+			PeriodSeconds: 2,
+			TCPSocket:     &vmopv1.TCPSocketAction{Port: intstr.FromInt32(1)},
+		}
+		createLifecycleVM(ctx, input, vm)
+		waitForLifecycleCondition(ctx, input, vm, vmopv1.ReadyConditionType, metav1.ConditionFalse)
+		for _, port := range []int32{22, 1} {
+			Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+			patch := ctrlclient.MergeFrom(vm.DeepCopy())
+			vm.Spec.ReadinessProbe.TCPSocket.Port = intstr.FromInt32(port)
+			Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+			status := metav1.ConditionFalse
+			if port == 22 {
+				status = metav1.ConditionTrue
+			}
+			waitForLifecycleCondition(ctx, input, vm, vmopv1.ReadyConditionType, status)
+		}
 	})
 
 }

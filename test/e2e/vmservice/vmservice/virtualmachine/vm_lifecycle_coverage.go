@@ -6,6 +6,7 @@ package virtualmachine
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -24,6 +25,8 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/manifestbuilders"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/utils"
+	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/common"
+	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/consts"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/lib/vmoperator"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/vmservice/vmservice"
 )
@@ -120,6 +123,43 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		}, input.Config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed())
 	})
 
+	// vmop-3581: a restart status timestamp alone cannot prove the guest rebooted.
+	DescribeTable("restarts the guest and acknowledges each restart request", Label("core-functional"),
+		func(mode vmopv1.VirtualMachinePowerOpMode) {
+			createLifecycleVM(ctx, input, vm)
+			waitForLifecycleCondition(ctx, input, vm, vmopv1.VirtualMachineToolsCondition, metav1.ConditionTrue)
+			runLifecycleGuestCommand(ctx, input, vm,
+				"cat /proc/sys/kernel/random/boot_id > /var/tmp/vmop-e2e-boot-id && sync && echo recorded", "recorded")
+			Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+			lastRestart := vm.Status.LastRestartTime.DeepCopy()
+			patch := ctrlclient.MergeFrom(vm.DeepCopy())
+			vm.Spec.RestartMode = mode
+			vm.Spec.NextRestartTime = "now"
+			Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+			requestTime, err := time.Parse(time.RFC3339Nano, vm.Spec.NextRestartTime)
+			Expect(err).ToNot(HaveOccurred(), "admission must normalize now to a timestamp")
+			requestTime = requestTime.Truncate(time.Second)
+			Eventually(func(g Gomega) {
+				g.Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+				g.Expect(vm.Status.LastRestartTime).ToNot(BeNil())
+				g.Expect(vm.Status.LastRestartTime.Time.Before(requestTime)).To(BeFalse())
+				if lastRestart != nil {
+					g.Expect(vm.Status.LastRestartTime.After(lastRestart.Time)).To(BeTrue())
+				}
+				g.Expect(vm.Status.PowerState).To(Equal(vmopv1.VirtualMachinePowerStateOn))
+			}, input.Config.GetIntervals("default", "wait-virtual-machine-powerstate")...).Should(Succeed())
+			runLifecycleGuestCommand(ctx, input, vm,
+				"test -s /var/tmp/vmop-e2e-boot-id && test \"$(cat /proc/sys/kernel/random/boot_id)\" != \"$(cat /var/tmp/vmop-e2e-boot-id)\" && echo rebooted", "rebooted")
+		},
+		Entry("using Hard", vmopv1.VirtualMachinePowerOpModeHard),
+	)
+
+}
+
+func createLifecycleVM(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine) {
+	GinkgoHelper()
+	vmoperator.CreateVirtualMachine(ctx, input.Config, input.ClusterProxy, vm, input.SkipCleanup)
+	vmoperator.WaitForVirtualMachineCreation(ctx, input.Config, input.ClusterProxy.GetClient(), vm.Namespace, vm.Name)
 }
 
 func waitForLifecycleCondition(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine, conditionType string, status metav1.ConditionStatus) {
@@ -140,4 +180,17 @@ func lifecycleVMProperties(ctx context.Context, input lifecycleCoverageInput, vm
 		vimtypes.ManagedObjectReference{Type: "VirtualMachine", Value: moid},
 		[]string{"config", "runtime", "guestHeartbeatStatus"}, &result)).To(Succeed())
 	return result
+}
+
+func runLifecycleGuestCommand(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine, command, want string) {
+	GinkgoHelper()
+	clusterProxy := input.ClusterProxy.(*common.VMServiceClusterProxy)
+	ip := vmoperator.GetVirtualMachineIP(ctx, clusterProxy.GetClient(), vm.Namespace, vm.Name)
+	if input.Config.InfraConfig.NetworkingTopology == consts.NSX {
+		vmservice.WaitForPodReady(ctx, input.Config, clusterProxy.GetClient(), vm.Namespace, consts.JumpboxPodVMName)
+		vmservice.VerifyLoginAndRunCmdsInNSXSetup(ctx, input.Config, clusterProxy, vm.Namespace,
+			consts.JumpboxPodVMName, ip, []string{command}, []string{want})
+	} else {
+		vmservice.VerifyLoginAndRunCmdsInVDSSetup(input.Config, ip, []string{command}, []string{want})
+	}
 }

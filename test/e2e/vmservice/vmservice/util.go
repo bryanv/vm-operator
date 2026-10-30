@@ -760,11 +760,13 @@ func VerifyLoginAndRunCmdsInVDSSetup(config *config.E2EConfig, vmIP string, cmds
 		g.Expect(cmdRunner).ToNot(BeNil())
 	}, config.GetIntervals("default", "login-retry-timeout")...).Should(Succeed(), "ssh login to VM did not succeed in time.")
 
-	cmdOutput, err := cmdRunner.RunCommand("ip addr")
-	Expect(err).NotTo(HaveOccurred())
-
-	cmdOutputString := string(cmdOutput)
-	Expect(cmdOutputString).To(ContainSubstring(vmIP))
+	defer func() { _ = cmdRunner.Close() }()
+	var cmdOutput []byte
+	Eventually(func(g Gomega) {
+		cmdOutput, err = runGuestCommandWithReconnect(vmIP, gw, &cmdRunner, "ip addr")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(string(cmdOutput)).To(ContainSubstring(vmIP))
+	}, config.GetIntervals("default", "login-retry-timeout")...).Should(Succeed())
 
 	if len(cmds) > 0 && len(expectedOutput) > 0 {
 		for i, cmd := range cmds {
@@ -775,7 +777,7 @@ func VerifyLoginAndRunCmdsInVDSSetup(config *config.E2EConfig, vmIP string, cmds
 			// by cloud-init (e.g. /helloworld via write_files) can fail on the
 			// VDS path even though the NSX path retries identically.
 			Eventually(func(g Gomega) {
-				cmdOutput, err = cmdRunner.RunCommand(cmd)
+				cmdOutput, err = runGuestCommandWithReconnect(vmIP, gw, &cmdRunner, cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(string(cmdOutput)).To(ContainSubstring(expectedOutput[i]))
 			}, config.GetIntervals("default", "login-retry-timeout")...).Should(Succeed(),
@@ -787,6 +789,22 @@ func VerifyLoginAndRunCmdsInVDSSetup(config *config.E2EConfig, vmIP string, cmds
 	disableForwardingCmd := fmt.Sprintf("%s;%s;%s", findTCPForwardingEntity, disableForwarding, consts.CmdRestartSSHD)
 	_, err = gatewayCmdRunner.RunCommand(disableForwardingCmd)
 	Expect(err).NotTo(HaveOccurred())
+}
+
+// runGuestCommandWithReconnect replaces an SSH connection lost during a guest reboot.
+func runGuestCommandWithReconnect(vmIP string, gateway e2essh.Gateway, runner *e2essh.SSHCommandRunner, command string) ([]byte, error) {
+	output, err := (*runner).RunCommand(command)
+	if err == nil {
+		return output, nil
+	}
+	_ = (*runner).Close()
+	reconnected, err := e2essh.NewSSHCommandRunnerWithinGateway(vmIP, consts.SshPort,
+		consts.DefaultVMUserName, []ssh.AuthMethod{ssh.Password(consts.DefaultVMPassword)}, gateway)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reconnect to guest %s: %w", vmIP, err)
+	}
+	*runner = reconnected
+	return reconnected.RunCommand(command)
 }
 
 // decodeGzipBase64 decodes a gzip-compressed and base64-encoded string.

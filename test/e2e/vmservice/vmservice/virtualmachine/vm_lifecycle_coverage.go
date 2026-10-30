@@ -202,6 +202,18 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		waitForLifecycleCondition(ctx, input, vm, vmopv1.ReadyConditionType, metav1.ConditionFalse)
 	})
 
+	It("marks a guest ready after its heartbeat reaches the configured threshold", Label("core-functional"), func() {
+		vm.Spec.ReadinessProbe = &vmopv1.VirtualMachineReadinessProbeSpec{
+			PeriodSeconds:  2,
+			GuestHeartbeat: &vmopv1.GuestHeartbeatAction{ThresholdStatus: vmopv1.GreenHeartbeatStatus},
+		}
+		createLifecycleVM(ctx, input, vm)
+		waitForLifecycleCondition(ctx, input, vm, vmopv1.ReadyConditionType, metav1.ConditionTrue)
+		Eventually(func(g Gomega) {
+			g.Expect(lifecycleVMProperties(ctx, input, vm).GuestHeartbeatStatus).To(Equal(vimtypes.ManagedEntityStatusGreen))
+		}, input.Config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
+	})
+
 }
 
 func createLifecycleVM(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine) {

@@ -152,6 +152,7 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 				"test -s /var/tmp/vmop-e2e-boot-id && test \"$(cat /proc/sys/kernel/random/boot_id)\" != \"$(cat /var/tmp/vmop-e2e-boot-id)\" && echo rebooted", "rebooted")
 		},
 		Entry("using Hard", vmopv1.VirtualMachinePowerOpModeHard),
+		Entry("using Soft", vmopv1.VirtualMachinePowerOpModeSoft),
 	)
 
 }

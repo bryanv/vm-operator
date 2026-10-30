@@ -176,6 +176,7 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		},
 		Entry("using Soft with running Tools", vmopv1.VirtualMachinePowerOpModeSoft, false),
 		Entry("using TrySoft with running Tools", vmopv1.VirtualMachinePowerOpModeTrySoft, false),
+		Entry("using TrySoft with stopped Tools to require hard fallback", vmopv1.VirtualMachinePowerOpModeTrySoft, true),
 	)
 
 }

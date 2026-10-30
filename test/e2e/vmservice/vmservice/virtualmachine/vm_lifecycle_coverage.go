@@ -272,6 +272,34 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		Expect(lifecycleVMProperties(ctx, input, vm).Runtime.PowerState).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
 	})
 
+	// vmop-3590: successful GuestID changes remove the error condition.
+	It("applies explicit GuestID and offline updates and rejects online updates", Label("extended-functional"), func() {
+		vm.Spec.GuestID = "otherLinux64Guest"
+		vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+		vmoperator.CreateVirtualMachine(ctx, input.Config, input.ClusterProxy, vm, input.SkipCleanup)
+		vmoperator.WaitForVirtualMachineConditionCreated(ctx, input.Config, c, vm.Namespace, vm.Name)
+		Eventually(func(g Gomega) {
+			g.Expect(lifecycleVMProperties(ctx, input, vm).Config.GuestId).To(Equal("otherLinux64Guest"))
+		}, input.Config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
+		Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+		patch := ctrlclient.MergeFrom(vm.DeepCopy())
+		vm.Spec.GuestID = "ubuntu64Guest"
+		Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(lifecycleVMProperties(ctx, input, vm).Config.GuestId).To(Equal("ubuntu64Guest"))
+			g.Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+			g.Expect(apimeta.FindStatusCondition(vm.Status.Conditions, vmopv1.GuestIDReconfiguredCondition)).To(BeNil())
+		}, input.Config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
+		vmoperator.UpdateVirtualMachinePowerState(ctx, input.Config, c, vm.Namespace, vm.Name, poweredOnState)
+		vmoperator.WaitForVirtualMachinePowerState(ctx, input.Config, c, vm.Namespace, vm.Name, poweredOnState)
+		Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+		patch = ctrlclient.MergeFrom(vm.DeepCopy())
+		vm.Spec.GuestID = "otherLinux64Guest"
+		Expect(c.Patch(ctx, vm, patch)).To(MatchError(ContainSubstring("guestID")))
+		Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+		Expect(vm.Spec.GuestID).To(Equal("ubuntu64Guest"))
+	})
+
 }
 
 func createLifecycleVM(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine) {

@@ -156,6 +156,27 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		Entry("using TrySoft", vmopv1.VirtualMachinePowerOpModeTrySoft),
 	)
 
+	// vmop-3586: exercise guest shutdown and fallback when Tools are unavailable.
+	DescribeTable("powers off a guest using the requested mode", Label("extended-functional"),
+		func(mode vmopv1.VirtualMachinePowerOpMode, stopTools bool) {
+			createLifecycleVM(ctx, input, vm)
+			waitForLifecycleCondition(ctx, input, vm, vmopv1.VirtualMachineToolsCondition, metav1.ConditionTrue)
+			if stopTools {
+				runLifecycleGuestCommand(ctx, input, vm,
+					"(sudo systemctl stop vmtoolsd.service 2>/dev/null || sudo systemctl stop open-vm-tools.service) && echo stopped", "stopped")
+				waitForLifecycleCondition(ctx, input, vm, vmopv1.VirtualMachineToolsCondition, metav1.ConditionFalse)
+			}
+			Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+			patch := ctrlclient.MergeFrom(vm.DeepCopy())
+			vm.Spec.PowerOffMode = mode
+			vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+			Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+			vmoperator.WaitForVirtualMachinePowerState(ctx, input.Config, c, vm.Namespace, vm.Name, poweredOffState)
+			Expect(lifecycleVMProperties(ctx, input, vm).Runtime.PowerState).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+		},
+		Entry("using Soft with running Tools", vmopv1.VirtualMachinePowerOpModeSoft, false),
+	)
+
 }
 
 func createLifecycleVM(ctx context.Context, input lifecycleCoverageInput, vm *vmopv1.VirtualMachine) {

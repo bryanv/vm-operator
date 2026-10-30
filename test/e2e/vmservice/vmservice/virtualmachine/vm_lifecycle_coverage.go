@@ -153,6 +153,7 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		},
 		Entry("using Hard", vmopv1.VirtualMachinePowerOpModeHard),
 		Entry("using Soft", vmopv1.VirtualMachinePowerOpModeSoft),
+		Entry("using TrySoft", vmopv1.VirtualMachinePowerOpModeTrySoft),
 	)
 
 }

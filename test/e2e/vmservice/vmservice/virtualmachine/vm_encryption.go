@@ -245,6 +245,7 @@ func VMEncryptionSpec(ctx context.Context, inputGetter func() VMEncryptionInput)
 			vmoperator.EventuallyBootDiskStoragePolicyMatchesVMStorageClass(ctx, config, vCenterClient, svClusterClient, tmpNamespaceName, vmName)
 		},
 		Entry("using encrypted storage and the native key provider", false, false),
+		Entry("using encrypted storage and an explicit encryption class", true, false),
 	)
 
 	It("Should verify boot disk storage policy matches VM spec.storageClass for an encrypted VM", Label("experimental"), func() {

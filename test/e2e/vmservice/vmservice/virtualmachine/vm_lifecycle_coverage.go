@@ -6,6 +6,7 @@ package virtualmachine
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -298,6 +299,26 @@ func vmLifecycleCoverage(ctx context.Context, inputGetter func() lifecycleCovera
 		Expect(c.Patch(ctx, vm, patch)).To(MatchError(ContainSubstring("guestID")))
 		Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
 		Expect(vm.Spec.GuestID).To(Equal("ubuntu64Guest"))
+	})
+
+	// vmop-3585: snapshot coverage enables CBT but does not disable it.
+	It("enables and disables CBT on a powered-off VM", Label("extended-functional"), func() {
+		vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+		vm.Spec.Advanced = &vmopv1.VirtualMachineAdvancedSpec{ChangeBlockTracking: ptr.To(true)}
+		vmoperator.CreateVirtualMachine(ctx, input.Config, input.ClusterProxy, vm, input.SkipCleanup)
+		vmoperator.WaitForVirtualMachineConditionCreated(ctx, input.Config, c, vm.Namespace, vm.Name)
+		for _, enabled := range []bool{true, false, true} {
+			By(fmt.Sprintf("Verifying CBT=%t in both status and vSphere", enabled))
+			Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+			patch := ctrlclient.MergeFrom(vm.DeepCopy())
+			vm.Spec.Advanced.ChangeBlockTracking = ptr.To(enabled)
+			Expect(c.Patch(ctx, vm, patch)).To(Succeed())
+			Eventually(func(g Gomega) {
+				g.Expect(c.Get(ctx, ctrlclient.ObjectKeyFromObject(vm), vm)).To(Succeed())
+				g.Expect(vm.Status.ChangeBlockTracking).To(Equal(ptr.To(enabled)))
+				g.Expect(lifecycleVMProperties(ctx, input, vm).Config.ChangeTrackingEnabled).To(Equal(ptr.To(enabled)))
+			}, input.Config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed())
+		}
 	})
 
 }

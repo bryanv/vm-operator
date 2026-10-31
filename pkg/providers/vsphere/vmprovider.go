@@ -113,7 +113,10 @@ func (vs *vSphereVMProvider) getVcClient(ctx context.Context) (*vcclient.Client,
 		return vs.vcClient, nil
 	}
 
-	config, err := vcconfig.GetProviderConfig(ctx, vs.k8sClient)
+	// Read the config and credentials directly from the API server since the
+	// cache may not yet reflect the change that caused the client to be reset,
+	// and the resulting client is retained until the next reset.
+	config, err := vcconfig.GetProviderConfig(pkgctx.WithLiveRead(ctx), vs.k8sClient)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +132,7 @@ func (vs *vSphereVMProvider) getVcClient(ctx context.Context) (*vcclient.Client,
 }
 
 func (vs *vSphereVMProvider) UpdateVcPNID(ctx context.Context, vcPNID, vcPort string) error {
-	updated, err := vcconfig.UpdateVcInConfigMap(ctx, vs.k8sClient, vcPNID, vcPort)
+	updated, err := vcconfig.UpdateVcInConfigMap(pkgctx.WithLiveRead(ctx), vs.k8sClient, vcPNID, vcPort)
 	if err != nil || !updated {
 		return err
 	}

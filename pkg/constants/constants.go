@@ -86,6 +86,12 @@ const (
 	// their size and number.
 	VMICacheOVFConfigMapLabelKey = "vmicache.vmoperator.vmware.com/ovf"
 
+	// CacheStrippedAnnotationKey is set by the manager's cache transform on
+	// cached objects whose data was removed to conserve memory. A client MUST
+	// NOT trust the data of an object carrying this annotation and instead
+	// read the object from the API server.
+	CacheStrippedAnnotationKey = "vmoperator.vmware.com/cache-stripped"
+
 	// VMICacheLocationAnnotationKey is applied to resources waiting on a
 	// VirtualMachineImageCache's disks to be available at the specified
 	// location.

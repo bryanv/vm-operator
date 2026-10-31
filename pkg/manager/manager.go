@@ -115,6 +115,8 @@ func New(ctx context.Context, opts Options) (Manager, error) {
 				&corev1.ConfigMap{}: {
 					Namespaces: map[string]cache.Config{opts.PodNamespace: {}},
 					Label:      vmicOVFConfigMapExcludeSelector(),
+					Transform: vmicOVFConfigMapTransform(
+						cache.TransformStripManagedFields()),
 				},
 				&corev1.Secret{}: {
 					Namespaces: map[string]cache.Config{opts.PodNamespace: {}},

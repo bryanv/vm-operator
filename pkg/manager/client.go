@@ -12,10 +12,43 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/client-go/rest"
+	toolscache "k8s.io/client-go/tools/cache"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
+	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 )
+
+// vmicKind is the kind of the owner of the OVF ConfigMaps.
+const vmicKind = "VirtualMachineImageCache"
+
+// vmicOVFConfigMapTransform wraps next with a transform that removes the data
+// from ConfigMaps owned by a VirtualMachineImageCache. The label selector keeps
+// labeled OVF ConfigMaps out of the cache, but ConfigMaps created before the
+// label was introduced are still listed by the informer, and this keeps them
+// from consuming memory. The cached copy is annotated so readers know to read
+// the real object from the API server.
+func vmicOVFConfigMapTransform(next toolscache.TransformFunc) toolscache.TransformFunc {
+	return func(in any) (any, error) {
+		if cm, ok := in.(*corev1.ConfigMap); ok {
+			for _, o := range cm.OwnerReferences {
+				if o.Kind == vmicKind {
+					cm.Data = nil
+					cm.BinaryData = nil
+					if cm.Annotations == nil {
+						cm.Annotations = map[string]string{}
+					}
+					cm.Annotations[pkgconst.CacheStrippedAnnotationKey] = ""
+					break
+				}
+			}
+		}
+		if next != nil {
+			return next(in)
+		}
+		return in, nil
+	}
+}
 
 // vmicOVFConfigMapExcludeSelector returns a label selector that matches all
 // ConfigMaps except the VirtualMachineImageCache OVF ConfigMaps.
@@ -72,6 +105,10 @@ func NewPodNamespaceCachedClient(
 	cached ctrlclient.Reader,
 	direct ctrlclient.Client) ctrlclient.Client {
 
+	if podNamespace == "" {
+		return direct
+	}
+
 	return &podNamespaceCachedClient{
 		Client:       direct,
 		cached:       cached,
@@ -100,14 +137,22 @@ func (c *podNamespaceCachedClient) Get(
 	obj ctrlclient.Object,
 	opts ...ctrlclient.GetOption) error {
 
-	if key.Namespace == c.podNamespace && isConfigMapOrSecret(obj) {
+	if key.Namespace == c.podNamespace &&
+		isConfigMapOrSecret(obj) &&
+		!pkgctx.IsLiveRead(ctx) {
+
 		err := c.cached.Get(ctx, key, obj, opts...)
-		if _, ok := obj.(*corev1.ConfigMap); !ok || !apierrors.IsNotFound(err) {
+		if err == nil {
+			if _, stripped := obj.GetAnnotations()[pkgconst.CacheStrippedAnnotationKey]; !stripped {
+				return nil
+			}
+		} else if !apierrors.IsNotFound(err) {
 			return err
 		}
-		// Some ConfigMaps in the pod namespace, such as the OVF ConfigMaps
-		// for VirtualMachineImageCache resources, are excluded from the cache
-		// by a label selector, so fall back to reading from the API server.
+		// The object is not in the cache, or its data was stripped from it.
+		// Objects such as the OVF ConfigMaps for VirtualMachineImageCache
+		// resources are excluded from the cache, and the cache may lag behind
+		// recent writes, so fall back to reading from the API server.
 	}
 	return c.Client.Get(ctx, key, obj, opts...)
 }
@@ -117,10 +162,18 @@ func (c *podNamespaceCachedClient) List(
 	list ctrlclient.ObjectList,
 	opts ...ctrlclient.ListOption) error {
 
-	if isConfigMapOrSecret(list) {
+	// ConfigMaps are always listed from the API server since the cache omits
+	// some of them, ex. the OVF ConfigMaps.
+	if _, ok := list.(*corev1.SecretList); ok && !pkgctx.IsLiveRead(ctx) {
 		var lo ctrlclient.ListOptions
 		lo.ApplyOptions(opts)
-		if lo.Namespace == c.podNamespace {
+		// Field selectors require a cache index, and the cache cannot
+		// paginate, so send those requests to the API server.
+		if lo.Namespace == c.podNamespace &&
+			lo.FieldSelector == nil &&
+			lo.Limit == 0 &&
+			lo.Continue == "" {
+
 			return c.cached.List(ctx, list, opts...)
 		}
 	}

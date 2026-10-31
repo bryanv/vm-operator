@@ -15,7 +15,7 @@ import (
 
 func integTests() {
 	Describe("Cache", Ordered, Label(testlabels.EnvTest), cacheTests)
-	Describe("Client", clientTests)
+	Describe("Client", Label(testlabels.Controller), clientTests)
 }
 
 var suite = builder.NewTestSuite()

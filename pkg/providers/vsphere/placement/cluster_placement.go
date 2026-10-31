@@ -29,8 +29,8 @@ type Recommendation struct {
 }
 
 func relocateSpecToRecommendation(
-	ctx context.Context,
-	relocateSpec *vimtypes.VirtualMachineRelocateSpec) *Recommendation {
+	relocateSpec *vimtypes.VirtualMachineRelocateSpec,
+	needDatastorePlacement bool) *Recommendation {
 
 	// Instance Storage requires the host.
 	if relocateSpec == nil || relocateSpec.Pool == nil || relocateSpec.Host == nil {
@@ -42,7 +42,7 @@ func relocateSpecToRecommendation(
 		HostMoRef: relocateSpec.Host,
 	}
 
-	if pkgcfg.FromContext(ctx).Features.FastDeploy {
+	if needDatastorePlacement {
 		if ds := relocateSpec.Datastore; ds != nil {
 			r.Datastores = append(r.Datastores, DatastoreResult{
 				MoRef: *ds,
@@ -64,14 +64,15 @@ func relocateSpecToRecommendation(
 func clusterPlacementActionToRecommendation(
 	ctx context.Context,
 	finder *find.Finder,
-	action *vimtypes.ClusterClusterInitialPlacementAction) (Recommendation, error) {
+	action *vimtypes.ClusterClusterInitialPlacementAction,
+	needDatastorePlacement bool) (Recommendation, error) {
 
 	r := Recommendation{
 		PoolMoRef: action.Pool,
 		HostMoRef: action.TargetHost,
 	}
 
-	if pkgcfg.FromContext(ctx).Features.FastDeploy {
+	if needDatastorePlacement {
 		if cs := action.ConfigSpec; cs != nil {
 			//
 			// Get the recommended datastore for the VM.
@@ -190,6 +191,11 @@ func PlaceVMForCreate(
 		PlacementType: string(vimtypes.PlacementSpecPlacementTypeCreate),
 		ConfigSpec:    &configSpec,
 	}
+	needsPlacement := doesVMNeedPlacement(vmCtx, configSpec)
+	if needsPlacement.needHostPlacement && needsPlacement.HostMoRef != nil {
+		// Preserve an instance-storage host selected on an earlier attempt.
+		placementSpec.RelocateSpec = &vimtypes.VirtualMachineRelocateSpec{Host: needsPlacement.HostMoRef}
+	}
 
 	vmCtx.Logger.V(4).Info("PlaceVM request", "placementSpec", vimtypes.ToString(placementSpec))
 
@@ -207,7 +213,7 @@ func PlaceVMForCreate(
 
 		for _, a := range r.Action {
 			if pa, ok := a.(*vimtypes.PlacementAction); ok {
-				if rec := relocateSpecToRecommendation(vmCtx, pa.RelocateSpec); rec != nil {
+				if rec := relocateSpecToRecommendation(pa.RelocateSpec, needsPlacement.needDatastorePlacement); rec != nil {
 					return rec, nil
 				}
 			}
@@ -290,7 +296,7 @@ func getClusterPlacementRecommendations(
 			// There should be only one InitialPlacementAction per VM.
 			if bca, ok := a.(vimtypes.BaseClusterClusterInitialPlacementAction); ok {
 				ca := bca.GetClusterClusterInitialPlacementAction()
-				r, err := clusterPlacementActionToRecommendation(ctx, finder, ca)
+				r, err := clusterPlacementActionToRecommendation(ctx, finder, ca, needDatastorePlacement)
 				if err != nil {
 					return nil, fmt.Errorf("failed to translate placement action to recommendation: %w", err)
 				}

@@ -9,8 +9,10 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	vimtypes "github.com/vmware/govmomi/vim25/types"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -135,6 +137,52 @@ var _ = Describe(
 			Expect(c.Status).To(Equal(metav1.ConditionFalse))
 			Expect(c.Reason).To(Equal(reason))
 		}
+
+		DescribeTable("includes each member's ISO backing in group placement", func(fastDeploy bool) {
+			pkgcfg.SetContext(ctx, func(c *pkgcfg.Config) {
+				c.Features.FastDeploy = fastDeploy
+				c.Features.CDROMPlacement = true
+			})
+			objects := builder.DummyImageAndItemObjectsForCdromBacking("group-iso", "", cvmiKind,
+				"[iso-datastore] library/group.iso", ctx.ContentLibraryIsoItemID,
+				true, true, resource.MustParse("100Mi"), true, true, "ISO")
+			for _, obj := range objects {
+				Expect(ctx.Client.Create(ctx, obj)).To(Succeed())
+			}
+			for _, vm := range []*vmopv1.VirtualMachine{vm1, vm2} {
+				vm.Spec.Hardware = &vmopv1.VirtualMachineHardwareSpec{Cdrom: []vmopv1.VirtualMachineCdromSpec{{
+					Name: "installer", Image: vmopv1.VirtualMachineImageRef{Kind: cvmiKind, Name: "group-iso"},
+				}}}
+			}
+			vcClient, err := vmProvider.VSphereClient(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			vimClient := vcClient.VimClient()
+			original := vimClient.RoundTripper
+			capture := &cdromCreateRoundTripper{RoundTripper: original}
+			vimClient.RoundTripper = capture
+			defer func() { vimClient.RoundTripper = original }()
+			Expect(vmProvider.PlaceVirtualMachineGroup(ctx, vmGroup, []providers.VMGroupPlacement{{
+				VMGroup: vmGroup, VMMembers: []*vmopv1.VirtualMachine{vm1, vm2},
+			}})).To(Succeed())
+			Expect(capture.placements).To(HaveLen(2))
+			for _, member := range vmGroup.Status.Members {
+				Expect(member.Placement).NotTo(BeNil())
+				Expect(member.Placement.Node).NotTo(BeEmpty())
+				Expect(member.Placement.Datastores).NotTo(BeEmpty())
+			}
+			for _, spec := range capture.placements {
+				var paths []string
+				for _, change := range spec.DeviceChange {
+					if cdrom, ok := change.GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualCdrom); ok {
+						paths = append(paths, cdrom.Backing.(*vimtypes.VirtualCdromIsoBackingInfo).FileName)
+					}
+				}
+				Expect(paths).To(Equal([]string{"[iso-datastore] library/group.iso"}))
+			}
+		},
+			Entry("fast deploy", true),
+			Entry("legacy deployment", false),
+		)
 
 		Context("Group placement with VMs specifying affinity policies", func() {
 			It("should process preferred VM affinity policies during group placement", func() {

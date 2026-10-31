@@ -728,6 +728,15 @@ func (vs *vSphereVMProvider) vmCreatePathName(
 	if createArgs.ConfigSpec.Files.VmPathName != "" {
 		return nil
 	}
+	if pkgcfg.FromContext(vmCtx).Features.CDROMPlacement {
+		for _, ds := range createArgs.Datastores {
+			if !ds.ForDisk {
+				createArgs.ConfigSpec.Files.VmPathName = (&object.DatastorePath{Datastore: ds.Name}).String()
+				return nil
+			}
+		}
+		return errors.New("placement result missing VM home datastore required for CD-ROM access")
+	}
 
 	vc := vcClient.VimClient()
 
@@ -2052,6 +2061,8 @@ func processPlacementResult(
 
 	if pkgcfg.FromContext(vmCtx).Features.FastDeploy {
 		createArgs.DatacenterMoID = vcClient.Datacenter().Reference().Value
+	}
+	if pkgcfg.FromContext(vmCtx).Features.FastDeploy || pkgcfg.FromContext(vmCtx).Features.CDROMPlacement {
 		createArgs.Datastores = make([]vmlifecycle.DatastoreRef, len(result.Datastores))
 		for i := range result.Datastores {
 			createArgs.Datastores[i].DiskKey = result.Datastores[i].DiskKey
@@ -2751,6 +2762,18 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpec(
 
 	if err := vs.vmCreateGenConfigSpecZipNetworkInterfaces(vmCtx, createArgs); err != nil {
 		return err
+	}
+
+	if pkgcfg.FromContext(vmCtx).Features.CDROMPlacement {
+		if hw := vmCtx.VM.Spec.Hardware; hw != nil && len(hw.Cdrom) > 0 {
+			createArgs.ConfigSpec.VmProfile = []vimtypes.BaseVirtualMachineProfileSpec{
+				&vimtypes.VirtualMachineDefinedProfileSpec{ProfileId: createArgs.StorageProfileID},
+			}
+		}
+		if err := virtualmachine.UpdateConfigSpecCdromsForCreate(
+			vmCtx, vcClient.RestClient(), vs.k8sClient, &createArgs.ConfigSpec); err != nil {
+			return fmt.Errorf("failed to configure CD-ROMs for placement and creation: %w", err)
+		}
 	}
 
 	vmCtx.Logger.V(4).Info("Completed generating config spec for VM create", "ConfigSpec", createArgs.ConfigSpec)

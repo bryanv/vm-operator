@@ -26,6 +26,49 @@ import (
 
 const trueString = "true"
 
+var _ = Describe("CD-ROM placement capability", func() {
+	DescribeTable("discovers activation from the Supervisor capabilities resource",
+		func(initial, advertised, activated, expected bool) {
+			ctx := pkgcfg.NewContext()
+			Expect(pkgcfg.FromContext(ctx).Features.CDROMPlacement).To(BeFalse())
+			pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+				config.Features.SVAsyncUpgrade = true
+				config.Features.CDROMPlacement = initial
+			})
+			obj := capv1.Capabilities{
+				ObjectMeta: metav1.ObjectMeta{Name: capabilities.CapabilitiesKey.Name},
+			}
+			if advertised {
+				obj.Status.Supervisor = map[capv1.CapabilityName]capv1.CapabilityStatus{
+					capabilities.CapabilityKeyCDROMPlacement: {Activated: activated},
+				}
+			}
+			client := builder.NewFakeClient(&obj)
+			changed, err := capabilities.UpdateCapabilities(ctx, client)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(changed).To(Equal(initial != expected))
+			Expect(pkgcfg.FromContext(ctx).Features.CDROMPlacement).To(Equal(expected))
+		},
+		Entry("absent capability remains disabled", false, false, false, false),
+		Entry("advertised but inactive capability remains disabled", false, true, false, false),
+		Entry("activation enables placement", false, true, true, true),
+		Entry("deactivation disables placement", true, true, false, false),
+		Entry("unchanged activation remains enabled", true, true, true, true),
+	)
+
+	It("reports activation without changing the config during a dry run", func() {
+		ctx := pkgcfg.NewContext()
+		obj := capv1.Capabilities{}
+		obj.Status.Supervisor = map[capv1.CapabilityName]capv1.CapabilityStatus{
+			capabilities.CapabilityKeyCDROMPlacement: {Activated: true},
+		}
+		diff, changed := capabilities.WouldUpdateCapabilitiesFeatures(ctx, obj)
+		Expect(changed).To(BeTrue())
+		Expect(diff).To(Equal("CDROMPlacement=true"))
+		Expect(pkgcfg.FromContext(ctx).Features.CDROMPlacement).To(BeFalse())
+	})
+})
+
 var _ = Describe("UpdateCapabilities", func() {
 	var (
 		ctx     context.Context

@@ -25,12 +25,170 @@ import (
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
+	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig/virtualcontroller"
 )
 
 const (
 	vmiKind  = "VirtualMachineImage"
 	cvmiKind = "Cluster" + vmiKind
 )
+
+// UpdateConfigSpecCdromsForCreate adds the requested ISO-backed CD-ROMs and
+// their required controllers before placement and creation. It preserves other
+// devices and leaves configSpec unchanged if any image or device is invalid.
+func UpdateConfigSpecCdromsForCreate(
+	vmCtx pkgctx.VirtualMachineContext,
+	restClient *rest.Client,
+	k8sClient ctrlclient.Client,
+	configSpec *vimtypes.VirtualMachineConfigSpec) error {
+
+	hw := vmCtx.VM.Spec.Hardware
+	if hw == nil || len(hw.Cdrom) == 0 {
+		return nil
+	}
+
+	spec, err := vimtypes.DeepCopy(*configSpec)
+	if err != nil {
+		return fmt.Errorf("failed to copy CD-ROM creation config: %w", err)
+	}
+
+	// The requested media supersedes CD-ROMs inherited from the class/image.
+	// These are creation operations, so omit them instead of emitting removes.
+	var devices object.VirtualDeviceList
+	changes := make([]vimtypes.BaseVirtualDeviceConfigSpec, 0, len(spec.DeviceChange))
+	for _, change := range spec.DeviceChange {
+		dc := change.GetVirtualDeviceConfigSpec()
+		if dc != nil && dc.Device != nil {
+			if _, ok := dc.Device.(*vimtypes.VirtualCdrom); ok {
+				continue
+			}
+			if dc.Operation != vimtypes.VirtualDeviceConfigSpecOperationRemove {
+				devices = append(devices, dc.Device)
+			}
+		}
+		changes = append(changes, change)
+	}
+	// ConfigSpec controller child lists are optional and may still refer to
+	// omitted CD-ROMs. Rebuild them so automatic assignment sees actual usage.
+	controllers := make(map[int32]*vimtypes.VirtualController)
+	for _, device := range devices {
+		if controller, ok := device.(vimtypes.BaseVirtualController); ok {
+			c := controller.GetVirtualController()
+			c.Device = nil
+			controllers[c.Key] = c
+		}
+	}
+	for _, device := range devices {
+		d := device.GetVirtualDevice()
+		if controller := controllers[d.ControllerKey]; controller != nil {
+			controller.Device = append(controller.Device, d.Key)
+		}
+	}
+
+	libManager := library.NewManager(restClient)
+	backings := make(map[string]struct{}, len(hw.Cdrom))
+	for _, cdromSpec := range hw.Cdrom {
+		backing, err := GetBackingFileNameByImageRef(vmCtx, k8sClient,
+			cdromSpec.Image, vmCtx.VM.Namespace, ptr.Deref(cdromSpec.Connected), libManager)
+		if err != nil {
+			return fmt.Errorf("failed to resolve CD-ROM %q image: %w", cdromSpec.Name, err)
+		}
+		if _, exists := backings[backing]; exists {
+			return fmt.Errorf("CD-ROM %q has duplicate ISO backing %q", cdromSpec.Name, backing)
+		}
+		backings[backing] = struct{}{}
+
+		cdrom := createNewCdrom(cdromSpec, backing, false)
+		expected := map[string]vimtypes.BaseVirtualDevice{backing: cdrom}
+		if pkgcfg.FromContext(vmCtx).Features.VMSharedDisks {
+			if cdromSpec.ControllerType == "" || cdromSpec.ControllerBusNumber == nil || cdromSpec.UnitNumber == nil {
+				return fmt.Errorf("CD-ROM %q is missing controller placement", cdromSpec.Name)
+			}
+			var controllerChanges []vimtypes.BaseVirtualDeviceConfigSpec
+			devices, controllerChanges, err = ensureCdromControllerForCreate(devices, cdromSpec)
+			if err != nil {
+				return fmt.Errorf("failed to create controller for CD-ROM %q: %w", cdromSpec.Name, err)
+			}
+			changes = append(changes, controllerChanges...)
+			cdrom.Key = devices.NewKey()
+			if err := ensureAllCdromsHaveControllersAssigned(expected, devices,
+				map[string]vmopv1.VirtualMachineCdromSpec{backing: cdromSpec}); err != nil {
+				return fmt.Errorf("failed to assign CD-ROM %q: %w", cdromSpec.Name, err)
+			}
+		} else {
+			controller, controllerChanges, updatedDevices, err := findOrCreateCdromController(devices)
+			if err != nil {
+				return fmt.Errorf("failed to create controller for CD-ROM %q: %w", cdromSpec.Name, err)
+			}
+			devices = updatedDevices
+			changes = append(changes, controllerChanges...)
+			cdrom.Key = devices.NewKey()
+			devices.AssignController(cdrom, controller)
+		}
+		devices = append(devices, cdrom)
+		changes = append(changes, &vimtypes.VirtualDeviceConfigSpec{
+			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+			Device:    cdrom,
+		})
+	}
+
+	spec.DeviceChange = changes
+	*configSpec = spec
+	return nil
+}
+
+// ensureCdromControllerForCreate adds only the controller required by the
+// CD-ROM, reusing controllers already supplied by the class or image.
+func ensureCdromControllerForCreate(
+	devices object.VirtualDeviceList,
+	spec vmopv1.VirtualMachineCdromSpec) (object.VirtualDeviceList, []vimtypes.BaseVirtualDeviceConfigSpec, error) {
+
+	bus := *spec.ControllerBusNumber
+	unit := *spec.UnitNumber
+	switch spec.ControllerType {
+	case vmopv1.VirtualControllerTypeIDE:
+		if bus < 0 || bus > 1 || unit < 0 || unit > 1 {
+			return nil, nil, fmt.Errorf("invalid IDE address %d:%d", bus, unit)
+		}
+	case vmopv1.VirtualControllerTypeSATA:
+		if bus < 0 || bus > 3 || unit < 0 || unit > 29 {
+			return nil, nil, fmt.Errorf("invalid SATA address %d:%d", bus, unit)
+		}
+	default:
+		return nil, nil, fmt.Errorf("unsupported controller type %q", spec.ControllerType)
+	}
+	controllers, _ := buildControllerMaps(devices)
+	if controllers[pkgutil.ControllerID{ControllerType: spec.ControllerType, BusNumber: bus}] != nil {
+		return devices, nil, nil
+	}
+
+	var changes []vimtypes.BaseVirtualDeviceConfigSpec
+	pci := devices.PickController((*vimtypes.VirtualPCIController)(nil))
+	if pci == nil {
+		newPCI := &vimtypes.VirtualPCIController{VirtualController: vimtypes.VirtualController{
+			VirtualDevice: vimtypes.VirtualDevice{Key: devices.NewKey()},
+		}}
+		pci = newPCI
+		devices = append(devices, newPCI)
+		changes = append(changes, &vimtypes.VirtualDeviceConfigSpec{
+			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+			Device:    newPCI,
+		})
+	}
+	key := devices.NewKey()
+	var controller vimtypes.BaseVirtualDevice
+	if spec.ControllerType == vmopv1.VirtualControllerTypeIDE {
+		controller = virtualcontroller.NewIDEController(vmopv1.IDEControllerSpec{BusNumber: bus}, pci.GetVirtualController().Key, &key)
+	} else {
+		controller = virtualcontroller.NewSATAController(vmopv1.SATAControllerSpec{BusNumber: bus}, pci.GetVirtualController().Key, &key)
+	}
+	devices = append(devices, controller)
+	changes = append(changes, &vimtypes.VirtualDeviceConfigSpec{
+		Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+		Device:    controller,
+	})
+	return devices, changes, nil
+}
 
 // UpdateCdromDeviceChangesWithSharedDisks implements CD-ROM reconciliation with
 // placement change support (VMSharedDisks enabled). It waits for controller
@@ -555,22 +713,13 @@ func ensureAllCdromsHaveControllers(
 			continue
 		}
 
-		if ide := curDevices.PickController((*vimtypes.VirtualIDEController)(nil)); ide != nil {
-			// IDE controller is available.
-			curDevices.AssignController(cdrom, ide)
-		} else if sata := curDevices.PickController((*vimtypes.VirtualSATAController)(nil)); sata != nil {
-			// SATA controller is available.
-			curDevices.AssignController(cdrom, sata)
-		} else {
-			// No existing IDE or SATA controller is available, add a new one.
-			sata, controllerChanges, updatedCurDevices, err := addNewSATAController(curDevices)
-			if err != nil {
-				return nil, fmt.Errorf("error adding a new SATA controller: %w", err)
-			}
-			curDevices.AssignController(cdrom, sata)
-			newControllerChanges = append(newControllerChanges, controllerChanges...)
-			curDevices = updatedCurDevices
+		controller, controllerChanges, updatedDevices, err := findOrCreateCdromController(curDevices)
+		if err != nil {
+			return nil, err
 		}
+		curDevices = updatedDevices
+		curDevices.AssignController(cdrom, controller)
+		newControllerChanges = append(newControllerChanges, controllerChanges...)
 
 		// Update curDevices with assigned CD-ROM for correct slot (unit number)
 		// allocation in the next CD-ROM assignment.
@@ -578,6 +727,27 @@ func ensureAllCdromsHaveControllers(
 	}
 
 	return newControllerChanges, nil
+}
+
+// findOrCreateCdromController shares the automatic IDE/SATA assignment policy
+// between creation and update reconciliation.
+func findOrCreateCdromController(devices object.VirtualDeviceList) (
+	vimtypes.BaseVirtualController,
+	[]vimtypes.BaseVirtualDeviceConfigSpec,
+	object.VirtualDeviceList,
+	error) {
+
+	if ide := devices.PickController((*vimtypes.VirtualIDEController)(nil)); ide != nil {
+		return ide, nil, devices, nil
+	}
+	if sata := devices.PickController((*vimtypes.VirtualSATAController)(nil)); sata != nil {
+		return sata, nil, devices, nil
+	}
+	controller, changes, devices, err := addNewSATAController(devices)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error adding a new SATA controller: %w", err)
+	}
+	return controller, changes, devices, nil
 }
 
 // addNewSATAController adds a new SATA (AHCI) controller to the VM and returns:

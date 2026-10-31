@@ -86,7 +86,13 @@ func createVM(
 	vmCtx.Logger.Info("Creating VM with params", "vmFolder", vmFolder.Reference(),
 		"resourcePool", resourcePool.Reference(), "createConfigSpec", createConfigSpec,
 		"k8sVMCreateTimestamp", vmCtx.VM.CreationTimestamp.Format(time.RFC3339))
-	task, err := vmFolder.CreateVM(vmCtx, createConfigSpec, resourcePool, nil)
+	var host *object.HostSystem
+	if createArgs.HostMoID != "" {
+		host = object.NewHostSystem(vimClient, vimtypes.ManagedObjectReference{
+			Type: "HostSystem", Value: createArgs.HostMoID,
+		})
+	}
+	task, err := vmFolder.CreateVM(vmCtx, createConfigSpec, resourcePool, host)
 	if err != nil {
 		vmCtx.Logger.Error(err, "Failed to create VM")
 		return nil, err

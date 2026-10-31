@@ -73,6 +73,14 @@ func GroupPlacement(
 	}
 
 	needDatastorePlacement := pkgcfg.FromContext(ctx).Features.FastDeploy
+	if pkgcfg.FromContext(ctx).Features.CDROMPlacement {
+		for _, mapping := range candidateMappings {
+			if hasISOBacking(mapping.ConfigSpec) {
+				needDatastorePlacement = true
+				break
+			}
+		}
+	}
 	recommendations, err := getGroupPlacementRecommendations(
 		ctx,
 		vcClient,

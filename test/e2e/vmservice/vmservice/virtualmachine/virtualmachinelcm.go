@@ -14,6 +14,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/vmware/govmomi/event"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vapi/tags"
@@ -671,8 +672,9 @@ func VMSpec(ctx context.Context, inputGetter func() VMSpecInput) {
 		Expect(vmInstanceDisksCount).Should(BeEquivalentTo(len(vmcISVols)))
 	})
 
-	It("Should create expected resources for a VirtualMachine deployed from ISO", func() {
+	It("Should create expected resources for a VirtualMachine deployed from ISO", Label("experimental"), func() {
 		skipper.SkipUnlessInfraIs(config.InfraConfig.InfraName, "wcp")
+		skipper.SkipUnlessSupervisorCapabilityEnabled(ctx, clusterProxy, consts.CDROMPlacementCapabilityName)
 
 		if os.Getenv("RUN_CANONICAL_TEST") == "true" {
 			Skip("These tests will be skipped for Canonical OVA testing.")
@@ -690,6 +692,7 @@ func VMSpec(ctx context.Context, inputGetter func() VMSpecInput) {
 			},
 			Spec: vmopv1a3.VirtualMachineSpec{
 				ClassName:    clusterResources.VMClassName,
+				PowerState:   vmopv1a3.VirtualMachinePowerStateOff,
 				StorageClass: clusterResources.StorageClassName,
 				GuestID:      "ubuntu64Guest",
 				PowerOffMode: vmopv1a3.VirtualMachinePowerOpModeHard,
@@ -709,7 +712,41 @@ func VMSpec(ctx context.Context, inputGetter func() VMSpecInput) {
 		vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vmToCreate, false)
 		vmoperator.WaitForVirtualMachineToExist(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
 		vmoperator.WaitForVirtualMachineImageCacheReady(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
-		vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, "PoweredOn")
+		vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, poweredOffState)
+
+		By("Verifying installation media is present before first power-on")
+		vmMoid := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+		vmMoRef := types.ManagedObjectReference{Type: "VirtualMachine", Value: vmMoid}
+		cdrom := verifyCdromConnectionState(ctx, vmMoRef, propCollector, false, true)
+		Expect(cdrom.Connectable.StartConnected).To(BeTrue())
+
+		By("Verifying media did not require a post-create CD-ROM add")
+		creationEventFound := false
+		Expect(event.NewManager(vCenterClient).Events(ctx, []types.ManagedObjectReference{vmMoRef},
+			100, false, false, func(_ types.ManagedObjectReference, events []types.BaseEvent) error {
+				for _, e := range events {
+					if _, ok := e.(*types.VmCreatedEvent); ok {
+						creationEventFound = true
+					}
+					if reconfigured, ok := e.(*types.VmReconfiguredEvent); ok {
+						for _, change := range reconfigured.ConfigSpec.DeviceChange {
+							dc := change.GetVirtualDeviceConfigSpec()
+							if _, ok := dc.Device.(*types.VirtualCdrom); ok {
+								Expect(dc.Operation).NotTo(Equal(types.VirtualDeviceConfigSpecOperationAdd),
+									"CD-ROM must be part of initial VM creation")
+							}
+						}
+					}
+				}
+				return nil
+			}, "VmCreatedEvent", "VmReconfiguredEvent")).To(Succeed())
+		Expect(creationEventFound).To(BeTrue(), "VM creation event must be available to verify its configuration history")
+
+		By("Powering on with the installation media already attached")
+		powerOnBase := vmToCreate.DeepCopy()
+		vmToCreate.Spec.PowerState = vmopv1a3.VirtualMachinePowerStateOn
+		Expect(svClusterClient.Patch(ctx, vmToCreate, ctrlclient.MergeFrom(powerOnBase))).To(Succeed())
+		vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, poweredOnState)
 
 		By("Verifying network provider CR has an IP assigned for the VM")
 		netInfo := vmoperator.WaitForVMNetworkProviderInfo(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
@@ -746,9 +783,7 @@ func VMSpec(ctx context.Context, inputGetter func() VMSpecInput) {
 		}, config.GetIntervals("default", "wait-virtual-machine-vmip")...).Should(Succeed())
 
 		By("Verifying VM has the expected CD-ROM device")
-		vmMoid := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, input.WCPNamespaceName, vmName)
-		vmMoRef := types.ManagedObjectReference{Type: "VirtualMachine", Value: vmMoid}
-		cdrom := verifyCdromConnectionState(ctx, vmMoRef, propCollector, true, true)
+		cdrom = verifyCdromConnectionState(ctx, vmMoRef, propCollector, true, true)
 		Expect(cdrom.Backing).NotTo(BeNil())
 
 		By("Verifying VM's CD-ROM has expected backing file from the specified ISO-type image's content library item")
@@ -758,6 +793,28 @@ func VMSpec(ctx context.Context, inputGetter func() VMSpecInput) {
 		Expect(clItem.Status.FileInfo).NotTo(BeEmpty())
 		cdromFileName := cdrom.Backing.(*types.VirtualCdromIsoBackingInfo).FileName
 		Expect(cdromFileName).To(Equal(clItem.Status.FileInfo[0].StorageURI))
+
+		By("Verifying the selected host can access the ISO datastore")
+		var createdVM mo.VirtualMachine
+		Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"runtime.host"}, &createdVM)).To(Succeed())
+		Expect(createdVM.Runtime.Host).NotTo(BeNil())
+		var host mo.HostSystem
+		Expect(propCollector.RetrieveOne(ctx, *createdVM.Runtime.Host, []string{"datastore"}, &host)).To(Succeed())
+		var datastores []mo.Datastore
+		Expect(propCollector.Retrieve(ctx, host.Datastore, []string{"info", "host"}, &datastores)).To(Succeed())
+		isoAccessible := false
+		for _, datastore := range datastores {
+			if datastore.Info == nil || !strings.HasPrefix(cdromFileName, strings.TrimRight(datastore.Info.GetDatastoreInfo().Url, "/")+"/") {
+				continue
+			}
+			for _, mount := range datastore.Host {
+				if mount.Key == *createdVM.Runtime.Host && mount.MountInfo.Mounted != nil && *mount.MountInfo.Mounted &&
+					mount.MountInfo.Accessible != nil && *mount.MountInfo.Accessible {
+					isoAccessible = true
+				}
+			}
+		}
+		Expect(isoAccessible).To(BeTrue(), "selected host must mount the datastore containing the ISO")
 
 		// The guest is still sitting at the ISO's boot/installer screen with no
 		// VMware Tools running and is actively reading the CD-ROM, so vCenter

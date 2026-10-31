@@ -22,6 +22,7 @@ import (
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
@@ -1866,3 +1867,194 @@ func verifyCdromDeviceConfigSpec(
 	Expect(cdrom.Backing).To(BeAssignableToTypeOf(&vimtypes.VirtualCdromIsoBackingInfo{}))
 	Expect(cdrom.Backing.(*vimtypes.VirtualCdromIsoBackingInfo).FileName).To(Equal(backingFileName))
 }
+
+var _ = Describe("CD-ROM creation config", Label(testlabels.Create), func() {
+	var (
+		vmCtx      pkgctx.VirtualMachineContext
+		k8sClient  ctrlclient.Client
+		configSpec vimtypes.VirtualMachineConfigSpec
+	)
+
+	BeforeEach(func() {
+		vmCtx = pkgctx.VirtualMachineContext{
+			Context: pkgcfg.NewContextWithDefaultConfig(),
+			VM:      builder.DummyBasicVirtualMachine("iso-create", "test-ns"),
+		}
+		vmCtx.VM.Spec.Hardware = &vmopv1.VirtualMachineHardwareSpec{
+			Cdrom: []vmopv1.VirtualMachineCdromSpec{{
+				Name:      "installer",
+				Image:     vmopv1.VirtualMachineImageRef{Kind: "VirtualMachineImage", Name: "installer"},
+				Connected: ptr.To(true), AllowGuestControl: ptr.To(true),
+			}},
+		}
+		objects := builder.DummyImageAndItemObjectsForCdromBacking("installer", "test-ns",
+			"VirtualMachineImage", "[iso-datastore] library/installer.iso", "item-1",
+			true, true, resource.MustParse("100Mi"), true, true, imgregv1a1.ContentLibraryItemTypeIso)
+		objects = append(objects, builder.DummyImageAndItemObjectsForCdromBacking("drivers", "",
+			"ClusterVirtualMachineImage", "[other-datastore] library/drivers.iso", "item-2",
+			true, true, resource.MustParse("100Mi"), true, true, imgregv1a1.ContentLibraryItemTypeIso)...)
+		k8sClient = builder.NewFakeClient(objects...)
+		configSpec = vimtypes.VirtualMachineConfigSpec{Name: "iso-create"}
+	})
+
+	It("adds controllers before media and preserves connection settings for first boot", func() {
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+		Expect(configSpec.DeviceChange).To(HaveLen(3))
+		Expect(configSpec.DeviceChange[0].GetVirtualDeviceConfigSpec().Device).To(BeAssignableToTypeOf(&vimtypes.VirtualPCIController{}))
+		Expect(configSpec.DeviceChange[1].GetVirtualDeviceConfigSpec().Device).To(BeAssignableToTypeOf(&vimtypes.VirtualAHCIController{}))
+		cdrom := configSpec.DeviceChange[2].GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualCdrom)
+		Expect(cdrom.Backing.(*vimtypes.VirtualCdromIsoBackingInfo).FileName).To(Equal("[iso-datastore] library/installer.iso"))
+		Expect(cdrom.Connectable).To(Equal(&vimtypes.VirtualDeviceConnectInfo{StartConnected: true, AllowGuestControl: true}))
+		Expect(cdrom.ControllerKey).To(Equal(configSpec.DeviceChange[1].GetVirtualDeviceConfigSpec().Device.GetVirtualDevice().Key))
+		Expect(cdrom.UnitNumber).To(Equal(ptr.To[int32](0)))
+	})
+
+	It("retains every ISO backing in the placement spec", func() {
+		vmCtx.VM.Spec.Hardware.Cdrom = append(vmCtx.VM.Spec.Hardware.Cdrom, vmopv1.VirtualMachineCdromSpec{
+			Name: "drivers", Image: vmopv1.VirtualMachineImageRef{Kind: "ClusterVirtualMachineImage", Name: "drivers"},
+		})
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+		placement, err := virtualmachine.CreateConfigSpecForPlacement(vmCtx, configSpec, nil)
+		Expect(err).NotTo(HaveOccurred())
+		keys := map[int32]bool{}
+		var paths []string
+		var units []int32
+		for _, change := range configSpec.DeviceChange {
+			d := change.GetVirtualDeviceConfigSpec().Device.GetVirtualDevice()
+			Expect(d.Key).To(BeNumerically("<", 0))
+			Expect(keys).NotTo(HaveKey(d.Key))
+			keys[d.Key] = true
+		}
+		for _, change := range placement.DeviceChange {
+			if cdrom, ok := change.GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualCdrom); ok {
+				paths = append(paths, cdrom.Backing.(*vimtypes.VirtualCdromIsoBackingInfo).FileName)
+				units = append(units, *cdrom.UnitNumber)
+			}
+		}
+		Expect(paths).To(Equal([]string{"[iso-datastore] library/installer.iso", "[other-datastore] library/drivers.iso"}))
+		Expect(units).To(Equal([]int32{0, 1}))
+	})
+
+	DescribeTable("honors explicit controller placement",
+		func(controllerType vmopv1.VirtualControllerType, bus, unit int32) {
+			pkgcfg.SetContext(vmCtx, func(c *pkgcfg.Config) { c.Features.VMSharedDisks = true })
+			cd := &vmCtx.VM.Spec.Hardware.Cdrom[0]
+			cd.ControllerType, cd.ControllerBusNumber, cd.UnitNumber = controllerType, &bus, &unit
+			Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+			controller := configSpec.DeviceChange[1].GetVirtualDeviceConfigSpec().Device.(vimtypes.BaseVirtualController).GetVirtualController()
+			cdrom := configSpec.DeviceChange[2].GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualCdrom)
+			Expect(controller.BusNumber).To(Equal(bus))
+			Expect(cdrom.ControllerKey).To(Equal(controller.Key))
+			Expect(cdrom.UnitNumber).To(Equal(&unit))
+		},
+		Entry("IDE bus 0", vmopv1.VirtualControllerTypeIDE, int32(0), int32(0)),
+		Entry("IDE bus 1", vmopv1.VirtualControllerTypeIDE, int32(1), int32(1)),
+		Entry("SATA bus 3", vmopv1.VirtualControllerTypeSATA, int32(3), int32(29)),
+	)
+
+	It("reuses an existing IDE controller and avoids a disk's occupied unit", func() {
+		configSpec.DeviceChange = []vimtypes.BaseVirtualDeviceConfigSpec{
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device: &vimtypes.VirtualIDEController{VirtualController: vimtypes.VirtualController{VirtualDevice: vimtypes.VirtualDevice{Key: -500}}}},
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device: &vimtypes.VirtualDisk{VirtualDevice: vimtypes.VirtualDevice{Key: -501, ControllerKey: -500, UnitNumber: ptr.To[int32](0)}}},
+		}
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+		Expect(configSpec.DeviceChange).To(HaveLen(3))
+		cdrom := configSpec.DeviceChange[2].GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualCdrom)
+		Expect(cdrom.ControllerKey).To(Equal(int32(-500)))
+		Expect(cdrom.UnitNumber).To(Equal(ptr.To[int32](1)))
+		Expect(cdrom.Key).To(BeNumerically("<", -501))
+	})
+
+	It("rejects an occupied explicit unit without changing the input config", func() {
+		pkgcfg.SetContext(vmCtx, func(c *pkgcfg.Config) { c.Features.VMSharedDisks = true })
+		cd := &vmCtx.VM.Spec.Hardware.Cdrom[0]
+		cd.ControllerType, cd.ControllerBusNumber, cd.UnitNumber = vmopv1.VirtualControllerTypeIDE, ptr.To[int32](0), ptr.To[int32](0)
+		configSpec.DeviceChange = []vimtypes.BaseVirtualDeviceConfigSpec{
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device: &vimtypes.VirtualIDEController{VirtualController: vimtypes.VirtualController{VirtualDevice: vimtypes.VirtualDevice{Key: -500}}}},
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device: &vimtypes.VirtualDisk{VirtualDevice: vimtypes.VirtualDevice{Key: -501, ControllerKey: -500, UnitNumber: ptr.To[int32](0)}}},
+		}
+		original, err := vimtypes.DeepCopy(configSpec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(MatchError(ContainSubstring("used unitNumber 0")))
+		Expect(configSpec).To(Equal(original))
+	})
+
+	It("adds SATA when an IDE controller is full even without its child list", func() {
+		configSpec.DeviceChange = []vimtypes.BaseVirtualDeviceConfigSpec{
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device: &vimtypes.VirtualIDEController{VirtualController: vimtypes.VirtualController{VirtualDevice: vimtypes.VirtualDevice{Key: -500}}}},
+		}
+		for unit := range int32(2) {
+			configSpec.DeviceChange = append(configSpec.DeviceChange, &vimtypes.VirtualDeviceConfigSpec{
+				Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device:    &vimtypes.VirtualDisk{VirtualDevice: vimtypes.VirtualDevice{Key: -501 - unit, ControllerKey: -500, UnitNumber: ptr.To(unit)}},
+			})
+		}
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+		Expect(configSpec.DeviceChange).To(HaveLen(6))
+		sata := configSpec.DeviceChange[4].GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualAHCIController)
+		cdrom := configSpec.DeviceChange[5].GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualCdrom)
+		Expect(cdrom.ControllerKey).To(Equal(sata.Key))
+		Expect(cdrom.UnitNumber).To(Equal(ptr.To[int32](0)))
+	})
+
+	It("reuses an explicit SATA controller with a disk in another slot", func() {
+		pkgcfg.SetContext(vmCtx, func(c *pkgcfg.Config) { c.Features.VMSharedDisks = true })
+		cd := &vmCtx.VM.Spec.Hardware.Cdrom[0]
+		cd.ControllerType, cd.ControllerBusNumber, cd.UnitNumber = vmopv1.VirtualControllerTypeSATA, ptr.To[int32](2), ptr.To[int32](29)
+		configSpec.DeviceChange = []vimtypes.BaseVirtualDeviceConfigSpec{
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device: &vimtypes.VirtualAHCIController{VirtualSATAController: vimtypes.VirtualSATAController{VirtualController: vimtypes.VirtualController{VirtualDevice: vimtypes.VirtualDevice{Key: -500}, BusNumber: 2}}}},
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+				Device: &vimtypes.VirtualDisk{VirtualDevice: vimtypes.VirtualDevice{Key: -501, ControllerKey: -500, UnitNumber: ptr.To[int32](0)}}},
+		}
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+		Expect(configSpec.DeviceChange).To(HaveLen(3))
+		Expect(configSpec.DeviceChange[2].GetVirtualDeviceConfigSpec().Device.GetVirtualDevice().ControllerKey).To(Equal(int32(-500)))
+	})
+
+	It("returns an error for incomplete explicit placement", func() {
+		pkgcfg.SetContext(vmCtx, func(c *pkgcfg.Config) { c.Features.VMSharedDisks = true })
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(MatchError(ContainSubstring("missing controller placement")))
+		Expect(configSpec.DeviceChange).To(BeEmpty())
+	})
+
+	It("rejects duplicate backing paths", func() {
+		vmCtx.VM.Spec.Hardware.Cdrom = append(vmCtx.VM.Spec.Hardware.Cdrom, vmCtx.VM.Spec.Hardware.Cdrom[0])
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(MatchError(ContainSubstring("duplicate ISO backing")))
+		Expect(configSpec.DeviceChange).To(BeEmpty())
+	})
+
+	It("fails before returning a partial config when an image is missing", func() {
+		vmCtx.VM.Spec.Hardware.Cdrom = append(vmCtx.VM.Spec.Hardware.Cdrom, vmopv1.VirtualMachineCdromSpec{
+			Name: "missing", Image: vmopv1.VirtualMachineImageRef{Kind: "VirtualMachineImage", Name: "missing"},
+		})
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(MatchError(ContainSubstring("failed to resolve CD-ROM \"missing\" image")))
+		Expect(configSpec.DeviceChange).To(BeEmpty())
+	})
+
+	It("replaces inherited CD-ROM media and remains stable on repeated generation", func() {
+		configSpec.DeviceChange = []vimtypes.BaseVirtualDeviceConfigSpec{
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd, Device: &vimtypes.VirtualCdrom{}},
+		}
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+		Expect(configSpec.DeviceChange).To(HaveLen(3))
+		first, err := vimtypes.DeepCopy(configSpec)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, k8sClient, &configSpec)).To(Succeed())
+		Expect(configSpec).To(Equal(first))
+	})
+
+	It("does not touch a VM without requested media", func() {
+		vmCtx.VM.Spec.Hardware = nil
+		configSpec.DeviceChange = []vimtypes.BaseVirtualDeviceConfigSpec{
+			&vimtypes.VirtualDeviceConfigSpec{Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd, Device: &vimtypes.VirtualCdrom{}},
+		}
+		Expect(virtualmachine.UpdateConfigSpecCdromsForCreate(vmCtx, nil, nil, &configSpec)).To(Succeed())
+		Expect(configSpec.DeviceChange).To(HaveLen(1))
+	})
+})

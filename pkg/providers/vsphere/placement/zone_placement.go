@@ -53,6 +53,7 @@ type Result struct {
 
 	needInstanceStoragePlacement bool
 	needDatastorePlacement       bool
+	needHostPlacement            bool
 }
 
 type DatastoreResult struct {
@@ -74,7 +75,7 @@ var (
 	ErrGroupPlacementZoneMismatch = errors.New("group placement recommended zone different than requested zone")
 )
 
-func doesVMNeedPlacement(vmCtx pkgctx.VirtualMachineContext) (res Result) {
+func doesVMNeedPlacement(vmCtx pkgctx.VirtualMachineContext, configSpec vimtypes.VirtualMachineConfigSpec) (res Result) {
 	if zoneName := vmCtx.VM.Labels[corev1.LabelTopologyZone]; zoneName != "" {
 		// Zone has already been selected.
 		res.ZoneName = zoneName
@@ -82,6 +83,12 @@ func doesVMNeedPlacement(vmCtx pkgctx.VirtualMachineContext) (res Result) {
 
 	f := pkgcfg.FromContext(vmCtx).Features
 	res.needDatastorePlacement = f.FastDeploy
+	if f.CDROMPlacement && hasISOBacking(configSpec) {
+		// A pinned zone does not establish ISO access for any particular host.
+		// Select the host and VM home datastore together with the media.
+		res.needHostPlacement = true
+		res.needDatastorePlacement = true
+	}
 
 	if f.InstanceStorage {
 		if vmopv1util.IsInstanceStoragePresent(vmCtx.VM) {
@@ -100,6 +107,17 @@ func doesVMNeedPlacement(vmCtx pkgctx.VirtualMachineContext) (res Result) {
 	}
 
 	return
+}
+
+func hasISOBacking(configSpec vimtypes.VirtualMachineConfigSpec) bool {
+	for _, change := range configSpec.DeviceChange {
+		if cdrom, ok := change.GetVirtualDeviceConfigSpec().Device.(*vimtypes.VirtualCdrom); ok {
+			if backing, ok := cdrom.Backing.(*vimtypes.VirtualCdromIsoBackingInfo); ok && backing.FileName != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // lookupChildRPs lookups the child ResourcePool under each parent ResourcePool. A VM with a ResourcePolicy
@@ -319,7 +337,7 @@ func getPlacementRecommendation(
 	finder *find.Finder,
 	candidates map[string][]string,
 	configSpec vimtypes.VirtualMachineConfigSpec,
-	needsInstanceStoragePlacement, needDatastorePlacement bool) (Recommendation, error) {
+	needsInstanceStoragePlacement, needDatastorePlacement, needHostPlacement bool) (Recommendation, error) {
 
 	candidateRPMoRefs := make([]vimtypes.ManagedObjectReference, 0, len(candidates))
 	for _, rpMoIDs := range candidates {
@@ -335,7 +353,8 @@ func getPlacementRecommendation(
 	var recommendation Recommendation
 
 	switch {
-	case needsInstanceStoragePlacement:
+	case needsInstanceStoragePlacement || (needHostPlacement &&
+		vmCtx.VM.Annotations[constants.InstanceStorageSelectedNodeMOIDAnnotationKey] != ""):
 		// PlaceVmsXCluster does not support the magic instance storage disk ID, so
 		// fallback to PlaceVm. Note PlaceVm will always return a host recommendation
 		// which is required for instance storage.
@@ -345,7 +364,7 @@ func getPlacementRecommendation(
 		}
 		recommendation = rec
 
-	case len(candidates) > 1 || needDatastorePlacement:
+	case len(candidates) > 1 || needDatastorePlacement || needHostPlacement:
 		recs, err := getClusterPlacementRecommendations(
 			vmCtx,
 			vcClient,
@@ -356,7 +375,7 @@ func getPlacementRecommendation(
 				// We do not set ZoneName here as the candidateRPMorefs limited to
 				// the required zone.
 			}},
-			false,
+			needHostPlacement,
 			needDatastorePlacement)
 		if err != nil {
 			return Recommendation{}, fmt.Errorf("PlaceVmsXCluster failed: %w", err)
@@ -389,9 +408,10 @@ func Placement(
 	configSpec vimtypes.VirtualMachineConfigSpec,
 	constraints Constraints) (*Result, error) {
 
-	curResult := doesVMNeedPlacement(vmCtx)
+	curResult := doesVMNeedPlacement(vmCtx, configSpec)
 	if curResult.ZoneName != "" &&
 		!curResult.needDatastorePlacement &&
+		!curResult.needHostPlacement &&
 		!curResult.needInstanceStoragePlacement {
 		// VM does not require any type of placement, so we can return early.
 		return &curResult, nil
@@ -446,9 +466,13 @@ func Placement(
 		candidates,
 		configSpec,
 		curResult.needInstanceStoragePlacement,
-		curResult.needDatastorePlacement)
+		curResult.needDatastorePlacement,
+		curResult.needHostPlacement)
 	if err != nil {
 		return nil, err
+	}
+	if curResult.needHostPlacement && recommendation.HostMoRef == nil {
+		return nil, errors.New("placement result missing host required for CD-ROM access")
 	}
 
 	var zoneName string

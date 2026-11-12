@@ -42,6 +42,7 @@ import (
 	vspherepolv1 "github.com/vmware-tanzu/vm-operator/external/vsphere-policy/api/v1alpha1"
 
 	vmopapi "github.com/vmware-tanzu/vm-operator/api"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
@@ -133,6 +134,15 @@ func New(ctx context.Context, opts Options) (Manager, error) {
 					// reason to cache Deployment resources as nothing else in
 					// VM Operator gets them.
 					&appsv1.Deployment{},
+
+					// Namespace-scoped VirtualMachineImage resources are not
+					// cached. There may be a large number of them across all
+					// namespaces, and the memory cost of caching them is not
+					// justified by how they are used. Queries by status.name
+					// and status.providerItemID rely on the selectable fields
+					// declared on the CRD instead of a cache field index.
+					// ClusterVirtualMachineImage resources remain cached.
+					&vmopv1.VirtualMachineImage{},
 				},
 			},
 		},

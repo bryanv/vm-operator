@@ -62,18 +62,12 @@ const (
 
 // AddToManager adds the webhook to the provided manager.
 func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr ctrlmgr.Manager) error {
-	// Index the VirtualMachineImage and ClusterVirtualMachineImage objects by
-	// status.name field to allow efficient querying in ResolveImageName().
-	if err := mgr.GetFieldIndexer().IndexField(
-		ctx,
-		&vmopv1.VirtualMachineImage{},
-		"status.name",
-		func(rawObj ctrlclient.Object) []string {
-			vmi := rawObj.(*vmopv1.VirtualMachineImage)
-			return []string{vmi.Status.Name}
-		}); err != nil {
-		return err
-	}
+	// Index the ClusterVirtualMachineImage objects by status.name field to
+	// allow efficient querying in ResolveImageName().
+	//
+	// VirtualMachineImage resources are intentionally not cached nor indexed.
+	// Instead, the status.name field is declared as a selectable field on the
+	// CRD, and ResolveImageName() relies on the API server to filter them.
 	if err := mgr.GetFieldIndexer().IndexField(
 		ctx,
 		&vmopv1.ClusterVirtualMachineImage{},

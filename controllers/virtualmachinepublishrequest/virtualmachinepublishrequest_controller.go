@@ -23,9 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vapi/library"
@@ -97,47 +95,7 @@ func AddToManager(ctx *pkgctx.ControllerManagerContext, mgr manager.Manager) err
 			MaxConcurrentReconciles: ctx.GetMaxConcurrentReconciles(controllerNameShort, ctx.MaxConcurrentReconciles),
 			LogConstructor:          pkglog.ControllerLogConstructor(controllerNameShort, controlledType, mgr.GetScheme()),
 		}).
-		Watches(&vmopv1.VirtualMachineImage{},
-			handler.EnqueueRequestsFromMapFunc(vmiToVMPubMapperFn(ctx, r.Client))).
 		Complete(r)
-}
-
-// vmiToVMPubMapperFn returns a mapper function that can be used to queue a
-// reconcile request for the VirtualMachinePublishRequests in response to an
-// event on the VirtualMachineImage resource.
-func vmiToVMPubMapperFn(ctx *pkgctx.ControllerManagerContext, c client.Client) func(_ context.Context, o client.Object) []reconcile.Request {
-	// For a given VirtualMachineImage, return reconcile requests
-	// for those VirtualMachinePublishRequests with corresponding VirtualMachinesImage as the target item.
-	return func(_ context.Context, o client.Object) []reconcile.Request {
-		vmi := o.(*vmopv1.VirtualMachineImage)
-		logger := ctx.Logger.WithValues("name", vmi.Name, "namespace", vmi.Namespace)
-
-		logger.V(4).Info("Reconciling all VirtualMachinePublishRequests referencing a target item name same " +
-			"with this VirtualMachineImage display name")
-
-		vmPubList := &vmopv1.VirtualMachinePublishRequestList{}
-		if err := c.List(ctx, vmPubList, client.InNamespace(vmi.Namespace)); err != nil {
-			logger.Error(err, "Failed to list VirtualMachinePublishRequests for reconciliation due to VirtualMachineImage watch")
-			return nil
-		}
-
-		// Populate reconcile requests for vmpubs
-		var reconcileRequests []reconcile.Request
-		for _, vmPub := range vmPubList.Items {
-			if vmPub.Status.TargetRef == nil {
-				continue
-			}
-
-			if vmPub.Status.TargetRef.Item.Name == vmi.Status.Name {
-				key := client.ObjectKey{Namespace: vmPub.Namespace, Name: vmPub.Name}
-				reconcileRequests = append(reconcileRequests, reconcile.Request{NamespacedName: key})
-			}
-		}
-
-		logger.V(4).Info("Returning VirtualMachinePublishRequest reconcile requests due to VirtualMachineImage watch",
-			"requests", reconcileRequests)
-		return reconcileRequests
-	}
 }
 
 func NewReconciler(
@@ -691,8 +649,17 @@ func (r *Reconciler) checkIsImageAvailable(ctx *pkgctx.VirtualMachinePublishRequ
 		ctx.ItemID = id
 	}
 
+	// VirtualMachineImage resources are not cached, so rely on the
+	// status.providerItemID selectable field to have the API server filter the
+	// results. The image is not watched either; requeueResult() polls until
+	// the image is available.
 	vmiList := &vmopv1.VirtualMachineImageList{}
-	if err := r.List(ctx, vmiList, client.InNamespace(ctx.VMPublishRequest.Namespace)); err != nil {
+	if err := r.List(
+		ctx,
+		vmiList,
+		client.InNamespace(ctx.VMPublishRequest.Namespace),
+		client.MatchingFields{"status.providerItemID": ctx.ItemID}); err != nil {
+
 		ctx.Logger.Error(err, "failed to list VirtualMachineImage")
 		return err
 	}

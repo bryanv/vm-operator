@@ -67,6 +67,15 @@ func NewFakeClientWithInterceptors(
 			&vmopv1.VirtualMachineSnapshot{},
 			kubeutil.VMSnapshotVMNameFieldIndex,
 			kubeutil.VMSnapshotVMNameIndexerFunc).
+		// Emulate the status.providerItemID selectable field on the
+		// VirtualMachineImage CRD, which the API server evaluates for
+		// field selectors on list requests.
+		WithIndex(
+			&vmopv1.VirtualMachineImage{},
+			"status.providerItemID",
+			func(obj client.Object) []string {
+				return []string{obj.(*vmopv1.VirtualMachineImage).Status.ProviderItemID}
+			}).
 		Build()
 }
 

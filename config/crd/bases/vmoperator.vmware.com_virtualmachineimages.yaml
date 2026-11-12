@@ -1893,6 +1893,9 @@ spec:
                 type: array
             type: object
         type: object
+    selectableFields:
+    - jsonPath: .status.name
+    - jsonPath: .status.providerItemID
     served: true
     storage: true
     subresources:

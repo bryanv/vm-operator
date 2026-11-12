@@ -307,6 +307,8 @@ func (i *VirtualMachineImageStatus) SetConditions(conditions []metav1.Condition)
 // +kubebuilder:resource:scope=Namespaced,shortName=vmi;vmimage
 // +kubebuilder:storageversion
 // +kubebuilder:subresource:status
+// +kubebuilder:selectablefield:JSONPath=".status.name"
+// +kubebuilder:selectablefield:JSONPath=".status.providerItemID"
 // +kubebuilder:printcolumn:name="Display Name",type="string",JSONPath=".status.name"
 // +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".status.type"
 // +kubebuilder:printcolumn:name="Image Version",type="string",JSONPath=".status.productInfo.version"
@@ -345,6 +347,7 @@ type VirtualMachineImageList struct {
 // +kubebuilder:resource:scope=Cluster,shortName=cvmi;cvmimage;clustervmi;clustervmimage
 // +kubebuilder:storageversion
 // +kubebuilder:subresource:status
+// +kubebuilder:selectablefield:JSONPath=".status.name"
 // +kubebuilder:printcolumn:name="Display Name",type="string",JSONPath=".status.name"
 // +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".status.type"
 // +kubebuilder:printcolumn:name="Image Version",type="string",JSONPath=".status.productInfo.version"

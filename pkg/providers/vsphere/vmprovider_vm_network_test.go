@@ -1321,6 +1321,113 @@ func vmNetworkTests() {
 				Entry("NSX-T with Sysprep", builder.NetworkEnvNSXT, bsSysprep, false),
 			)
 		})
+
+		// Characterization (spec 017 T012): pins pre-restructuring behavior.
+		Context("pending network interface characterization", func() {
+			DescribeTableSubtree("with an added interface whose provider CR is not ready",
+				func(networkEnv builder.NetworkEnv) {
+					var np fakeNetworkProvider
+
+					BeforeEach(func() {
+						var providerType pkgcfg.NetworkProviderType
+						switch networkEnv {
+						case builder.NetworkEnvVDS:
+							providerType = pkgcfg.NetworkProviderTypeVDS
+							np = vdsNetworkProvider{}
+						case builder.NetworkEnvNSXT:
+							providerType = pkgcfg.NetworkProviderTypeNSXT
+							np = nsxtNetworkProvider{}
+						case builder.NetworkEnvVPC:
+							providerType = pkgcfg.NetworkProviderTypeVPC
+							np = vpcNetworkProvider{}
+						default:
+							Fail(fmt.Sprintf("unexpected network env: %v", networkEnv))
+						}
+
+						testConfig.NumNetworks = 0
+						testConfig.WithNetworkConfig = []builder.VCSimNetworkConfig{
+							{Provider: providerType},
+							{Provider: providerType},
+						}
+
+						vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name: interfaceName0,
+									Network: &vmopv1common.PartialObjectRef{
+										TypeMeta: np.getTypeMeta(),
+										Name:     networkName0,
+									},
+								},
+							},
+						}
+					})
+
+					createPoweredOnVM := func() *object.VirtualMachine {
+						GinkgoHelper()
+
+						Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(MatchError(network.ErrNetworkInterfaceNotReady))
+						np.simulateInterfaceReconcile(ctx, vm, vm.Spec.Network.Interfaces[0], 0)
+
+						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
+						Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+						Expect(vm.Status.UniqueID).ToNot(BeEmpty())
+
+						vcVM := ctx.GetVMFromMoID(vm.Status.UniqueID)
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+						return vcVM
+					}
+
+					addPendingInterface := func() {
+						vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces,
+							vmopv1.VirtualMachineNetworkInterfaceSpec{
+								Name: interfaceName1,
+								Network: &vmopv1common.PartialObjectRef{
+									TypeMeta: np.getTypeMeta(),
+									Name:     networkName1,
+								},
+							})
+					}
+
+					// TODAY: a pending interface returns a NoRequeueError from
+					// the config step, so updateVirtualMachine returns before
+					// reconcilePowerState and the requested power-off does not
+					// happen. T020 (G2 fix) is expected to flip this test: the
+					// VM powers off and the pending interface is not a
+					// NoRequeueError. This is the one characterization test
+					// that is intentionally expected to change.
+					It("TODAY: pending interface blocks power-off", func() {
+						vcVM := createPoweredOnVM()
+
+						addPendingInterface()
+						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+
+						err := createOrUpdateVM(ctx, vmProvider, vm)
+						Expect(err).To(MatchError(network.ErrNetworkInterfaceNotReady))
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+					})
+
+					// Power-on remains gated on a pending interface after T020,
+					// so only the outcome is asserted here, not the error.
+					It("pending interface prevents power-on", func() {
+						vcVM := createPoweredOnVM()
+
+						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+						Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+
+						addPendingInterface()
+						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
+
+						_ = createOrUpdateVM(ctx, vmProvider, vm)
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+					})
+				},
+				Entry("VDS", builder.NetworkEnvVDS),
+				Entry("NSX-T", builder.NetworkEnvNSXT),
+				Entry("VPC", builder.NetworkEnvVPC),
+			)
+		})
 	})
 }
 

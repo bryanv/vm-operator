@@ -5,6 +5,8 @@
 package network_test
 
 import (
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
 
@@ -837,3 +840,395 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 		})
 	})
 })
+
+const (
+	charVMName      = "map-eth-char"
+	charNamespace   = "map-eth-char-ns"
+	charNetworkName = "network-a"
+)
+
+// Characterization (spec 017 T012): pins pre-restructuring behavior.
+var _ = Describe("MapEthernetDevicesToSpecIdx characterization", func() {
+
+	const (
+		vmName    = charVMName
+		namespace = charNamespace
+		pgA       = "dvportgroup-a"
+		pgB       = "dvportgroup-b"
+		netA      = charNetworkName
+		extIDA    = "ext-id-a"
+		extIDB    = "ext-id-b"
+		macA      = "00:50:56:00:00:0a"
+		macAUp    = "00:50:56:00:00:0A"
+		macB      = "00:50:56:00:00:0b"
+	)
+
+	var (
+		initObjs    []ctrlclient.Object
+		vmCtx       pkgctx.VirtualMachineContext
+		devices     object.VirtualDeviceList
+		devKeyToIdx map[int32]int
+	)
+
+	newCard := func(key int32, unitNumber int32, backing vimtypes.BaseVirtualDeviceBackingInfo) *vimtypes.VirtualVmxnet3 {
+		card := &vimtypes.VirtualVmxnet3{}
+		card.Key = key
+		card.UnitNumber = ptr.To(unitNumber)
+		card.Backing = backing
+		return card
+	}
+
+	interfaces := func(n int) []vmopv1.VirtualMachineNetworkInterfaceSpec {
+		var ifaces []vmopv1.VirtualMachineNetworkInterfaceSpec
+		for i := range n {
+			ifaces = append(ifaces, vmopv1.VirtualMachineNetworkInterfaceSpec{
+				Name: fmt.Sprintf("eth%d", i),
+			})
+		}
+		return ifaces
+	}
+
+	BeforeEach(func() {
+		initObjs = nil
+		devices = nil
+
+		vmCtx = pkgctx.VirtualMachineContext{
+			Context: pkgcfg.NewContextWithDefaultConfig(),
+			Logger:  suite.GetLogger().WithName("map_eth_devices_char"),
+			VM: &vmopv1.VirtualMachine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vmName,
+					Namespace: namespace,
+				},
+				Spec: vmopv1.VirtualMachineSpec{
+					Network: &vmopv1.VirtualMachineNetworkSpec{},
+				},
+			},
+		}
+	})
+
+	JustBeforeEach(func() {
+		devKeyToIdx = network.MapEthernetDevicesToSpecIdx(
+			vmCtx,
+			builder.NewFakeClient(initObjs...),
+			mo.VirtualMachine{
+				Config: &vimtypes.VirtualMachineConfigInfo{
+					Hardware: vimtypes.VirtualHardware{Device: devices},
+				},
+			})
+	})
+
+	It("returns nil when the VM has no network spec", func() {
+		vmCtx.VM.Spec.Network = nil
+		Expect(network.MapEthernetDevicesToSpecIdx(vmCtx, builder.NewFakeClient(), mo.VirtualMachine{
+			Config: &vimtypes.VirtualMachineConfigInfo{},
+		})).To(BeNil())
+	})
+
+	It("returns nil when the VM has no config", func() {
+		Expect(network.MapEthernetDevicesToSpecIdx(vmCtx, builder.NewFakeClient(), mo.VirtualMachine{})).To(BeNil())
+	})
+
+	Context("MutableNetworks is disabled (positional zip)", func() {
+		BeforeEach(func() {
+			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				config.Features.MutableNetworks = false
+			})
+		})
+
+		DescribeTable("zips spec interfaces with cards in device order, truncated to the shorter list",
+			func(numCards, numInterfaces int, expected map[int32]int) {
+				for i := range numCards {
+					// All cards are indistinguishable: same backing, no CRs.
+					devices = append(devices, newCard(int32(4000+i), int32(7+i), charDVPGBacking("", pgA)))
+				}
+				vmCtx.VM.Spec.Network.Interfaces = interfaces(numInterfaces)
+
+				devKeyToIdx = network.MapEthernetDevicesToSpecIdx(
+					vmCtx,
+					builder.NewFakeClient(),
+					mo.VirtualMachine{
+						Config: &vimtypes.VirtualMachineConfigInfo{
+							Hardware: vimtypes.VirtualHardware{Device: devices},
+						},
+					})
+				if len(expected) == 0 {
+					Expect(devKeyToIdx).To(BeEmpty())
+				} else {
+					Expect(devKeyToIdx).To(Equal(expected))
+				}
+			},
+			Entry("equal counts", 2, 2, map[int32]int{4000: 0, 4001: 1}),
+			Entry("more cards than interfaces", 3, 2, map[int32]int{4000: 0, 4001: 1}),
+			Entry("more interfaces than cards", 1, 3, map[int32]int{4000: 0}),
+			Entry("no cards", 0, 2, map[int32]int{}),
+		)
+
+		When("non-Ethernet devices are interleaved with the cards", func() {
+			BeforeEach(func() {
+				disk := &vimtypes.VirtualDisk{}
+				disk.Key = 2000
+				devices = append(devices,
+					newCard(4000, 7, charDVPGBacking("", pgA)),
+					disk,
+					newCard(4001, 8, charDVPGBacking("", pgA)),
+				)
+				vmCtx.VM.Spec.Network.Interfaces = interfaces(2)
+			})
+
+			It("zips only the Ethernet cards", func() {
+				Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0, 4001: 1}))
+			})
+		})
+
+		When("VMNetworkUnitNumbers is disabled and interfaces declare unit numbers", func() {
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = false
+				})
+				devices = append(devices,
+					newCard(4000, 7, charDVPGBacking("", pgA)),
+					newCard(4001, 8, charDVPGBacking("", pgA)),
+				)
+				vmCtx.VM.Spec.Network.Interfaces = interfaces(2)
+				vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(8))
+				vmCtx.VM.Spec.Network.Interfaces[1].UnitNumber = ptr.To(int32(7))
+			})
+
+			It("ignores the unit numbers and zips by position", func() {
+				Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0, 4001: 1}))
+			})
+		})
+
+		When("VMNetworkUnitNumbers is enabled and interfaces are unnumbered", func() {
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+				devices = append(devices,
+					newCard(4000, 7, charDVPGBacking("", pgA)),
+					newCard(4001, 8, charDVPGBacking("", pgA)),
+				)
+				vmCtx.VM.Spec.Network.Interfaces = interfaces(2)
+			})
+
+			It("zips by position", func() {
+				Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0, 4001: 1}))
+			})
+		})
+
+		// TODAY: unit numbers are not consulted. Spec 008 T020 (and spec 017
+		// T014's Match) are expected to change this to exact-number matching
+		// where a numbered miss gets no entry. Unlike the rest of this file,
+		// this case is intentionally expected to be updated by that work.
+		When("TODAY: VMNetworkUnitNumbers is enabled and interfaces declare unit numbers", func() {
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+				devices = append(devices,
+					newCard(4000, 7, charDVPGBacking("", pgA)),
+					newCard(4001, 8, charDVPGBacking("", pgA)),
+				)
+				vmCtx.VM.Spec.Network.Interfaces = interfaces(2)
+				vmCtx.VM.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(8))
+				vmCtx.VM.Spec.Network.Interfaces[1].UnitNumber = ptr.To(int32(9))
+			})
+
+			It("TODAY: ignores the unit numbers and zips by position", func() {
+				Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0, 4001: 1}))
+			})
+		})
+	})
+
+	Context("MutableNetworks is enabled (per-interface CR matching)", func() {
+		BeforeEach(func() {
+			pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+				config.Features.MutableNetworks = true
+				config.Features.PerNamespaceNetworkProvider = true
+			})
+		})
+
+		When("a VDS NetworkInterface uses the legacy v1alpha1 name", func() {
+			BeforeEach(func() {
+				devices = append(devices, newCard(4000, 7, charDVPGBacking("", pgA)))
+				initObjs = append(initObjs, &netopv1alpha1.NetworkInterface{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      network.NetOPCRName(vmName, netA, "eth0", true),
+						Namespace: namespace,
+					},
+					Status: netopv1alpha1.NetworkInterfaceStatus{NetworkID: pgA},
+				})
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{Name: "eth0", Network: &vmopv1common.PartialObjectRef{Name: netA, TypeMeta: netOPNetworkTypeMeta}},
+				}
+			})
+
+			It("matches through the legacy CR", func() {
+				Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0}))
+			})
+		})
+
+		DescribeTable("per-provider matching of one interface against one card",
+			func(
+				typeMeta metav1.TypeMeta,
+				interfaceMAC string,
+				card charCard,
+				newCR func() ctrlclient.Object,
+				expectMapped bool) {
+
+				card.key = 4000
+				devices = object.VirtualDeviceList{card.vmxnet3()}
+				vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:    "eth0",
+						Network: &vmopv1common.PartialObjectRef{Name: netA, TypeMeta: typeMeta},
+						MACAddr: interfaceMAC,
+					},
+				}
+
+				devKeyToIdx = network.MapEthernetDevicesToSpecIdx(
+					vmCtx,
+					builder.NewFakeClient(newCR()),
+					mo.VirtualMachine{
+						Config: &vimtypes.VirtualMachineConfigInfo{
+							Hardware: vimtypes.VirtualHardware{Device: devices},
+						},
+					})
+
+				if expectMapped {
+					Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0}))
+				} else {
+					Expect(devKeyToIdx).To(BeEmpty())
+				}
+			},
+
+			// VDS: external ID when the CR has one, never a card external ID
+			// when the CR has none, interface MACAddr when set, and the
+			// portgroup key or standard network MoRef.
+			Entry("VDS: portgroup matches the CR NetworkID",
+				netOPNetworkTypeMeta, "",
+				charCard{backing: charDVPGBacking("", pgA)},
+				func() ctrlclient.Object { return charVDSCR(pgA, "") },
+				true),
+			Entry("VDS: portgroup differs from the CR NetworkID",
+				netOPNetworkTypeMeta, "",
+				charCard{backing: charDVPGBacking("", pgB)},
+				func() ctrlclient.Object { return charVDSCR(pgA, "") },
+				false),
+			Entry("VDS: CR external ID equals the card external ID",
+				netOPNetworkTypeMeta, "",
+				charCard{externalID: extIDA, backing: charDVPGBacking("", pgA)},
+				func() ctrlclient.Object { return charVDSCR(pgA, extIDA) },
+				true),
+			Entry("VDS: CR external ID differs from the card external ID",
+				netOPNetworkTypeMeta, "",
+				charCard{externalID: extIDB, backing: charDVPGBacking("", pgA)},
+				func() ctrlclient.Object { return charVDSCR(pgA, extIDA) },
+				false),
+			Entry("VDS: card has an external ID but the CR does not",
+				netOPNetworkTypeMeta, "",
+				charCard{externalID: extIDA, backing: charDVPGBacking("", pgA)},
+				func() ctrlclient.Object { return charVDSCR(pgA, "") },
+				false),
+			Entry("VDS: interface MACAddr matches the card case-insensitively",
+				netOPNetworkTypeMeta, macAUp,
+				charCard{mac: macA, backing: charDVPGBacking("", pgA)},
+				func() ctrlclient.Object { return charVDSCR(pgA, "") },
+				true),
+			Entry("VDS: interface MACAddr differs from the card",
+				netOPNetworkTypeMeta, macB,
+				charCard{mac: macA, backing: charDVPGBacking("", pgA)},
+				func() ctrlclient.Object { return charVDSCR(pgA, "") },
+				false),
+			Entry("VDS: standard portgroup Network MoRef matches the CR NetworkID",
+				netOPNetworkTypeMeta, "",
+				charCard{backing: &vimtypes.VirtualEthernetCardNetworkBackingInfo{
+					Network: &vimtypes.ManagedObjectReference{Type: "Network", Value: "network-1"},
+				}},
+				func() ctrlclient.Object { return charVDSCR("network-1", "") },
+				true),
+
+			// NSX-T: both the interface ID and the MAC must match.
+			Entry("NSX-T: interface ID and MAC match",
+				nsxtNetworkTypeMeta, "",
+				charCard{externalID: extIDA, mac: macA},
+				func() ctrlclient.Object { return charNSXTCR(extIDA, macAUp) },
+				true),
+			Entry("NSX-T: MAC differs",
+				nsxtNetworkTypeMeta, "",
+				charCard{externalID: extIDA, mac: macB},
+				func() ctrlclient.Object { return charNSXTCR(extIDA, macA) },
+				false),
+			Entry("NSX-T: interface ID differs",
+				nsxtNetworkTypeMeta, "",
+				charCard{externalID: extIDB, mac: macA},
+				func() ctrlclient.Object { return charNSXTCR(extIDA, macA) },
+				false),
+
+			// VPC: the attachment ID must match; the MAC must match when the
+			// SubnetPort reports one other than the all-zero placeholder.
+			Entry("VPC: attachment ID and MAC match",
+				vpcNetworkTypeMeta, "",
+				charCard{externalID: extIDA, mac: macA},
+				func() ctrlclient.Object { return charVPCCR(extIDA, macAUp) },
+				true),
+			Entry("VPC: attachment ID matches and the SubnetPort has no MAC",
+				vpcNetworkTypeMeta, "",
+				charCard{externalID: extIDA, mac: macA},
+				func() ctrlclient.Object { return charVPCCR(extIDA, "") },
+				true),
+			Entry("VPC: MAC differs",
+				vpcNetworkTypeMeta, "",
+				charCard{externalID: extIDA, mac: macB},
+				func() ctrlclient.Object { return charVPCCR(extIDA, macA) },
+				false),
+			Entry("VPC: attachment ID differs",
+				vpcNetworkTypeMeta, "",
+				charCard{externalID: extIDA, mac: macA},
+				func() ctrlclient.Object { return charVPCCR(extIDB, macA) },
+				false),
+		)
+	})
+})
+
+func charVDSCR(networkID, externalID string) *netopv1alpha1.NetworkInterface {
+	return &netopv1alpha1.NetworkInterface{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      network.NetOPCRName(charVMName, charNetworkName, "eth0", false),
+			Namespace: charNamespace,
+		},
+		Status: netopv1alpha1.NetworkInterfaceStatus{
+			NetworkID:  networkID,
+			ExternalID: externalID,
+		},
+	}
+}
+
+func charNSXTCR(interfaceID, mac string) *ncpv1alpha1.VirtualNetworkInterface {
+	return &ncpv1alpha1.VirtualNetworkInterface{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      network.NCPCRName(charVMName, charNetworkName, "eth0", false),
+			Namespace: charNamespace,
+		},
+		Status: ncpv1alpha1.VirtualNetworkInterfaceStatus{
+			InterfaceID: interfaceID,
+			MacAddress:  mac,
+		},
+	}
+}
+
+func charVPCCR(attachmentID, mac string) *vpcv1alpha1.SubnetPort {
+	return &vpcv1alpha1.SubnetPort{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      network.VPCCRName(charVMName, charNetworkName, "eth0"),
+			Namespace: charNamespace,
+		},
+		Status: vpcv1alpha1.SubnetPortStatus{
+			Attachment: vpcv1alpha1.PortAttachment{ID: attachmentID},
+			NetworkInterfaceConfig: vpcv1alpha1.NetworkInterfaceConfig{
+				MACAddress: mac,
+			},
+		},
+	}
+}

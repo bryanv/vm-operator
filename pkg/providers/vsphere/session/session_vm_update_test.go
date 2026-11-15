@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	"github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
@@ -2389,6 +2390,262 @@ var _ = Describe("UpdateVirtualMachine", func() {
 			By("add vm to the cluster module and add vsphere-cluster-module-group-uuid annotation to vm", verifyClusterModuleAdd)
 		})
 
+	})
+
+	// Characterization (spec 017 T012): pins pre-restructuring behavior.
+	Context("Network interface dispatch characterization", func() {
+		const (
+			vmNetwork   = "VM Network"
+			dvpgNetwork = "DC0_DVPG0"
+		)
+
+		BeforeEach(func() {
+			// Provision a DVPG in addition to "VM Network".
+			testConfig.WithNetworkEnv = builder.NetworkEnvNamed
+		})
+
+		AfterEach(func() {
+			testConfig.WithNetworkEnv = ""
+		})
+
+		refreshEthCards := func() object.VirtualDeviceList {
+			GinkgoHelper()
+			Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+			return object.VirtualDeviceList(vmCtx.MoVM.Config.Hardware.Device).
+				SelectByType((*vimtypes.VirtualEthernetCard)(nil))
+		}
+
+		isExpectedUpdateErr := func(err error) bool {
+			return err == nil ||
+				errors.Is(err, session.ErrReconfigure) ||
+				errors.Is(err, vmlifecycle.ErrBootstrapCustomize) ||
+				errors.Is(err, vmlifecycle.ErrBootstrapReconfigure)
+		}
+
+		setPowerState := func(powerState vimtypes.VirtualMachinePowerState) {
+			GinkgoHelper()
+			if vmCtx.MoVM.Runtime.PowerState == powerState {
+				return
+			}
+			var (
+				t   *object.Task
+				err error
+			)
+			if powerState == vimtypes.VirtualMachinePowerStatePoweredOn {
+				t, err = vcVM.PowerOn(ctx)
+			} else {
+				t, err = vcVM.PowerOff(ctx)
+			}
+			Expect(err).ToNot(HaveOccurred())
+			Expect(t.Wait(ctx)).To(Succeed())
+			Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+			Expect(vmCtx.MoVM.Runtime.PowerState).To(Equal(powerState))
+		}
+
+		namedInterface := func(name, networkName string) vmopv1.VirtualMachineNetworkInterfaceSpec {
+			return vmopv1.VirtualMachineNetworkInterfaceSpec{
+				Name:    name,
+				Network: &common.PartialObjectRef{Name: networkName},
+			}
+		}
+
+		// The update path (getConfigSpecForPoweredOffVM) always applies NIC
+		// changes, while the resize path (resizeVMWhenPoweredStateOff) applies
+		// them only with MutableNetworks. The resize path is used when the VM
+		// is off, stays off, and VMResizeCPUMemory is enabled.
+		DescribeTable("powered-off update and resize paths apply NIC changes differently",
+			func(resizeCPUMemory, mutableNetworks, expectNICAdded bool) {
+				setPowerState(vimtypes.VirtualMachinePowerStatePoweredOff)
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMResizeCPUMemory = resizeCPUMemory
+					config.Features.MutableNetworks = mutableNetworks
+				})
+				vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+				resizeArgs = &session.VMResizeArgs{
+					ResourcePolicy: &vmopv1.VirtualMachineSetResourcePolicy{},
+				}
+				vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					namedInterface("eth0", vmNetwork),
+				}
+				Expect(refreshEthCards()).To(BeEmpty())
+
+				for range 3 {
+					err := sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)
+					Expect(isExpectedUpdateErr(err)).To(BeTrue(), "update returned %v", err)
+					Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+				}
+
+				ethCards := refreshEthCards()
+				if expectNICAdded {
+					Expect(ethCards).To(HaveLen(1))
+					backing, ok := ethCards[0].GetVirtualDevice().Backing.(*vimtypes.VirtualEthernetCardNetworkBackingInfo)
+					Expect(ok).To(BeTrue())
+					Expect(backing.DeviceName).To(Equal(vmNetwork))
+				} else {
+					Expect(ethCards).To(BeEmpty())
+				}
+				Expect(vmCtx.MoVM.Runtime.PowerState).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+			},
+			Entry("update path applies NIC changes without MutableNetworks", false, false, true),
+			Entry("update path applies NIC changes with MutableNetworks", false, true, true),
+			// TODAY: provider-design.md "Step 10: config" feeds the planner to
+			// all three dispatch sites regardless of VMResizeCPUMemory, so T020
+			// is expected to flip this entry (the resize path will apply NIC
+			// changes). Like the pending power-off test, it is intentionally
+			// expected to change.
+			Entry("TODAY: resize path does not apply NIC changes without MutableNetworks", true, false, false),
+			Entry("resize path applies NIC changes with MutableNetworks", true, true, true),
+		)
+
+		// On the powered-on path ReconcileNetworkInterfaces does not run, so
+		// fixupMacAddresses is what supplies each interface's MAC to the
+		// bootstrap. The observable is the netplan in Cloud-Init's
+		// guestinfo.metadata.
+		Context("fixupMacAddresses on the powered-on path", func() {
+			var hardwareNetworks []string
+
+			readNetplanMACs := func() map[string]string {
+				GinkgoHelper()
+				raw, ok := object.OptionValueList(vmCtx.MoVM.Config.ExtraConfig).
+					GetString(constants.CloudInitGuestInfoMetadata)
+				if !ok || raw == "" {
+					return nil
+				}
+				plainText, err := pkgutil.TryToDecodeBase64Gzip([]byte(raw))
+				Expect(err).ToNot(HaveOccurred())
+				var md vmlifecycle.CloudInitMetadata
+				Expect(yaml.Unmarshal([]byte(plainText), &md)).To(Succeed())
+				macs := map[string]string{}
+				for name, eth := range md.Network.Ethernets {
+					if eth.Match != nil && eth.Match.Macaddress != nil {
+						macs[name] = *eth.Match.Macaddress
+					}
+				}
+				return macs
+			}
+
+			// bootstrapUntilMetadata runs updates until Cloud-Init metadata
+			// has been written to the VM.
+			bootstrapUntilMetadata := func() map[string]string {
+				GinkgoHelper()
+				var macs map[string]string
+				Eventually(func(g Gomega) {
+					err := sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)
+					g.Expect(isExpectedUpdateErr(err)).To(BeTrue(), "update returned %v", err)
+					g.Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+					macs = readNetplanMACs()
+					g.Expect(macs).ToNot(BeEmpty())
+				}).Should(Succeed())
+				return macs
+			}
+
+			macOf := func(dev vimtypes.BaseVirtualDevice) string {
+				return network.NormalizeNetplanMac(
+					dev.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().MacAddress)
+			}
+
+			JustBeforeEach(func() {
+				setPowerState(vimtypes.VirtualMachinePowerStatePoweredOff)
+
+				var deviceChanges []vimtypes.BaseVirtualDeviceConfigSpec
+				for i, networkName := range hardwareNetworks {
+					netRef, err := ctx.Finder.Network(ctx, networkName)
+					Expect(err).ToNot(HaveOccurred())
+					backing, err := netRef.EthernetCardBackingInfo(ctx)
+					Expect(err).ToNot(HaveOccurred())
+					card, err := object.EthernetCardTypes().CreateEthernetCard("vmxnet3", backing)
+					Expect(err).ToNot(HaveOccurred())
+					card.GetVirtualDevice().Key = int32(-100 - i)
+					card.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().AddressType =
+						string(vimtypes.VirtualEthernetCardMacTypeGenerated)
+					deviceChanges = append(deviceChanges, &vimtypes.VirtualDeviceConfigSpec{
+						Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+						Device:    card,
+					})
+				}
+				t, err := vcVM.Reconfigure(ctx, vimtypes.VirtualMachineConfigSpec{DeviceChange: deviceChanges})
+				Expect(err).ToNot(HaveOccurred())
+				Expect(t.Wait(ctx)).To(Succeed())
+
+				setPowerState(vimtypes.VirtualMachinePowerStatePoweredOn)
+
+				ethCards := refreshEthCards()
+				Expect(ethCards).To(HaveLen(len(hardwareNetworks)))
+				for _, c := range ethCards {
+					Expect(macOf(c)).ToNot(BeEmpty())
+				}
+
+				vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
+				vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+					CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+				}
+			})
+
+			AfterEach(func() {
+				hardwareNetworks = nil
+			})
+
+			When("interfaces have distinct backings and hardware order differs from spec order", func() {
+				BeforeEach(func() {
+					hardwareNetworks = []string{dvpgNetwork, vmNetwork}
+					vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						namedInterface("eth0", vmNetwork),
+						namedInterface("eth1", dvpgNetwork),
+					}
+				})
+
+				It("with MutableNetworks, takes each MAC from the card whose backing matches", func() {
+					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						config.Features.MutableNetworks = true
+					})
+
+					var vmNetworkMAC, dvpgMAC string
+					for _, c := range refreshEthCards() {
+						switch c.GetVirtualDevice().Backing.(type) {
+						case *vimtypes.VirtualEthernetCardNetworkBackingInfo:
+							vmNetworkMAC = macOf(c)
+						case *vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo:
+							dvpgMAC = macOf(c)
+						}
+					}
+					Expect(vmNetworkMAC).ToNot(BeEmpty())
+					Expect(dvpgMAC).ToNot(BeEmpty())
+
+					Expect(bootstrapUntilMetadata()).To(Equal(map[string]string{
+						"eth0": vmNetworkMAC,
+						"eth1": dvpgMAC,
+					}))
+					Expect(refreshEthCards()).To(HaveLen(2))
+				})
+			})
+
+			When("interfaces are indistinguishable by backing", func() {
+				BeforeEach(func() {
+					hardwareNetworks = []string{vmNetwork, vmNetwork}
+					vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						namedInterface("eth0", vmNetwork),
+						namedInterface("eth1", vmNetwork),
+					}
+				})
+
+				DescribeTable("pairs MACs in spec order with cards in device order",
+					func(mutableNetworks bool) {
+						pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+							config.Features.MutableNetworks = mutableNetworks
+						})
+
+						ethCards := refreshEthCards()
+						Expect(bootstrapUntilMetadata()).To(Equal(map[string]string{
+							"eth0": macOf(ethCards[0]),
+							"eth1": macOf(ethCards[1]),
+						}))
+						Expect(refreshEthCards()).To(HaveLen(2))
+					},
+					Entry("without MutableNetworks", false),
+					Entry("with MutableNetworks", true),
+				)
+			})
+		})
 	})
 })
 

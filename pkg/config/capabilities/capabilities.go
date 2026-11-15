@@ -150,6 +150,11 @@ const (
 	// for VM network interface unit numbers.
 	CapabilityKeyVMServiceNetworkInterfaceUnitNumbers = "supports_vm_service_network_interface_unit_numbers"
 
+	// CapabilityKeyVMServiceNetworkHotPlug is the name of the capability key
+	// defined in the Supervisor capabilities CRD for the VM Service's support
+	// for hot plugging VM network interfaces.
+	CapabilityKeyVMServiceNetworkHotPlug = "supports_VM_service_network_hot_plug"
+
 	// CapabilityKeyK8sWorkloadMgmtAPI is the name of the capability key
 	// defined in the Supervisor capabilities CRD for the VirtualMachineReplicaSet
 	// controller, webhooks, and CRD.
@@ -350,6 +355,8 @@ func updateCapabilitiesFeaturesFromCRD(
 			fs.ControlledRebalancingPolicy = capStatus.Activated
 		case CapabilityKeyVMServiceNetworkInterfaceUnitNumbers:
 			fs.VMNetworkUnitNumbers = capStatus.Activated
+		case CapabilityKeyVMServiceNetworkHotPlug:
+			fs.VMNetworkHotPlug = capStatus.Activated
 		case CapabilityKeyK8sWorkloadMgmtAPI:
 			fs.K8sWorkloadMgmtAPI = capStatus.Activated
 		case CapabilityKeyVMHardAffinityDuringExecution:

@@ -1068,6 +1068,19 @@ var _ = Describe("UpdateCapabilitiesFeatures", func() {
 				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers).To(BeTrue())
 			})
 		})
+		Context(capabilities.CapabilityKeyVMServiceNetworkHotPlug, func() {
+			BeforeEach(func() {
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug).To(BeFalse())
+				obj.Status.Supervisor[capabilities.CapabilityKeyVMServiceNetworkHotPlug] = capv1.CapabilityStatus{
+					Activated: true,
+				}
+			})
+			Specify("Enabled", func() {
+				Expect(ok).To(BeTrue())
+				Expect(diff).To(Equal("VMNetworkHotPlug=true"))
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug).To(BeTrue())
+			})
+		})
 		Context(capabilities.CapabilityKeyCSIBackupAPI, func() {
 			BeforeEach(func() {
 				Expect(pkgcfg.FromContext(ctx).Features.CSIBackupAPI).To(BeFalse())
@@ -1169,6 +1182,9 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 			capabilities.CapabilityKeyVMServiceNetworkInterfaceUnitNumbers: {
 				Activated: true,
 			},
+			capabilities.CapabilityKeyVMServiceNetworkHotPlug: {
+				Activated: true,
+			},
 			capabilities.CapabilityKeyVMHardAffinityDuringExecution: {
 				Activated: true,
 			},
@@ -1212,6 +1228,7 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 					config.Features.VMEviction = true
 					config.Features.ControlledRebalancingPolicy = true
 					config.Features.VMNetworkUnitNumbers = true
+					config.Features.VMNetworkHotPlug = true
 					config.Features.TaggingAPI = true
 					config.Features.VMHardAffinityDuringExecution = true
 					config.Features.CSIBackupAPI = true
@@ -1293,6 +1310,9 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 			Specify(capabilities.CapabilityKeyVMServiceNetworkInterfaceUnitNumbers, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers).To(BeTrue())
 			})
+			Specify(capabilities.CapabilityKeyVMServiceNetworkHotPlug, func() {
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug).To(BeTrue())
+			})
 			Specify(capabilities.CapabilityKeyVMHardAffinityDuringExecution, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.TaggingAPI).To(BeTrue())
 				Expect(pkgcfg.FromContext(ctx).Features.VMHardAffinityDuringExecution).To(BeTrue())
@@ -1326,6 +1346,7 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 					config.Features.ExtensionCompatConstraint = false
 					config.Features.VMEviction = false
 					config.Features.VMNetworkUnitNumbers = false
+					config.Features.VMNetworkHotPlug = false
 					config.Features.TaggingAPI = false
 					config.Features.VMHardAffinityDuringExecution = false
 					config.Features.CSIBackupAPI = false
@@ -1333,7 +1354,7 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 			})
 			Specify("capabilities changed", func() {
 				Expect(ok).To(BeTrue())
-				Expect(diff).To(Equal("BringYourOwnEncryptionKey=true,CSIBackupAPI=true,ControlledRebalancingPolicy=true,ExtensionCompatConstraint=true,GuestCustomizationVCDParity=true,ImmutableClasses=true,InventoryContentLibrary=true,MutableNetworks=true,PerNamespaceNetworkProvider=true,StoragePolicyMutability=true,TKGMultipleCL=true,TaggingAPI=true,VMAffinityDuringExecution=true,VMEviction=true,VMGroups=true,VMHardAffinityDuringExecution=true,VMNetworkUnitNumbers=true,VMPlacementPolicies=true,VMServiceClasslessVM=true,VMSharedDisks=true,VMSnapshots=true,VMVlanSubinterface=true,VMWaitForFirstConsumerPVC=true,VSpherePolicies=true,WorkloadDomainIsolation=true,WorkloadIPv6=true,WorkloadNetworkConfiguration=true"))
+				Expect(diff).To(Equal("BringYourOwnEncryptionKey=true,CSIBackupAPI=true,ControlledRebalancingPolicy=true,ExtensionCompatConstraint=true,GuestCustomizationVCDParity=true,ImmutableClasses=true,InventoryContentLibrary=true,MutableNetworks=true,PerNamespaceNetworkProvider=true,StoragePolicyMutability=true,TKGMultipleCL=true,TaggingAPI=true,VMAffinityDuringExecution=true,VMEviction=true,VMGroups=true,VMHardAffinityDuringExecution=true,VMNetworkHotPlug=true,VMNetworkUnitNumbers=true,VMPlacementPolicies=true,VMServiceClasslessVM=true,VMSharedDisks=true,VMSnapshots=true,VMVlanSubinterface=true,VMWaitForFirstConsumerPVC=true,VSpherePolicies=true,WorkloadDomainIsolation=true,WorkloadIPv6=true,WorkloadNetworkConfiguration=true"))
 			})
 			Specify(capabilities.CapabilityKeyBringYourOwnKeyProvider, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.BringYourOwnEncryptionKey).To(BeFalse())
@@ -1406,6 +1427,9 @@ var _ = Describe("WouldUpdateCapabilitiesFeatures", func() {
 			})
 			Specify(capabilities.CapabilityKeyVMServiceNetworkInterfaceUnitNumbers, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers).To(BeFalse())
+			})
+			Specify(capabilities.CapabilityKeyVMServiceNetworkHotPlug, func() {
+				Expect(pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug).To(BeFalse())
 			})
 			Specify(capabilities.CapabilityKeyVMHardAffinityDuringExecution, func() {
 				Expect(pkgcfg.FromContext(ctx).Features.TaggingAPI).To(BeFalse())

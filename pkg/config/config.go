@@ -221,6 +221,7 @@ type FeatureStates struct {
 	VMEviction                    bool
 	ControlledRebalancingPolicy   bool
 	VMNetworkUnitNumbers          bool
+	VMNetworkHotPlug              bool
 	K8sWorkloadMgmtAPI            bool
 	TaggingAPI                    bool
 	VMHardAffinityDuringExecution bool

@@ -1297,11 +1297,10 @@ func (vs *vSphereVMProvider) reconcileStatus(
 
 	vmCtx.Logger.V(4).Info("Reconciling status")
 
-	var networkDeviceKeysToSpecIdx map[int32]int
-	if vmCtx.MoVM.Config != nil {
-		networkDeviceKeysToSpecIdx = network.MapEthernetDevicesToSpecIdx(
-			vmCtx, vs.k8sClient, vmCtx.MoVM)
-	}
+	// Name the guest-reported interfaces from the shared hardware match. This
+	// is the pass's network observation when it is still current.
+	networkDeviceKeysToSpecIdx := network.DeviceKeyToSpecIdx(
+		network.ObservedInfo(vmCtx, vs.k8sClient, vmCtx.VM, vmCtx.MoVM))
 
 	return vmlifecycle.ReconcileStatus(
 		vmCtx,

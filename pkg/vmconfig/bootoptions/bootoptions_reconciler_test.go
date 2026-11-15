@@ -21,6 +21,7 @@ import (
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	ctxop "github.com/vmware-tanzu/vm-operator/pkg/context/operation"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig/bootoptions"
@@ -898,6 +899,182 @@ var _ = Describe("Reconcile", Label(testlabels.V1Alpha4), func() {
 					Expect(configSpec.BootOptions.BootOrder[2]).To(BeAssignableToTypeOf(&vimtypes.VirtualMachineBootOptionsBootableEthernetDevice{}))
 					eth2 := configSpec.BootOptions.BootOrder[2].(*vimtypes.VirtualMachineBootOptionsBootableEthernetDevice)
 					Expect(eth2.DeviceKey).To(Equal(int32(4002)))
+				})
+			})
+
+			// Spec 017 T018: network boot devices come from the same shared
+			// hardware match that status and device reconciliation use.
+			Context("network boot device and the shared hardware match", func() {
+				newCard := func(key, unitNumber int32) *vimtypes.VirtualVmxnet3 {
+					card := &vimtypes.VirtualVmxnet3{}
+					card.Key = key
+					card.UnitNumber = ptr.To(unitNumber)
+					return card
+				}
+
+				ethDeviceKeys := func() []int32 {
+					var keys []int32
+					for _, bd := range configSpec.BootOptions.BootOrder {
+						if bed, ok := bd.(*vimtypes.VirtualMachineBootOptionsBootableEthernetDevice); ok {
+							keys = append(keys, bed.DeviceKey)
+						}
+					}
+					return keys
+				}
+
+				// observe records a pass observation of the current vm and
+				// moVM in ctx, the way updateVirtualMachine does, after
+				// letting mutate change it.
+				observe := func(mutate func(info *network.Info)) {
+					info := network.Observe(ctx, network.ObserveInput{
+						Client: builder.NewFakeClient(),
+						VM:     vm,
+						MoVM:   moVM,
+					})
+					if mutate != nil {
+						mutate(info)
+					}
+					ctx = network.WithContext(ctx, &network.ReconcileState{Observed: info})
+				}
+
+				BeforeEach(func() {
+					vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+						Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+							{Name: "eth0"},
+							{Name: "eth1"},
+						},
+					}
+					vm.Status.Volumes = []vmopv1.VirtualMachineVolumeStatus{
+						{
+							Name:     "disk-0",
+							DiskUUID: "6000C298-df15-fe89-ddcb-8ea33329595d",
+						},
+					}
+					moVM = mo.VirtualMachine{
+						Config: &vimtypes.VirtualMachineConfigInfo{
+							Hardware: vimtypes.VirtualHardware{
+								Device: []vimtypes.BaseVirtualDevice{
+									&vimtypes.VirtualDisk{
+										VirtualDevice: vimtypes.VirtualDevice{
+											Key: 2000,
+											Backing: &vimtypes.VirtualDiskFlatVer2BackingInfo{
+												Uuid: "6000C298-df15-fe89-ddcb-8ea33329595d",
+											},
+										},
+									},
+									newCard(4000, 7),
+									newCard(4001, 8),
+									newCard(4002, 9),
+								},
+							},
+						},
+					}
+					vm.Spec.BootOptions = &vmopv1.VirtualMachineBootOptions{
+						BootOrder: []vmopv1.VirtualMachineBootOptionsBootableDevice{
+							{
+								Type: vmopv1.VirtualMachineBootOptionsBootableNetworkDevice,
+								Name: "eth1",
+							},
+							{
+								Type: vmopv1.VirtualMachineBootOptionsBootableDiskDevice,
+								Name: "disk-0",
+							},
+						},
+					}
+				})
+
+				When("there is no pass observation", func() {
+					It("observes and uses the matched card", func() {
+						Expect(err).ToNot(HaveOccurred())
+						Expect(ethDeviceKeys()).To(Equal([]int32{4001}))
+					})
+				})
+
+				When("the pass observation is current", func() {
+					BeforeEach(func() {
+						observe(func(info *network.Info) {
+							// Make the observation distinguishable from a new one.
+							info.Interfaces[1].Match.AdapterKey = 4002
+						})
+					})
+					It("uses the pass observation's match", func() {
+						Expect(err).ToNot(HaveOccurred())
+						Expect(ethDeviceKeys()).To(Equal([]int32{4002}))
+					})
+				})
+
+				When("the interfaces changed after the pass observation", func() {
+					BeforeEach(func() {
+						observe(func(info *network.Info) {
+							info.Interfaces[1].Match.AdapterKey = 4002
+						})
+						vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+							{Name: "eth1"},
+							{Name: "eth0"},
+						}
+					})
+					It("observes anew instead of using the stale match", func() {
+						Expect(err).ToNot(HaveOccurred())
+						Expect(ethDeviceKeys()).To(Equal([]int32{4000}))
+					})
+				})
+
+				When("VMNetworkUnitNumbers is enabled", func() {
+					BeforeEach(func() {
+						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+							config.Features.VMNetworkUnitNumbers = true
+						})
+					})
+
+					When("the interfaces are numbered", func() {
+						BeforeEach(func() {
+							vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{Name: "eth0", UnitNumber: ptr.To(int32(7))},
+								{Name: "eth1", UnitNumber: ptr.To(int32(9))},
+							}
+						})
+						It("uses the card at the interface's unit number", func() {
+							Expect(err).ToNot(HaveOccurred())
+							Expect(ethDeviceKeys()).To(Equal([]int32{4002}))
+						})
+
+						When("the spec entries are reordered", func() {
+							BeforeEach(func() {
+								vm.Spec.Network.Interfaces[0], vm.Spec.Network.Interfaces[1] =
+									vm.Spec.Network.Interfaces[1], vm.Spec.Network.Interfaces[0]
+							})
+							It("still uses the card at the interface's unit number", func() {
+								Expect(err).ToNot(HaveOccurred())
+								Expect(ethDeviceKeys()).To(Equal([]int32{4002}))
+							})
+						})
+					})
+
+					When("no card is at a numbered interface's unit number", func() {
+						BeforeEach(func() {
+							vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{Name: "eth0"},
+								{Name: "eth1", UnitNumber: ptr.To(int32(10))},
+							}
+						})
+						It("omits the network boot entry rather than using another card", func() {
+							Expect(err).ToNot(HaveOccurred())
+							Expect(configSpec.BootOptions).ToNot(BeNil())
+							Expect(ethDeviceKeys()).To(BeEmpty())
+							Expect(configSpec.BootOptions.BootOrder).To(HaveLen(1))
+							Expect(configSpec.BootOptions.BootOrder[0]).To(BeAssignableToTypeOf(&vimtypes.VirtualMachineBootOptionsBootableDiskDevice{}))
+						})
+					})
+				})
+
+				When("no card is matched to an unnumbered interface", func() {
+					BeforeEach(func() {
+						moVM.Config.Hardware.Device = moVM.Config.Hardware.Device[:2]
+					})
+					It("returns an error", func() {
+						Expect(err).To(HaveOccurred())
+						Expect(err.Error()).To(ContainSubstring(`unable to locate network interface matching name "eth1"`))
+					})
 				})
 			})
 

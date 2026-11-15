@@ -65,9 +65,13 @@ var adapterRecordInterface = func(_ ObservedAdapter, _ types.UID) (string, bool)
 //     positional fallback.
 //  2. Operation record. An adapter whose record names the interface. Several
 //     such adapters make the interface Ambiguous and protect them all.
-//  3. Identity. An unnumbered interface whose provider is Ready claims the
-//     only adapter whose attachment satisfies the target. Unique claims are
-//     reserved first, in spec order.
+//  3. Identity. An unnumbered interface claims the only adapter that its
+//     provider evidence identifies. For a Ready provider, that is the
+//     adapter whose attachment satisfies the target. For a provider resource
+//     that is not Ready, it is the adapter that the attachment its last
+//     status still reports matches under the legacy provider-specific rules,
+//     using only the fields that status carries. Unique claims are reserved
+//     first, in spec order.
 //  4. Remaining unnumbered interfaces are then visited in spec order, as the
 //     legacy device reconciliation does: an interface with several identity
 //     candidates claims the first unclaimed one in device order, and an
@@ -281,20 +285,45 @@ func (m *matcher) claimRecords() {
 	}
 }
 
-// identityCandidates returns the available adapters whose attachment
-// satisfies the interface's Ready target.
+// identityCandidates returns the available adapters that the interface's
+// provider evidence identifies. A Ready target is compared with
+// compareAttachment. A provider resource that is not Ready but whose status
+// still reports its attachment is compared with the legacy provider-specific
+// rules, as the legacy device reconciliation did. An interface with neither
+// has no candidates and is left to the later passes.
 func (m *matcher) identityCandidates(i int) []ObservedAdapter {
-	target := m.info.Interfaces[i].Provider.Target
-	if m.info.Interfaces[i].Provider.Phase != ResolutionReady || target == nil {
+	iface := m.info.Interfaces[i]
+	r := iface.Provider
+
+	if r.Phase == ResolutionReady {
+		if r.Target == nil {
+			return nil
+		}
+		var out []ObservedAdapter
+		for _, a := range m.info.Adapters {
+			if !m.available(a) {
+				continue
+			}
+			if matches, _ := compareAttachment(*r.Target, a); matches {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+
+	// The last reported status of a resource that is not Ready is the same
+	// applied-allocation evidence attachmentChange uses.
+	if r.obj == nil || !reportsAttachment(r.obj) {
 		return nil
 	}
 
 	var out []ObservedAdapter
 	for _, a := range m.info.Adapters {
-		if !m.available(a) {
+		if !m.available(a) || a.device == nil {
 			continue
 		}
-		if matches, _ := compareAttachment(*target, a); matches {
+		devices := object.VirtualDeviceList{a.device}
+		if providerObjectMatch(r.obj, devices, iface.Spec.MACAddr) == 0 {
 			out = append(out, a)
 		}
 	}

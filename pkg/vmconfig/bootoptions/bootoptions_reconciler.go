@@ -7,6 +7,7 @@ package bootoptions
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25"
@@ -15,7 +16,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
-	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
+	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
@@ -147,7 +148,11 @@ func reconcileBootOrder(
 	allDisks := devices.SelectByType((*vimtypes.VirtualDisk)(nil))
 	allCdrom := devices.SelectByType((*vimtypes.VirtualCdrom)(nil))
 
-	var bootOrder []vimtypes.BaseVirtualMachineBootOptionsBootableDevice
+	var (
+		bootOrder       []vimtypes.BaseVirtualMachineBootOptionsBootableDevice
+		networkInfo     *network.Info
+		networkObserved bool
+	)
 	for _, bd := range vmBootOptions.BootOrder {
 		switch bd.Type {
 		case vmopv1.VirtualMachineBootOptionsBootableDiskDevice:
@@ -210,45 +215,29 @@ func reconcileBootOrder(
 			if vm.Spec.Network == nil {
 				return nil, fmt.Errorf("spec.network is not defined for VM %q", vm.NamespacedName())
 			}
-			// Get list of Network Interfaces from vm.spec.network.interfaces
-			// and search for interface with matching name and get its index.
-			ifaceIdx := -1
-			for i, iface := range vm.Spec.Network.Interfaces {
-				if iface.Name == bd.Name {
-					ifaceIdx = i
-					break
-				}
-			}
+			// Search vm.spec.network.interfaces for the interface with a
+			// matching name.
+			if !slices.ContainsFunc(vm.Spec.Network.Interfaces,
+				func(iface vmopv1.VirtualMachineNetworkInterfaceSpec) bool {
+					return iface.Name == bd.Name
+				}) {
 
-			if ifaceIdx == -1 {
 				return nil, fmt.Errorf("unable to locate a network interface matching name %q in spec.network", bd.Name)
 			}
 
-			logger := pkglog.FromContextOrDefault(ctx)
-			vmCtx := pkgctx.VirtualMachineContext{
-				Context: ctx,
-				Logger:  logger,
-				VM:      vm,
+			// Observe at most once per call, and only when the boot order names
+			// a network device.
+			if !networkObserved {
+				networkInfo = network.ObservedInfo(ctx, k8sClient, vm, moVM)
+				networkObserved = true
 			}
 
-			// Get map which maps device keys to index in vm.spec.network.interfaces
-			networkDeviceKeysToSpecIdx := network.MapEthernetDevicesToSpecIdx(vmCtx, k8sClient, moVM)
-
-			// Search map for index matching the one found above. If found, then we
-			// have our target deviceKey. We can then append the correct
-			// VirtualMachineBootOptionsBootableEthernetDevice to bootOrder.
-			var bed *vimtypes.VirtualMachineBootOptionsBootableEthernetDevice
-			for deviceKey, specIdx := range networkDeviceKeysToSpecIdx {
-				if specIdx == ifaceIdx {
-					bed = &vimtypes.VirtualMachineBootOptionsBootableEthernetDevice{
-						DeviceKey: deviceKey,
-					}
-					break
-				}
+			bed, ok, err := networkBootDevice(ctx, networkInfo, bd.Name)
+			if err != nil {
+				return nil, err
 			}
-
-			if bed == nil {
-				return nil, fmt.Errorf("unable to locate network interface matching name %q", bd.Name)
+			if !ok {
+				continue
 			}
 			bootOrder = append(bootOrder, bed)
 		case vmopv1.VirtualMachineBootOptionsBootableCDRomDevice:
@@ -265,4 +254,47 @@ func reconcileBootOrder(
 	}
 
 	return bootOrder, nil
+}
+
+// networkBootDevice returns the bootable Ethernet device for the named
+// interface from the shared hardware match, so network boot uses the same card
+// that status and device reconciliation attribute to the interface.
+//
+// When VMNetworkUnitNumbers is enabled, a numbered interface is matched only
+// by its exact unit number. If no card is at that unit number yet, for example
+// because a unit number change has not been applied, the interface gets no
+// boot order entry rather than another interface's card, and the second
+// result is false. Any other interface without a card is an error.
+func networkBootDevice(
+	ctx context.Context,
+	info *network.Info,
+	name string) (*vimtypes.VirtualMachineBootOptionsBootableEthernetDevice, bool, error) {
+
+	if info != nil {
+		for _, iface := range info.Interfaces {
+			if iface.Spec.Name != name {
+				continue
+			}
+
+			if network.IsClaim(iface.Match.Kind) {
+				return &vimtypes.VirtualMachineBootOptionsBootableEthernetDevice{
+					DeviceKey: iface.Match.AdapterKey,
+				}, true, nil
+			}
+
+			if iface.Spec.UnitNumber != nil &&
+				pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
+
+				pkglog.FromContextOrDefault(ctx).Info(
+					"Skipping network boot device because no Ethernet card is at the interface's unit number",
+					"interface", name,
+					"unitNumber", *iface.Spec.UnitNumber)
+				return nil, false, nil
+			}
+
+			break
+		}
+	}
+
+	return nil, false, fmt.Errorf("unable to locate network interface matching name %q", name)
 }

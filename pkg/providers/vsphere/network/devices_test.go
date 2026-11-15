@@ -5,6 +5,7 @@
 package network_test
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -720,8 +721,13 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 						vmCtx.VM.Spec.Network.Interfaces[0].MACAddr = "aa:bb:cc:dd:ee:ff"
 					})
 
-					It("returns no mapping", func() {
-						Expect(devKeyToIdx).To(BeEmpty())
+					It("Spec 017 T018: claims the card by position", func() {
+						// Spec 017 T018: MapEthernetDevicesToSpecIdx now derives
+						// from the shared match. The pinned MAC address rules out
+						// an identity match, and the interface then claims the
+						// remaining card through the shared positional fallback
+						// (spec 017 Q5). Before, there was no mapping.
+						Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0}))
 					})
 				})
 			})
@@ -733,11 +739,15 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 					})
 				})
 
-				It("does not use the Named matcher and returns no mapping", func() {
+				It("Spec 017 T018: does not use the Named matcher and claims the card by position", func() {
 					// With PerNamespaceNetworkProvider enabled, dispatch is by
 					// the interface's API group. Since a Named network has no
-					// APIVersion set, no matcher applies.
-					Expect(devKeyToIdx).To(BeEmpty())
+					// APIVersion set, the interface's provider resolution fails.
+					// Spec 017 T018: MapEthernetDevicesToSpecIdx now derives
+					// from the shared match, whose positional fallback (spec 017
+					// Q5) includes interfaces whose resolution failed. Before,
+					// there was no mapping.
+					Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0}))
 				})
 			})
 		})
@@ -761,8 +771,12 @@ var _ = Describe("MapEthernetDevicesToSpecIdx", func() {
 				}
 			})
 
-			It("returns no mapping", func() {
-				Expect(devKeyToIdx).To(BeEmpty())
+			It("Spec 017 T018: claims the card by position", func() {
+				// Spec 017 T018: MapEthernetDevicesToSpecIdx now derives from
+				// the shared match, whose positional fallback (spec 017 Q5)
+				// includes interfaces whose resolution failed. Before, there
+				// was no mapping.
+				Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0}))
 			})
 		})
 
@@ -1017,11 +1031,13 @@ var _ = Describe("MapEthernetDevicesToSpecIdx characterization", func() {
 			})
 		})
 
-		// TODAY: unit numbers are not consulted. Spec 008 T020 (and spec 017
-		// T014's Match) are expected to change this to exact-number matching
-		// where a numbered miss gets no entry. Unlike the rest of this file,
-		// this case is intentionally expected to be updated by that work.
-		When("TODAY: VMNetworkUnitNumbers is enabled and interfaces declare unit numbers", func() {
+		// Spec 017 T018: this case was "TODAY: ignores the unit numbers and
+		// zips by position". MapEthernetDevicesToSpecIdx now derives from the
+		// shared match, which matches a numbered interface by its exact unit
+		// number only (spec 008 G11). eth0 (unit 8) claims the card at unit 8;
+		// eth1 (unit 9) has no card at its unit number, so it gets no entry and
+		// the card at unit 7 is not handed to it.
+		When("Spec 017 T018: VMNetworkUnitNumbers is enabled and interfaces declare unit numbers", func() {
 			BeforeEach(func() {
 				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
 					config.Features.VMNetworkUnitNumbers = true
@@ -1035,8 +1051,8 @@ var _ = Describe("MapEthernetDevicesToSpecIdx characterization", func() {
 				vmCtx.VM.Spec.Network.Interfaces[1].UnitNumber = ptr.To(int32(9))
 			})
 
-			It("TODAY: ignores the unit numbers and zips by position", func() {
-				Expect(devKeyToIdx).To(Equal(map[int32]int{4000: 0, 4001: 1}))
+			It("Spec 017 T018: matches numbered interfaces by exact unit number only", func() {
+				Expect(devKeyToIdx).To(Equal(map[int32]int{4001: 0}))
 			})
 		})
 	})
@@ -1103,6 +1119,15 @@ var _ = Describe("MapEthernetDevicesToSpecIdx characterization", func() {
 				}
 			},
 
+			// Spec 017 T018: MapEthernetDevicesToSpecIdx now derives from the
+			// shared match. Where the CR's reported attachment does not match
+			// the card, there is no identity claim, but the one unnumbered
+			// interface still claims the one card through the shared
+			// positional fallback (spec 017 Q5), which applies with
+			// MutableNetworks too. The entries prefixed "Spec 017 T018:" were
+			// "false" (no mapping) before; the identity predicate itself is
+			// covered by the FindMatchingEthCard and MatchInterfaces tests.
+
 			// VDS: external ID when the CR has one, never a card external ID
 			// when the CR has none, interface MACAddr when set, and the
 			// portgroup key or standard network MoRef.
@@ -1111,36 +1136,36 @@ var _ = Describe("MapEthernetDevicesToSpecIdx characterization", func() {
 				charCard{backing: charDVPGBacking("", pgA)},
 				func() ctrlclient.Object { return charVDSCR(pgA, "") },
 				true),
-			Entry("VDS: portgroup differs from the CR NetworkID",
+			Entry("Spec 017 T018: VDS: portgroup differs from the CR NetworkID",
 				netOPNetworkTypeMeta, "",
 				charCard{backing: charDVPGBacking("", pgB)},
 				func() ctrlclient.Object { return charVDSCR(pgA, "") },
-				false),
+				true),
 			Entry("VDS: CR external ID equals the card external ID",
 				netOPNetworkTypeMeta, "",
 				charCard{externalID: extIDA, backing: charDVPGBacking("", pgA)},
 				func() ctrlclient.Object { return charVDSCR(pgA, extIDA) },
 				true),
-			Entry("VDS: CR external ID differs from the card external ID",
+			Entry("Spec 017 T018: VDS: CR external ID differs from the card external ID",
 				netOPNetworkTypeMeta, "",
 				charCard{externalID: extIDB, backing: charDVPGBacking("", pgA)},
 				func() ctrlclient.Object { return charVDSCR(pgA, extIDA) },
-				false),
-			Entry("VDS: card has an external ID but the CR does not",
+				true),
+			Entry("Spec 017 T018: VDS: card has an external ID but the CR does not",
 				netOPNetworkTypeMeta, "",
 				charCard{externalID: extIDA, backing: charDVPGBacking("", pgA)},
 				func() ctrlclient.Object { return charVDSCR(pgA, "") },
-				false),
+				true),
 			Entry("VDS: interface MACAddr matches the card case-insensitively",
 				netOPNetworkTypeMeta, macAUp,
 				charCard{mac: macA, backing: charDVPGBacking("", pgA)},
 				func() ctrlclient.Object { return charVDSCR(pgA, "") },
 				true),
-			Entry("VDS: interface MACAddr differs from the card",
+			Entry("Spec 017 T018: VDS: interface MACAddr differs from the card",
 				netOPNetworkTypeMeta, macB,
 				charCard{mac: macA, backing: charDVPGBacking("", pgA)},
 				func() ctrlclient.Object { return charVDSCR(pgA, "") },
-				false),
+				true),
 			Entry("VDS: standard portgroup Network MoRef matches the CR NetworkID",
 				netOPNetworkTypeMeta, "",
 				charCard{backing: &vimtypes.VirtualEthernetCardNetworkBackingInfo{
@@ -1155,16 +1180,16 @@ var _ = Describe("MapEthernetDevicesToSpecIdx characterization", func() {
 				charCard{externalID: extIDA, mac: macA},
 				func() ctrlclient.Object { return charNSXTCR(extIDA, macAUp) },
 				true),
-			Entry("NSX-T: MAC differs",
+			Entry("Spec 017 T018: NSX-T: MAC differs",
 				nsxtNetworkTypeMeta, "",
 				charCard{externalID: extIDA, mac: macB},
 				func() ctrlclient.Object { return charNSXTCR(extIDA, macA) },
-				false),
-			Entry("NSX-T: interface ID differs",
+				true),
+			Entry("Spec 017 T018: NSX-T: interface ID differs",
 				nsxtNetworkTypeMeta, "",
 				charCard{externalID: extIDB, mac: macA},
 				func() ctrlclient.Object { return charNSXTCR(extIDA, macA) },
-				false),
+				true),
 
 			// VPC: the attachment ID must match; the MAC must match when the
 			// SubnetPort reports one other than the all-zero placeholder.
@@ -1178,16 +1203,16 @@ var _ = Describe("MapEthernetDevicesToSpecIdx characterization", func() {
 				charCard{externalID: extIDA, mac: macA},
 				func() ctrlclient.Object { return charVPCCR(extIDA, "") },
 				true),
-			Entry("VPC: MAC differs",
+			Entry("Spec 017 T018: VPC: MAC differs",
 				vpcNetworkTypeMeta, "",
 				charCard{externalID: extIDA, mac: macB},
 				func() ctrlclient.Object { return charVPCCR(extIDA, macA) },
-				false),
-			Entry("VPC: attachment ID differs",
+				true),
+			Entry("Spec 017 T018: VPC: attachment ID differs",
 				vpcNetworkTypeMeta, "",
 				charCard{externalID: extIDA, mac: macA},
 				func() ctrlclient.Object { return charVPCCR(extIDB, macA) },
-				false),
+				true),
 		)
 	})
 })
@@ -1232,3 +1257,199 @@ func charVPCCR(attachmentID, mac string) *vpcv1alpha1.SubnetPort {
 		},
 	}
 }
+
+var _ = Describe("DeviceKeyToSpecIdx", Label(testlabels.API), func() {
+	It("returns nil for a nil Info", func() {
+		Expect(network.DeviceKeyToSpecIdx(nil)).To(BeNil())
+	})
+
+	It("maps only the claiming match kinds", func() {
+		info := &network.Info{
+			Interfaces: []network.InterfaceState{
+				{Match: network.Match{Kind: network.MatchUnitNumber, AdapterKey: 4000}},
+				{Match: network.Match{Kind: network.MatchRecord, AdapterKey: 4001}},
+				{Match: network.Match{Kind: network.MatchIdentity, AdapterKey: 4002}},
+				{Match: network.Match{Kind: network.MatchOrphan, AdapterKey: 4003}},
+				{Match: network.Match{Kind: network.MatchPositional, AdapterKey: 4004}},
+				{Match: network.Match{Kind: network.MatchNone}},
+				{Match: network.Match{Kind: network.MatchAmbiguous, Candidates: []int32{4005, 4006}}},
+			},
+		}
+		Expect(network.DeviceKeyToSpecIdx(info)).To(Equal(map[int32]int{
+			4000: 0, 4001: 1, 4002: 2, 4003: 3, 4004: 4,
+		}))
+	})
+})
+
+var _ = Describe("IsClaim", Label(testlabels.API), func() {
+	DescribeTable("reports whether a match kind claims an adapter",
+		func(kind network.MatchKind, expected bool) {
+			Expect(network.IsClaim(kind)).To(Equal(expected))
+		},
+		Entry("UnitNumber", network.MatchUnitNumber, true),
+		Entry("Record", network.MatchRecord, true),
+		Entry("Identity", network.MatchIdentity, true),
+		Entry("Orphan", network.MatchOrphan, true),
+		Entry("Positional", network.MatchPositional, true),
+		Entry("None", network.MatchNone, false),
+		Entry("Ambiguous", network.MatchAmbiguous, false),
+	)
+})
+
+var _ = Describe("ObservedInfo", Label(testlabels.API), func() {
+	var (
+		ctx    context.Context
+		client ctrlclient.Client
+		vm     *vmopv1.VirtualMachine
+		moVM   mo.VirtualMachine
+	)
+
+	BeforeEach(func() {
+		ctx = providerTestContext(pkgcfg.NetworkProviderTypeVDS)
+		client = builder.NewFakeClient()
+		vm = providerTestVM()
+		vm.Spec.Network.Interfaces = parityInterfaces(2, pkgcfg.NetworkProviderTypeVDS)
+		moVM = providerTestMoVM(indistinguishableCards(2)...)
+	})
+
+	observe := func() *network.Info {
+		return network.Observe(ctx, network.ObserveInput{
+			Client: client,
+			VM:     vm,
+			MoVM:   moVM,
+		})
+	}
+
+	It("returns nil when the VM has no config", func() {
+		Expect(network.ObservedInfo(ctx, client, vm, mo.VirtualMachine{})).To(BeNil())
+	})
+
+	It("observes and matches when there is no reconcile state", func() {
+		info := network.ObservedInfo(ctx, client, vm, moVM)
+		Expect(info).ToNot(BeNil())
+		Expect(network.DeviceKeyToSpecIdx(info)).To(Equal(map[int32]int{4000: 0, 4001: 1}))
+	})
+
+	It("observes and matches when the reconcile state has no observation", func() {
+		ctx = network.WithContext(ctx, &network.ReconcileState{})
+		info := network.ObservedInfo(ctx, client, vm, moVM)
+		Expect(info).ToNot(BeNil())
+		Expect(network.DeviceKeyToSpecIdx(info)).To(Equal(map[int32]int{4000: 0, 4001: 1}))
+	})
+
+	It("returns the pass's observation when it is current", func() {
+		observed := observe()
+		ctx = network.WithContext(ctx, &network.ReconcileState{Observed: observed})
+		Expect(network.ObservedInfo(ctx, client, vm, moVM)).To(BeIdenticalTo(observed))
+	})
+
+	It("observes anew when the interfaces changed after the pass's observation", func() {
+		observed := observe()
+		ctx = network.WithContext(ctx, &network.ReconcileState{Observed: observed})
+
+		// A later step, such as the schema upgrade's unit number backfill,
+		// changes the interfaces.
+		vm.Spec.Network.Interfaces[0], vm.Spec.Network.Interfaces[1] =
+			vm.Spec.Network.Interfaces[1], vm.Spec.Network.Interfaces[0]
+
+		info := network.ObservedInfo(ctx, client, vm, moVM)
+		Expect(info).ToNot(BeIdenticalTo(observed))
+		Expect(info.Interfaces[0].Spec.Name).To(Equal("eth1"))
+	})
+
+	It("observes anew when the vSphere VM changed after the pass's observation", func() {
+		observed := observe()
+		ctx = network.WithContext(ctx, &network.ReconcileState{Observed: observed})
+
+		moVM.Config.ChangeVersion = "change-2"
+
+		Expect(network.ObservedInfo(ctx, client, vm, moVM)).ToNot(BeIdenticalTo(observed))
+	})
+})
+
+// Spec 017 T018: status and boot options read MapEthernetDevicesToSpecIdx or
+// the same shared match, so these cases pin what both consumers see.
+var _ = Describe("MapEthernetDevicesToSpecIdx with unit numbers", Label(testlabels.API), func() {
+	var (
+		vmCtx   pkgctx.VirtualMachineContext
+		devices []vimtypes.BaseVirtualDevice
+	)
+
+	numbered := func(name string, unitNumber int32) vmopv1.VirtualMachineNetworkInterfaceSpec {
+		return vmopv1.VirtualMachineNetworkInterfaceSpec{
+			Name:       name,
+			Network:    providerTestNetworkRef(pkgcfg.NetworkProviderTypeVDS, "net-a"),
+			UnitNumber: ptr.To(unitNumber),
+		}
+	}
+
+	unnumbered := func(name string) vmopv1.VirtualMachineNetworkInterfaceSpec {
+		return vmopv1.VirtualMachineNetworkInterfaceSpec{
+			Name:    name,
+			Network: providerTestNetworkRef(pkgcfg.NetworkProviderTypeVDS, "net-a"),
+		}
+	}
+
+	BeforeEach(func() {
+		vmCtx = pkgctx.VirtualMachineContext{
+			Context: pkgcfg.UpdateContext(
+				providerTestContext(pkgcfg.NetworkProviderTypeVDS),
+				func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				}),
+			Logger: suite.GetLogger().WithName("map_eth_devices_unit_numbers"),
+			VM:     providerTestVM(),
+		}
+
+		// Three indistinguishable cards at unit numbers 7, 8, and 9.
+		devices = indistinguishableCards(3)
+	})
+
+	mapping := func() map[int32]int {
+		return network.MapEthernetDevicesToSpecIdx(vmCtx, builder.NewFakeClient(), providerTestMoVM(devices...))
+	}
+
+	It("maps numbered interfaces by unit number regardless of spec order", func() {
+		vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			numbered("eth0", 9),
+			numbered("eth1", 7),
+		}
+		Expect(mapping()).To(Equal(map[int32]int{4002: 0, 4000: 1}))
+
+		By("reordering the spec entries keeps each interface's card")
+		vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			numbered("eth1", 7),
+			numbered("eth0", 9),
+		}
+		Expect(mapping()).To(Equal(map[int32]int{4000: 0, 4002: 1}))
+	})
+
+	It("gives a numbered interface whose unit number has no card no mapping", func() {
+		vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			numbered("eth0", 10),
+			numbered("eth1", 8),
+		}
+		// The cards at unit numbers 7 and 9 are not given to eth0.
+		Expect(mapping()).To(Equal(map[int32]int{4001: 1}))
+	})
+
+	It("does not fill a numbered interface's missing slot with an unnumbered interface's card", func() {
+		vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			numbered("eth0", 10),
+			unnumbered("eth1"),
+			numbered("eth2", 8),
+		}
+		// eth2 claims unit 8 exactly; eth1 takes the first remaining card by
+		// position; eth0 gets nothing and the card at unit 9 stays unclaimed.
+		Expect(mapping()).To(Equal(map[int32]int{4001: 2, 4000: 1}))
+	})
+
+	It("zips unnumbered interfaces with the cards the numbered interfaces leave", func() {
+		vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			unnumbered("eth0"),
+			numbered("eth1", 7),
+			unnumbered("eth2"),
+		}
+		Expect(mapping()).To(Equal(map[int32]int{4001: 0, 4000: 1, 4002: 2}))
+	})
+})

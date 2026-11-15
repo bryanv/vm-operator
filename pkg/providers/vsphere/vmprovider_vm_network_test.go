@@ -40,6 +40,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
 	netsetutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube/networksettings"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
+	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 	"github.com/vmware-tanzu/vm-operator/test/builder"
 )
 
@@ -300,6 +301,127 @@ func vmNetworkTests() {
 			backing, ok := l[0].GetVirtualDevice().Backing.(*vimtypes.VirtualEthernetCardNetworkBackingInfo)
 			Expect(ok).To(BeTrue())
 			Expect(backing.DeviceName).To(Equal("VM Network"))
+		})
+	})
+
+	// Spec 017 T018: status names guest-reported interfaces from the shared
+	// hardware match.
+	When("two NICs are on the same network", func() {
+		var vcVM *object.VirtualMachine
+
+		cardsByUnitNumber := func() map[int32]ethCardInfo {
+			return ethCardsByUnitNumber(ctx, vcVM)
+		}
+
+		statusNames := func() map[int32]string {
+			return statusInterfaceNames(vm)
+		}
+
+		setUnitNumbers := func(unitNumbers ...*int32) {
+			for i := range vm.Spec.Network.Interfaces {
+				vm.Spec.Network.Interfaces[i].UnitNumber = unitNumbers[i]
+			}
+		}
+
+		BeforeEach(func() {
+			testConfig.NumNetworks = 0
+			testConfig.WithNetworkEnv = builder.NetworkEnvNamed
+
+			pkgcfg.SetContext(parentCtx, func(config *pkgcfg.Config) {
+				config.Features.VMNetworkUnitNumbers = true
+			})
+
+			// No schema upgrade sets the NIC unit numbers feature version yet,
+			// so mark the VM as already upgraded to it. Otherwise every
+			// reconcile stops at the schema upgrade.
+			if vm.Annotations == nil {
+				vm.Annotations = map[string]string{}
+			}
+			vm.Annotations[pkgconst.UpgradedToFeatureVersionAnnotationKey] =
+				vmopv1util.FeatureVersionNICUnitNumbers.String()
+
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{
+					Name:    "eth0",
+					Network: &vmopv1common.PartialObjectRef{Name: "VM Network"},
+				},
+				{
+					Name:    "eth1",
+					Network: &vmopv1common.PartialObjectRef{Name: "VM Network"},
+				},
+			}
+		})
+
+		JustBeforeEach(func() {
+			var err error
+			vcVM, err = createOrUpdateAndGetVcVM(ctx, vmProvider, vm)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Reconcile again so status is built from the created VM.
+			Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+		})
+
+		It("names the cards consistently for numbered, unnumbered, and mixed interfaces", func() {
+			cards := cardsByUnitNumber()
+			Expect(cards).To(HaveLen(2))
+			Expect(cards).To(HaveKey(int32(7)))
+			Expect(cards).To(HaveKey(int32(8)))
+			card7, card8 := cards[7], cards[8]
+
+			By("unnumbered interfaces are named in spec and device order", func() {
+				Expect(statusNames()).To(Equal(map[int32]string{
+					card7.key: "eth0",
+					card8.key: "eth1",
+				}))
+				Expect(statusInterfaceMACs(vm)).To(Equal(map[int32]string{
+					card7.key: strings.ToLower(card7.mac),
+					card8.key: strings.ToLower(card8.mac),
+				}))
+			})
+
+			By("numbered interfaces are named by unit number, not position", func() {
+				setUnitNumbers(ptr.To[int32](8), ptr.To[int32](7))
+				Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+				Expect(statusNames()).To(Equal(map[int32]string{
+					card8.key: "eth0",
+					card7.key: "eth1",
+				}))
+			})
+
+			By("reordering numbered spec entries keeps each interface's card", func() {
+				ifaces := vm.Spec.Network.Interfaces
+				ifaces[0], ifaces[1] = ifaces[1], ifaces[0]
+				Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+				Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth1"))
+				Expect(statusNames()).To(Equal(map[int32]string{
+					card8.key: "eth0",
+					card7.key: "eth1",
+				}))
+			})
+
+			By("a numbered interface whose unit number has no card is not given another card", func() {
+				// eth1 is first in the spec.
+				setUnitNumbers(ptr.To[int32](9), ptr.To[int32](8))
+				Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+				Expect(statusNames()).To(Equal(map[int32]string{
+					card8.key: "eth0",
+					card7.key: "",
+				}))
+			})
+
+			By("mixed numbered and unnumbered interfaces", func() {
+				// eth1 is unnumbered and takes the card eth0 leaves.
+				setUnitNumbers(nil, ptr.To[int32](8))
+				Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+				Expect(statusNames()).To(Equal(map[int32]string{
+					card8.key: "eth0",
+					card7.key: "eth1",
+				}))
+			})
+
+			By("the hardware was not changed", func() {
+				Expect(cardsByUnitNumber()).To(Equal(cards))
+			})
 		})
 	})
 
@@ -1773,4 +1895,54 @@ func (v vpcNetworkProvider) assertNetworkInterfacesDNE(
 	err := ctx.Client.Get(ctx, client.ObjectKeyFromObject(subnetPort), subnetPort)
 	Expect(err).To(HaveOccurred())
 	Expect(apierrors.IsNotFound(err)).To(BeTrue())
+}
+
+// ethCardInfo describes an Ethernet card for the shared match status tests.
+type ethCardInfo struct {
+	key        int32
+	unitNumber int32
+	mac        string
+}
+
+// ethCardsByUnitNumber returns the VM's Ethernet cards keyed by unit number.
+func ethCardsByUnitNumber(
+	ctx *builder.TestContextForVCSim,
+	vcVM *object.VirtualMachine) map[int32]ethCardInfo {
+
+	devList, err := vcVM.Device(ctx)
+	ExpectWithOffset(1, err).ToNot(HaveOccurred())
+	out := map[int32]ethCardInfo{}
+	for _, dev := range devList.SelectByType(&vimtypes.VirtualEthernetCard{}) {
+		ethCard := dev.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+		ExpectWithOffset(1, ethCard.UnitNumber).ToNot(BeNil())
+		out[*ethCard.UnitNumber] = ethCardInfo{
+			key:        ethCard.Key,
+			unitNumber: *ethCard.UnitNumber,
+			mac:        ethCard.MacAddress,
+		}
+	}
+	return out
+}
+
+// statusInterfaceNames returns the status interface name of each device key.
+func statusInterfaceNames(vm *vmopv1.VirtualMachine) map[int32]string {
+	ExpectWithOffset(1, vm.Status.Network).ToNot(BeNil())
+	out := map[int32]string{}
+	for _, iface := range vm.Status.Network.Interfaces {
+		out[iface.DeviceKey] = iface.Name
+	}
+	return out
+}
+
+// statusInterfaceMACs returns the lower-case status interface MAC address of
+// each device key.
+func statusInterfaceMACs(vm *vmopv1.VirtualMachine) map[int32]string {
+	ExpectWithOffset(1, vm.Status.Network).ToNot(BeNil())
+	out := map[int32]string{}
+	for _, iface := range vm.Status.Network.Interfaces {
+		if iface.IP != nil {
+			out[iface.DeviceKey] = strings.ToLower(iface.IP.MACAddr)
+		}
+	}
+	return out
 }

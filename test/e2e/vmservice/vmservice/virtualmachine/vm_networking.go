@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -543,5 +544,96 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 				MatchError(ContainSubstring("only privileged users may set an external network interface")),
 				"non-privileged user should not be able to set an external network interface")
 		})
+	})
+
+	// Spec 017 T018: status, boot options, and device reconciliation share one
+	// mapping between network interfaces and Ethernet cards. Two interfaces on
+	// the same network cannot be told apart by their backing, so this checks
+	// that each guest-reported status entry names a distinct interface and
+	// points at a distinct card whose MAC address it reports.
+	It("Should name each network interface status after the Ethernet card it is matched to", Label("experimental"), func() {
+		skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
+
+		vmToCreate := &vmopv1a2.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: input.WCPNamespaceName,
+				Name:      vmName,
+			},
+			Spec: vmopv1a2.VirtualMachineSpec{
+				ImageName:    linuxVMIName,
+				ClassName:    clusterResources.VMClassName,
+				StorageClass: clusterResources.StorageClassName,
+				PowerState:   vmopv1a2.VirtualMachinePowerStateOff,
+			},
+		}
+		vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vmToCreate, false)
+
+		vmoperator.WaitForVirtualMachineToExist(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		vmoperator.WaitForVirtualMachineMOID(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		vmMoID := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+		vmMoRef := types.ManagedObjectReference{Type: "VirtualMachine", Value: vmMoID}
+
+		vCenterClient := vcenter.NewVimClientFromKubeconfig(ctx, clusterProxy.GetKubeconfigPath())
+		propCollector := property.DefaultCollector(vCenterClient)
+
+		By("Add a second network interface on the same network")
+
+		key := ctrlclient.ObjectKey{Name: vmName, Namespace: input.WCPNamespaceName}
+		Eventually(func(g Gomega) {
+			vm := &vmopv1.VirtualMachine{}
+			g.Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+			g.Expect(vm.Spec.Network).ToNot(BeNil())
+			g.Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+
+			eth1 := *vm.Spec.Network.Interfaces[0].DeepCopy()
+			eth1.Name = "eth1"
+			vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, eth1)
+			g.Expect(svClusterClient.Update(ctx, vm)).To(Succeed())
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out updating VirtualMachine %s to add second network interface", vmName)
+
+		By("Wait for VM to be reconfigured with second EthernetCard")
+		var vmMO mo.VirtualMachine
+		Eventually(func(g Gomega) {
+			g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config"}, &vmMO)).To(Succeed())
+			ethCards := object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
+			g.Expect(ethCards).To(HaveLen(2), "VM should have two EthernetCards configured")
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VM reconfigured with second EthernetCard")
+
+		By("Power on VM")
+		vmoperator.PowerOnVirtualMachineAndWait(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		vmoperator.WaitForVirtualMachineIP(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+
+		By("Each status interface names a distinct interface and the card whose MAC address it reports")
+		Eventually(func(g Gomega) {
+			g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config"}, &vmMO)).To(Succeed())
+			macByKey := map[int32]string{}
+			for _, dev := range object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil)) {
+				ethCard := dev.(types.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+				macByKey[ethCard.Key] = ethCard.MacAddress
+			}
+			g.Expect(macByKey).To(HaveLen(2))
+
+			vm := &vmopv1.VirtualMachine{}
+			g.Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+			g.Expect(vm.Status.Network).ToNot(BeNil())
+
+			keyByName := map[string]int32{}
+			for _, iface := range vm.Status.Network.Interfaces {
+				if iface.DeviceKey < 0 {
+					continue
+				}
+				mac, ok := macByKey[iface.DeviceKey]
+				g.Expect(ok).To(BeTrue(), "status interface %q has device key %d, which is not an EthernetCard", iface.Name, iface.DeviceKey)
+				g.Expect(iface.IP).ToNot(BeNil())
+				g.Expect(strings.EqualFold(iface.IP.MACAddr, mac)).To(BeTrue(),
+					"status interface %q reports MAC %q but its device %d has MAC %q", iface.Name, iface.IP.MACAddr, iface.DeviceKey, mac)
+				g.Expect(keyByName).ToNot(HaveKey(iface.Name), "status interface name %q is used twice", iface.Name)
+				keyByName[iface.Name] = iface.DeviceKey
+			}
+			g.Expect(keyByName).To(HaveLen(2))
+			g.Expect(keyByName).To(HaveKey(vm.Spec.Network.Interfaces[0].Name))
+			g.Expect(keyByName).To(HaveKey("eth1"))
+			g.Expect(keyByName[vm.Spec.Network.Interfaces[0].Name]).ToNot(Equal(keyByName["eth1"]))
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VM status interfaces named after their EthernetCards")
 	})
 }

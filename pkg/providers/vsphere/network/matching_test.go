@@ -662,6 +662,139 @@ var _ = Describe("MatchInterfaces", Label(testlabels.API), func() {
 		})
 	})
 
+	// Spec 017 T018: as in the legacy device reconciliation, the last reported
+	// attachment of a provider resource that is not Ready is identity
+	// evidence.
+	Context("identity for a provider resource that is not ready", func() {
+		pendingWith := func(name string, obj ctrlclient.Object) network.InterfaceState {
+			iface := phaseIface(name, network.ResolutionPending)
+			if obj != nil {
+				network.SetResolutionObjectForTest(&iface.Provider, obj)
+			}
+			return iface
+		}
+
+		netOPWithExtID := func(name, extID string) *netopv1alpha1.NetworkInterface {
+			obj := orphanNetOP(name, "", matchPGA)
+			obj.Status.ExternalID = extID
+			return obj
+		}
+
+		ncpWith := func(name, interfaceID, mac string) *ncpv1alpha1.VirtualNetworkInterface {
+			return &ncpv1alpha1.VirtualNetworkInterface{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: providerTestNS},
+				Status: ncpv1alpha1.VirtualNetworkInterfaceStatus{
+					InterfaceID: interfaceID,
+					MacAddress:  mac,
+				},
+			}
+		}
+
+		extIDCard := func(key, unitNumber int32, extID string) *vimtypes.VirtualVmxnet3 {
+			return matchCard(key, unitNumber, charCard{
+				externalID: extID,
+				backing:    charDVPGBacking(matchSwitch, matchPGA),
+			})
+		}
+
+		DescribeTable("claims the card its last reported external ID names regardless of spec order",
+			func(reversed bool) {
+				ifaces := []network.InterfaceState{
+					pendingWith("eth0", netOPWithExtID("vm-eth0", matchExtA)),
+					pendingWith("eth1", netOPWithExtID("vm-eth1", matchExtB)),
+				}
+				if reversed {
+					ifaces[0], ifaces[1] = ifaces[1], ifaces[0]
+				}
+				info = matchInfo(ifaces,
+					extIDCard(4000, 7, matchExtB),
+					extIDCard(4001, 8, matchExtA))
+				network.MatchInterfaces(ctx, info)
+
+				Expect(claims(info)).To(Equal(map[string]int32{"eth0": 4001, "eth1": 4000}))
+				Expect(kinds(info)).To(Equal(map[string]network.MatchKind{
+					"eth0": network.MatchIdentity,
+					"eth1": network.MatchIdentity,
+				}))
+			},
+			Entry("in spec order", false),
+			Entry("in reverse spec order", true),
+		)
+
+		DescribeTable("claims the card its last reported interface ID and MAC address name regardless of spec order",
+			func(reversed bool) {
+				ifaces := []network.InterfaceState{
+					pendingWith("eth0", ncpWith("vm-eth0", matchExtA, matchMACA)),
+					pendingWith("eth1", ncpWith("vm-eth1", matchExtB, matchMACB)),
+				}
+				if reversed {
+					ifaces[0], ifaces[1] = ifaces[1], ifaces[0]
+				}
+				info = matchInfo(ifaces,
+					nsxCard(4000, matchExtB, matchMACB),
+					nsxCard(4001, matchExtA, matchMACA))
+				network.MatchInterfaces(ctx, info)
+
+				Expect(claims(info)).To(Equal(map[string]int32{"eth0": 4001, "eth1": 4000}))
+				Expect(kinds(info)).To(Equal(map[string]network.MatchKind{
+					"eth0": network.MatchIdentity,
+					"eth1": network.MatchIdentity,
+				}))
+			},
+			Entry("in spec order", false),
+			Entry("in reverse spec order", true),
+		)
+
+		It("zips interfaces whose resources report no attachment by position", func() {
+			info = matchInfo(
+				[]network.InterfaceState{
+					pendingWith("eth0", orphanNetOP("vm-eth0", "", "")),
+					pendingWith("eth1", nil),
+				},
+				dvpgCard(4000, 7, matchPGA),
+				dvpgCard(4001, 8, matchPGA))
+			network.MatchInterfaces(ctx, info)
+
+			Expect(claims(info)).To(Equal(map[string]int32{"eth0": 4000, "eth1": 4001}))
+			Expect(kinds(info)).To(Equal(map[string]network.MatchKind{
+				"eth0": network.MatchPositional,
+				"eth1": network.MatchPositional,
+			}))
+		})
+
+		It("leaves an interface without evidence the card that evidence does not claim", func() {
+			info = matchInfo(
+				[]network.InterfaceState{
+					pendingWith("eth0", nil),
+					pendingWith("eth1", netOPWithExtID("vm-eth1", matchExtA)),
+				},
+				extIDCard(4000, 7, matchExtA),
+				extIDCard(4001, 8, matchExtB))
+			network.MatchInterfaces(ctx, info)
+
+			Expect(claims(info)).To(Equal(map[string]int32{"eth0": 4001, "eth1": 4000}))
+			Expect(kinds(info)).To(Equal(map[string]network.MatchKind{
+				"eth0": network.MatchPositional,
+				"eth1": network.MatchIdentity,
+			}))
+		})
+
+		It("does not claim a card the last reported attachment contradicts", func() {
+			info = matchInfo(
+				[]network.InterfaceState{
+					pendingWith("eth0", netOPWithExtID("vm-eth0", matchExtB)),
+					readyIface("eth1", dvpgTarget(matchPGA)),
+				},
+				extIDCard(4000, 7, matchExtA),
+				dvpgCard(4001, 8, matchPGA))
+			network.MatchInterfaces(ctx, info)
+
+			// eth0's resource names an external ID no card carries, so eth0 is
+			// not an identity claim on any card.
+			Expect(kinds(info)["eth0"]).ToNot(Equal(network.MatchIdentity))
+		})
+	})
+
 	Context("attachment change for a provider that is not ready", func() {
 		var eth0 network.InterfaceState
 
@@ -676,7 +809,9 @@ var _ = Describe("MatchInterfaces", Label(testlabels.API), func() {
 			info = matchInfo([]network.InterfaceState{eth0}, dvpgCard(4000, 7, matchPGA))
 			network.MatchInterfaces(ctx, info)
 
-			Expect(info.Interfaces[0].Match.Kind).To(Equal(network.MatchPositional))
+			// The pending resource's last reported attachment is identity
+			// evidence too.
+			Expect(info.Interfaces[0].Match.Kind).To(Equal(network.MatchIdentity))
 			Expect(info.Interfaces[0].AttachmentChange).To(Equal(network.AttachmentChangeUnchanged))
 		})
 
@@ -904,7 +1039,8 @@ var _ = Describe("Observe and Prepare matching", Label(testlabels.API), func() {
 })
 
 // parityCase runs the same fixtures through MapEthernetDevicesToSpecIdx and
-// Observe.
+// Observe. Since spec 017 T018, MapEthernetDevicesToSpecIdx derives from the
+// shared match, so the two must agree.
 type parityCase struct {
 	mutableNetworks bool
 	unitNumbers     bool
@@ -1141,6 +1277,12 @@ var _ = Describe("MatchInterfaces parity with MapEthernetDevicesToSpecIdx", Labe
 			},
 			devices: indistinguishableCards(2),
 		}),
+		Entry("mutable: VDS resource that is not ready", parityCase{
+			mutableNetworks: true,
+			interfaces:      parityInterfaces(1, pkgcfg.NetworkProviderTypeVDS),
+			objects:         []ctrlclient.Object{parityNetOP("net-a", "eth0", matchPGA, "", false, false)},
+			devices:         indistinguishableCards(1),
+		}),
 		Entry("mutable: VDS legacy v1alpha1 resource name", parityCase{
 			mutableNetworks: true,
 			interfaces:      parityInterfaces(1, pkgcfg.NetworkProviderTypeVDS),
@@ -1175,19 +1317,18 @@ var _ = Describe("MatchInterfaces parity with MapEthernetDevicesToSpecIdx", Labe
 		}),
 	)
 
-	// These cases are expected to diverge: the accepted shared positional
-	// fallback (Q5) applies with MutableNetworks, the identity predicate is
+	// These cases diverged from the mapping MapEthernetDevicesToSpecIdx
+	// computed before spec 017 T018: the accepted shared positional fallback
+	// (Q5) applies with MutableNetworks, the identity predicate is
 	// FindMatchingEthCard's, numbered interfaces match exactly, and identity
-	// precedes position.
-	DescribeTable("diverges where the shared match intentionally differs",
-		func(tc parityCase, expectedLegacy, expectedMatched map[int32]int, expectedKinds []network.MatchKind) {
+	// precedes position. Since T018, MapEthernetDevicesToSpecIdx derives from
+	// the shared match, so it returns the shared result. The second column is
+	// the pre-T018 result, kept for reference only.
+	DescribeTable("MapEthernetDevicesToSpecIdx follows the shared match where it differs from the pre-T018 mapping",
+		func(tc parityCase, _ /* pre-T018 result */, expectedMatched map[int32]int, expectedKinds []network.MatchKind) {
 			legacy, matched, info := tc.run()
-			if len(expectedLegacy) == 0 {
-				Expect(legacy).To(BeEmpty())
-			} else {
-				Expect(legacy).To(Equal(expectedLegacy))
-			}
 			Expect(matched).To(Equal(expectedMatched))
+			Expect(legacy).To(Equal(expectedMatched))
 
 			var got []network.MatchKind
 			for _, iface := range info.Interfaces {
@@ -1204,16 +1345,6 @@ var _ = Describe("MatchInterfaces parity with MapEthernetDevicesToSpecIdx", Labe
 				devices:         indistinguishableCards(1),
 			},
 			map[int32]int{},
-			map[int32]int{4000: 0},
-			[]network.MatchKind{network.MatchPositional}),
-		Entry("mutable: the resource is not ready, so the same adapter is claimed by position rather than identity",
-			parityCase{
-				mutableNetworks: true,
-				interfaces:      parityInterfaces(1, pkgcfg.NetworkProviderTypeVDS),
-				objects:         []ctrlclient.Object{parityNetOP("net-a", "eth0", matchPGA, "", false, false)},
-				devices:         indistinguishableCards(1),
-			},
-			map[int32]int{4000: 0},
 			map[int32]int{4000: 0},
 			[]network.MatchKind{network.MatchPositional}),
 		Entry("mutable: the card has an external ID but the resource does not",

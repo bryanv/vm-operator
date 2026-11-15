@@ -7,15 +7,11 @@ package network
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/mo"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
@@ -24,7 +20,6 @@ import (
 	ncpv1alpha1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
-	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 )
 
@@ -104,15 +99,15 @@ func UpdateVMClassEthCardFromDevice(
 	return nil
 }
 
-// MapEthernetDevicesToSpecIdx maps the VM's Ethernet cards to the corresponding entry
-// in the VM's Spec. The result of this is used only to populate the VM Status with the
-// interface spec name. Note that since we populate status very early in the VM reconcile,
-// the VM Spec.Network.Interface may have been changed which means there isn't an Ethernet
-// card added to this VM yet. Therefore, all this is best-effort, and we have to use some
-// additional bit of information from the interface spec CR to match it to the device if
-// there is one.
-// It would be nice if VM Tools would send down the interface name in the guest so we
-// could just show that instead.
+// MapEthernetDevicesToSpecIdx maps the device keys of the VM's Ethernet cards
+// to the index of the spec.network.interfaces entry that claims them. It is
+// derived from the shared hardware match (MatchInterfaces), so status, boot
+// options, and device reconciliation agree about which card belongs to each
+// interface. It reuses the pass's observation from the context when that
+// observation was computed from the same VM and vSphere VM, and otherwise
+// observes and matches anew. A card that no interface claims, such as the
+// card left behind by a numbered interface whose unit number has no device
+// yet, has no entry.
 func MapEthernetDevicesToSpecIdx(
 	vmCtx pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
@@ -122,136 +117,66 @@ func MapEthernetDevicesToSpecIdx(
 		return nil
 	}
 
-	devices := object.VirtualDeviceList(vmMO.Config.Hardware.Device)
-	ethCards := devices.SelectByType((*vimtypes.VirtualEthernetCard)(nil))
-	devKeyToSpecIdx := make(map[int32]int)
-
-	if !pkgcfg.FromContext(vmCtx).Features.MutableNetworks {
-		// For immutable, just zip these lists together. This assumes that the
-		// devices are in the same order as the VM Spec.Network.Interfaces.
-		for i := range min(len(ethCards), len(vmCtx.VM.Spec.Network.Interfaces)) {
-			devKeyToSpecIdx[ethCards[i].GetVirtualDevice().Key] = i
-		}
-		return devKeyToSpecIdx
-	}
-
-	for i, interfaceSpec := range vmCtx.VM.Spec.Network.Interfaces {
-		matchingIdx := findMatchingEthCardForInterfaceSpec(vmCtx, client, interfaceSpec, ethCards)
-		if matchingIdx >= 0 {
-			devKeyToSpecIdx[ethCards[matchingIdx].GetVirtualDevice().Key] = i
-			ethCards = slices.Delete(ethCards, matchingIdx, matchingIdx+1)
-		}
-	}
-
-	return devKeyToSpecIdx
+	return DeviceKeyToSpecIdx(ObservedInfo(vmCtx, client, vmCtx.VM, vmMO))
 }
 
-func findMatchingEthCardForInterfaceSpec(
-	vmCtx pkgctx.VirtualMachineContext,
+// ObservedInfo returns a matched network observation of vm and moVM. It
+// returns the Observed snapshot of the ReconcileState in ctx when that
+// snapshot was computed from the same inputs, i.e. its ObservationIdentity
+// equals the identity of vm and moVM. Otherwise, for example when a later
+// step changed spec.network.interfaces or there is no ReconcileState in ctx,
+// it observes and matches anew with Observe. The returned snapshot must be
+// treated as read-only. It returns nil when moVM has no config.
+func ObservedInfo(
+	ctx context.Context,
 	client ctrlclient.Client,
-	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
-	ethCards object.VirtualDeviceList) int {
+	vm *vmopv1.VirtualMachine,
+	moVM mo.VirtualMachine) *Info {
 
-	if !pkgcfg.FromContext(vmCtx).Features.PerNamespaceNetworkProvider {
-		if pkgcfg.FromContext(vmCtx).NetworkProviderType == pkgcfg.NetworkProviderTypeNamed {
-			return findMatchingEthCardNamed(vmCtx, client, interfaceSpec, ethCards)
-		}
+	if moVM.Config == nil {
+		return nil
 	}
 
-	if interfaceSpec.ExternalRef != nil {
-		return findMatchingEthCardExternal(vmCtx, client, interfaceSpec, ethCards)
+	if st, ok := FromContext(ctx); ok && st.Observed != nil &&
+		st.Observed.Identity == observationIdentity(vm, moVM) {
+
+		return st.Observed
 	}
 
-	matchingIdx := -1
-
-	// For this interface spec, try to find the Ethernet card that it most likely
-	// maps to. For an added/removed/changed interface, the device might not have
-	// been added yet so we have to use something derived from the interface spec
-	// to match it with a present device.
-	if group, err := getNetworkInterfaceAPIGroup(interfaceSpec); err == nil {
-		switch group {
-		case netopv1alpha1.SchemeGroupVersion.Group:
-			matchingIdx = findMatchingEthCardVDS(vmCtx, client, interfaceSpec, ethCards)
-		case ncpv1alpha1.SchemeGroupVersion.Group:
-			matchingIdx = findMatchingEthCardNSXT(vmCtx, client, interfaceSpec, ethCards)
-		case vpcv1alpha1.GroupVersion.Group:
-			matchingIdx = findMatchingEthCardVPC(vmCtx, client, interfaceSpec, ethCards)
-		}
-	}
-
-	return matchingIdx
+	return Observe(ctx, ObserveInput{
+		Client: client,
+		VM:     vm,
+		MoVM:   moVM,
+	})
 }
 
-func findMatchingEthCardVDS(
-	vmCtx pkgctx.VirtualMachineContext,
-	client ctrlclient.Client,
-	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
-	ethCards object.VirtualDeviceList) int {
-
-	networkName := interfaceSpec.Network.Name
-
-	netIf := &netopv1alpha1.NetworkInterface{}
-	netIfKey := types.NamespacedName{
-		Namespace: vmCtx.VM.Namespace,
-		Name:      NetOPCRName(vmCtx.VM.Name, networkName, interfaceSpec.Name, true),
+// IsClaim returns true when the match kind claims an adapter, i.e. the
+// Match's AdapterKey identifies the interface's adapter.
+func IsClaim(kind MatchKind) bool {
+	switch kind {
+	case MatchUnitNumber, MatchRecord, MatchIdentity, MatchOrphan, MatchPositional:
+		return true
+	case MatchNone, MatchAmbiguous:
 	}
-
-	// Check if a networkIf object exists with the older (v1a1) naming convention.
-	if err := client.Get(vmCtx, netIfKey, netIf); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return -1
-		}
-
-		// If NotFound set the netIf to the new v1a2 naming convention.
-		netIf.ObjectMeta = metav1.ObjectMeta{
-			Name:      NetOPCRName(vmCtx.VM.Name, networkName, interfaceSpec.Name, false),
-			Namespace: vmCtx.VM.Namespace,
-		}
-
-		if err := client.Get(vmCtx, ctrlclient.ObjectKeyFromObject(netIf), netIf); err != nil {
-			return -1
-		}
-	}
-
-	// The NetworkInterface does not have a Spec field for a MAC address, but if our
-	// interface spec has one, then we would have used that to create the EthCard so
-	// match on that too.
-	macAddress := interfaceSpec.MACAddr
-
-	return findMatchingEthCardNetOpNetIf(netIf, ethCards, macAddress)
+	return false
 }
 
-func findMatchingEthCardExternal(
-	vmCtx pkgctx.VirtualMachineContext,
-	client ctrlclient.Client,
-	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
-	ethCards object.VirtualDeviceList) int {
-
-	group, err := getNetworkInterfaceAPIGroup(interfaceSpec)
-	if err != nil {
-		return -1
+// DeviceKeyToSpecIdx returns the device key of each claimed adapter mapped to
+// the index of the interface that claims it. Interfaces whose match does not
+// claim an adapter, i.e. MatchNone and MatchAmbiguous, have no entry. It
+// returns nil when info is nil.
+func DeviceKeyToSpecIdx(info *Info) map[int32]int {
+	if info == nil {
+		return nil
 	}
 
-	obj, err := newExternalNetworkInterfaceObject(group)
-	if err != nil {
-		return -1
+	out := make(map[int32]int, len(info.Interfaces))
+	for i, iface := range info.Interfaces {
+		if IsClaim(iface.Match.Kind) {
+			out[iface.Match.AdapterKey] = i
+		}
 	}
-
-	key := ctrlclient.ObjectKey{Namespace: vmCtx.VM.Namespace, Name: interfaceSpec.ExternalRef.Name}
-	if err := client.Get(vmCtx, key, obj); err != nil {
-		return -1
-	}
-
-	switch netIf := obj.(type) {
-	case *netopv1alpha1.NetworkInterface:
-		return findMatchingEthCardNetOpNetIf(netIf, ethCards, interfaceSpec.MACAddr)
-	case *ncpv1alpha1.VirtualNetworkInterface:
-		return findMatchingEthCardNCPNetIf(netIf, ethCards)
-	case *vpcv1alpha1.SubnetPort:
-		return findMatchingEthCardVPCSubnetPort(netIf, ethCards)
-	}
-
-	return -1
+	return out
 }
 
 func findMatchingEthCardNetOpNetIf(
@@ -304,40 +229,6 @@ func findMatchingEthCardNetOpNetIf(
 	return -1
 }
 
-func findMatchingEthCardNSXT(
-	vmCtx pkgctx.VirtualMachineContext,
-	client ctrlclient.Client,
-	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
-	ethCards object.VirtualDeviceList) int {
-
-	networkName := interfaceSpec.Network.Name
-
-	vnetIf := &ncpv1alpha1.VirtualNetworkInterface{}
-	vnetIfKey := types.NamespacedName{
-		Namespace: vmCtx.VM.Namespace,
-		Name:      NCPCRName(vmCtx.VM.Name, networkName, interfaceSpec.Name, true),
-	}
-
-	// Check if a networkIf object exists with the older (v1a1) naming convention.
-	if err := client.Get(vmCtx, vnetIfKey, vnetIf); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return -1
-		}
-
-		// If NotFound set the vnetIf to use the new v1a2 naming convention.
-		vnetIf.ObjectMeta = metav1.ObjectMeta{
-			Name:      NCPCRName(vmCtx.VM.Name, networkName, interfaceSpec.Name, false),
-			Namespace: vmCtx.VM.Namespace,
-		}
-
-		if err := client.Get(vmCtx, ctrlclient.ObjectKeyFromObject(vnetIf), vnetIf); err != nil {
-			return -1
-		}
-	}
-
-	return findMatchingEthCardNCPNetIf(vnetIf, ethCards)
-}
-
 func findMatchingEthCardNCPNetIf(
 	netIf *ncpv1alpha1.VirtualNetworkInterface,
 	ethCards object.VirtualDeviceList) int {
@@ -356,26 +247,6 @@ func findMatchingEthCardNCPNetIf(
 	}
 
 	return -1
-}
-
-func findMatchingEthCardVPC(
-	vmCtx pkgctx.VirtualMachineContext,
-	client ctrlclient.Client,
-	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
-	ethCards object.VirtualDeviceList) int {
-
-	subnetPort := &vpcv1alpha1.SubnetPort{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: vmCtx.VM.Namespace,
-			Name:      VPCCRName(vmCtx.VM.Name, interfaceSpec.Network.Name, interfaceSpec.Name),
-		},
-	}
-
-	if err := client.Get(vmCtx, ctrlclient.ObjectKeyFromObject(subnetPort), subnetPort); err != nil {
-		return -1
-	}
-
-	return findMatchingEthCardVPCSubnetPort(subnetPort, ethCards)
 }
 
 func findMatchingEthCardVPCSubnetPort(
@@ -403,37 +274,6 @@ func findMatchingEthCardVPCSubnetPort(
 
 		// TODO: Relax this to check during VPC backup/restore.
 		if ethCard.ExternalId == subnetPort.Status.Attachment.ID {
-			return i
-		}
-	}
-
-	return -1
-}
-
-func findMatchingEthCardNamed(
-	_ pkgctx.VirtualMachineContext,
-	_ ctrlclient.Client,
-	interfaceSpec vmopv1.VirtualMachineNetworkInterfaceSpec,
-	ethCards object.VirtualDeviceList) int {
-
-	if interfaceSpec.Network == nil || interfaceSpec.Network.Name == "" {
-		return -1
-	}
-
-	for i, dev := range ethCards {
-		bEthCard, ok := dev.(vimtypes.BaseVirtualEthernetCard)
-		if !ok {
-			continue
-		}
-
-		if mac := interfaceSpec.MACAddr; mac != "" {
-			if !strings.EqualFold(mac, bEthCard.GetVirtualEthernetCard().MacAddress) {
-				continue
-			}
-		}
-
-		network, ok := dev.GetVirtualDevice().Backing.(*vimtypes.VirtualEthernetCardNetworkBackingInfo)
-		if ok && network.DeviceName == interfaceSpec.Network.Name {
 			return i
 		}
 	}

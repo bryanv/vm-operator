@@ -16302,13 +16302,25 @@ spec:
                             newly-requested slot on the VM's next reconcile. The new device has a
                             new identity -- a new key, and, for an automatically assigned MAC
                             address, a new MAC address (and therefore possibly a new DHCP-assigned
-                            IP) -- and the change does not take effect while the VM stays powered
-                            on.
+                            IP).
 
-                            Note that once this field is set, other changes to the interface --
-                            such as re-pointing it at a different network -- are likewise applied
-                            by replacing the device at this unit number rather than by modifying
-                            it in place, and so carry the same new-key/new-MAC caveat.
+                            How other changes to an interface with this field set -- such as
+                            re-pointing it at a different network -- are applied depends on whether
+                            the Supervisor supports network hot plug:
+
+                            - Without network hot plug support, such changes are likewise applied by
+                              replacing the device at this unit number rather than by modifying it
+                              in place, and so carry the same new-key/new-MAC caveat. Neither these
+                              changes nor a change to this field take effect while the VM stays
+                              powered on.
+
+                            - With network hot plug support, re-pointing the interface at a
+                              different network edits its existing device in place where supported,
+                              keeping its unit number, device key, and, where it remains valid for
+                              the new network, its MAC address. A change to this field remains a
+                              replacement. Changes the platform cannot apply to a powered-on VM wait
+                              until the VM is powered off; the VM is never power-cycled
+                              automatically.
                           format: int32
                           maximum: 16
                           minimum: 7
@@ -17779,13 +17791,101 @@ spec:
                       (FQDN), it simply depends on what is reported by the guest.
                     type: string
                   interfaces:
-                    description: Interfaces describes the status of the VM's network
-                      interfaces.
+                    description: |-
+                      Interfaces describes the status of the VM's network interfaces.
+
+                      Without network hot plug support on the Supervisor, entries appear only
+                      for interfaces reported by VMware Tools in guest info.
+
+                      With network hot plug support on the Supervisor, there is one entry for
+                      each desired network interface, in the order of the VM's desired
+                      network interface list, whether or not VMware Tools reports it. Entries
+                      for observed virtual devices that do not correspond to a desired
+                      interface follow, without a name.
                     items:
                       description: |-
                         VirtualMachineNetworkInterfaceStatus describes the observed state of a
                         VM's network interface.
                       properties:
+                        conditions:
+                          description: |-
+                            Conditions describes the observed conditions of this network
+                            interface. The condition types are:
+
+                            - ProviderReady: the interface's network provider resources and
+                              backing data are resolved.
+                            - HardwareReady: the interface's virtual device type, attachment, and
+                              connection policy match the desired state.
+                            - Ready: both ProviderReady and HardwareReady are true. Ready describes
+                              the provider and virtual hardware only; it makes no promise of guest
+                              IP configuration or reachability.
+                            - GuestInfoValid: the guest information reported by VMware Tools for
+                              this interface passes the current identity checks against the
+                              observed virtual device and attachment. Guest IP and DNS fields for
+                              this interface are published only when this condition is true.
+
+                            Please note this field is populated only when the Supervisor supports
+                            network hot plug.
+                          items:
+                            description: Condition contains details for one aspect
+                              of the current state of this API Resource.
+                            properties:
+                              lastTransitionTime:
+                                description: |-
+                                  lastTransitionTime is the last time the condition transitioned from one status to another.
+                                  This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                                format: date-time
+                                type: string
+                              message:
+                                description: |-
+                                  message is a human readable message indicating details about the transition.
+                                  This may be an empty string.
+                                maxLength: 32768
+                                type: string
+                              observedGeneration:
+                                description: |-
+                                  observedGeneration represents the .metadata.generation that the condition was set based upon.
+                                  For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                                  with respect to the current state of the instance.
+                                format: int64
+                                minimum: 0
+                                type: integer
+                              reason:
+                                description: |-
+                                  reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                                  Producers of specific condition types may define expected values and meanings for this field,
+                                  and whether the values are considered a guaranteed API.
+                                  The value should be a CamelCase string.
+                                  This field may not be empty.
+                                maxLength: 1024
+                                minLength: 1
+                                pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                                type: string
+                              status:
+                                description: status of the condition, one of True,
+                                  False, Unknown.
+                                enum:
+                                - "True"
+                                - "False"
+                                - Unknown
+                                type: string
+                              type:
+                                description: type of condition in CamelCase or in
+                                  foo.example.com/CamelCase.
+                                maxLength: 316
+                                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                                type: string
+                            required:
+                            - lastTransitionTime
+                            - message
+                            - reason
+                            - status
+                            - type
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - type
+                          x-kubernetes-list-type: map
                         deviceKey:
                           description: |-
                             DeviceKey describes the unique hardware device key of this network
@@ -17833,6 +17933,39 @@ spec:
                               items:
                                 type: string
                               type: array
+                          type: object
+                        hardware:
+                          description: |-
+                            Hardware describes the observed state of this interface's virtual
+                            device, as reported by vSphere independently of VMware Tools.
+
+                            This field is set only when a virtual device has been definitively
+                            matched to this interface and observed. It is unset while no device
+                            has been observed, such as before a pending interface's device is
+                            added; desired values are never copied into it.
+
+                            Please note this field is populated only when the Supervisor supports
+                            network hot plug.
+                          properties:
+                            connected:
+                              description: |-
+                                Connected describes whether the interface's virtual device is currently
+                                connected. This field is unset when the runtime connection state is not
+                                meaningful, such as when the VM is powered off.
+                              type: boolean
+                            macAddress:
+                              description: |-
+                                MACAddress describes the MAC address of the interface's virtual device
+                                as configured in vSphere. Unlike the guest-reported MAC address in
+                                ip.macAddr, this value is available without VMware Tools.
+                              maxLength: 17
+                              pattern: ^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$
+                              type: string
+                            startConnected:
+                              description: |-
+                                StartConnected describes whether the interface's virtual device is
+                                configured to connect when the VM is powered on.
+                              type: boolean
                           type: object
                         ip:
                           description: IP describes the observed state of the interface's
@@ -18006,9 +18139,15 @@ spec:
                             VM's desired network interface list, and reflects the slot actually
                             observed in vSphere even when it differs from the spec value.
 
-                            Please note this field only appears for interfaces reported by VMware
-                            Tools in guest info; a VM without Tools running has no interface status
-                            entries at all.
+                            Without network hot plug support on the Supervisor, this field only
+                            appears for interfaces reported by VMware Tools in guest info; a VM
+                            without Tools running has no interface status entries at all.
+
+                            With network hot plug support on the Supervisor, every desired network
+                            interface has a status entry whether or not VMware Tools reports it,
+                            and this field is set whenever the interface's virtual device has been
+                            observed. It is unset while no device has been observed for the
+                            interface, such as before a pending interface's device is added.
                           format: int32
                           type: integer
                         vmxnet3:

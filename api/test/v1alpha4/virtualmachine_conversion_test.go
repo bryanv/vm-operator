@@ -588,6 +588,28 @@ func TestVirtualMachineConversion(t *testing.T) {
 										UPTv2InactiveReasonVM:    []string{"vm-reason"},
 										UPTv2InactiveReasonOther: []string{"other-reason"},
 									},
+									Hardware: &vmopv1.VirtualMachineNetworkInterfaceHardwareStatus{
+										MACAddress:     "00:50:56:aa:bb:cc",
+										Connected:      ptrOf(false),
+										StartConnected: ptrOf(true),
+									},
+									Conditions: []metav1.Condition{
+										{
+											Type:               vmopv1.VirtualMachineNetworkInterfaceConditionReady,
+											Status:             metav1.ConditionTrue,
+											Reason:             string(metav1.ConditionTrue),
+											ObservedGeneration: 12,
+											LastTransitionTime: metav1.NewTime(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)),
+										},
+										{
+											Type:               vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+											Status:             metav1.ConditionUnknown,
+											Reason:             vmopv1.VirtualMachineNetworkInterfaceNotReportedReason,
+											Message:            "guest has not reported this interface",
+											ObservedGeneration: 12,
+											LastTransitionTime: metav1.NewTime(time.Date(2026, 10, 18, 12, 0, 1, 0, time.UTC)),
+										},
+									},
 								},
 							},
 						},
@@ -907,6 +929,102 @@ func TestVirtualMachineConversion(t *testing.T) {
 				}
 				hubSpokeHub(g, &hub, &vmopv1.VirtualMachine{}, &vmopv1a4.VirtualMachine{})
 			})
+		})
+	})
+
+	t.Run("status.network.interfaces hardware and conditions", func(t *testing.T) {
+		// The per-interface hardware and conditions status fields exist only in
+		// the hub. Status is restored wholesale from the conversion annotation,
+		// so a status written through this version without those fields must
+		// not erase them, and a spoke without the annotation must not
+		// fabricate them.
+		newHub := func() *vmopv1.VirtualMachine {
+			return &vmopv1.VirtualMachine{
+				Status: vmopv1.VirtualMachineStatus{
+					Network: &vmopv1.VirtualMachineNetworkStatus{
+						Interfaces: []vmopv1.VirtualMachineNetworkInterfaceStatus{
+							{
+								Name:       "eth0",
+								DeviceKey:  4000,
+								UnitNumber: ptrOf(int32(7)),
+								Hardware: &vmopv1.VirtualMachineNetworkInterfaceHardwareStatus{
+									MACAddress:     "00:50:56:aa:bb:cc",
+									StartConnected: ptrOf(false),
+								},
+								Conditions: []metav1.Condition{
+									{
+										Type:               vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady,
+										Status:             metav1.ConditionFalse,
+										Reason:             vmopv1.VirtualMachineNetworkInterfaceReplacementPendingReason,
+										Message:            "eth0 remains on the old attachment",
+										ObservedGeneration: 3,
+										LastTransitionTime: metav1.NewTime(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)),
+									},
+								},
+							},
+							{
+								// An unmanaged adapter has no name.
+								DeviceKey: 4001,
+								Hardware: &vmopv1.VirtualMachineNetworkInterfaceHardwareStatus{
+									MACAddress: "00:50:56:aa:bb:cd",
+									Connected:  ptrOf(true),
+								},
+							},
+						},
+					},
+				},
+			}
+		}
+
+		t.Run("spoke status write without the fields", func(t *testing.T) {
+			g := NewWithT(t)
+
+			hub := newHub()
+			var spoke vmopv1a4.VirtualMachine
+			g.Expect(spoke.ConvertFrom(hub)).To(Succeed())
+			g.Expect(spoke.Status.Network).NotTo(BeNil())
+			g.Expect(spoke.Status.Network.Interfaces).To(HaveLen(2))
+
+			// Simulate a status write through this version that rebuilds the
+			// interface list without the hub-only fields.
+			spoke.Status.Network.Interfaces = []vmopv1a4.VirtualMachineNetworkInterfaceStatus{
+				{Name: "eth0", DeviceKey: 4000},
+				{DeviceKey: 4001},
+			}
+
+			var hubAfter vmopv1.VirtualMachine
+			g.Expect(spoke.ConvertTo(&hubAfter)).To(Succeed())
+			g.Expect(hubAfter.Status.Network).NotTo(BeNil())
+			g.Expect(hubAfter.Status.Network.Interfaces).To(HaveLen(2))
+			for i := range hub.Status.Network.Interfaces {
+				exp, act := hub.Status.Network.Interfaces[i], hubAfter.Status.Network.Interfaces[i]
+				g.Expect(act.Name).To(Equal(exp.Name))
+				g.Expect(act.Hardware).To(Equal(exp.Hardware))
+				g.Expect(apiequality.Semantic.DeepEqual(exp.Conditions, act.Conditions)).To(BeTrue(), cmp.Diff(exp.Conditions, act.Conditions))
+			}
+			// Absent and false hardware.connected remain distinct.
+			g.Expect(hubAfter.Status.Network.Interfaces[0].Hardware.Connected).To(BeNil())
+			g.Expect(hubAfter.Status.Network.Interfaces[0].Hardware.StartConnected).To(Equal(ptrOf(false)))
+		})
+
+		t.Run("spoke without conversion annotation", func(t *testing.T) {
+			g := NewWithT(t)
+
+			var spoke vmopv1a4.VirtualMachine
+			g.Expect(spoke.ConvertFrom(newHub())).To(Succeed())
+			spoke.SetAnnotations(nil)
+
+			var hubAfter vmopv1.VirtualMachine
+			g.Expect(spoke.ConvertTo(&hubAfter)).To(Succeed())
+			g.Expect(hubAfter.Status.Network).NotTo(BeNil())
+			g.Expect(hubAfter.Status.Network.Interfaces).To(HaveLen(2))
+			for _, iface := range hubAfter.Status.Network.Interfaces {
+				g.Expect(iface.Hardware).To(BeNil())
+				g.Expect(iface.Conditions).To(BeNil())
+			}
+			g.Expect(hubAfter.Status.Network.Interfaces[0].Name).To(Equal("eth0"))
+			g.Expect(hubAfter.Status.Network.Interfaces[0].DeviceKey).To(Equal(int32(4000)))
+			g.Expect(hubAfter.Status.Network.Interfaces[1].DeviceKey).To(Equal(int32(4001)))
 		})
 	})
 

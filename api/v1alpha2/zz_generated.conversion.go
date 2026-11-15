@@ -2800,6 +2800,8 @@ func autoConvert_v1alpha6_VirtualMachineNetworkInterfaceStatus_To_v1alpha2_Virtu
 	out.DNS = (*VirtualMachineNetworkDNSStatus)(unsafe.Pointer(in.DNS))
 	// WARNING: in.VNUMANodeID requires manual conversion: does not exist in peer-type
 	// WARNING: in.VMXNet3 requires manual conversion: does not exist in peer-type
+	// WARNING: in.Hardware requires manual conversion: does not exist in peer-type
+	// WARNING: in.Conditions requires manual conversion: does not exist in peer-type
 	return nil
 }
 

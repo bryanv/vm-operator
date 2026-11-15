@@ -502,6 +502,8 @@ var _ = Describe("Install", func() {
 				},
 				Entry("currentSnapshot", "currentSnapshot"),
 				Entry("network interface unitNumber", "network.interfaces.[].unitNumber"),
+				Entry("network interface conditions", "network.interfaces.[].conditions"),
+				Entry("network interface hardware", "network.interfaces.[].hardware"),
 				Entry("rootSnapshots", "rootSnapshots"),
 				Entry("policies", "policies"),
 				Entry("volumes diskMode", "volumes.[].diskMode"),
@@ -863,6 +865,40 @@ var _ = Describe("Install", func() {
 				},
 				Entry("network interface unitNumber", "network.interfaces.[].unitNumber"),
 			)
+
+			DescribeTable("vm api should not have network hot plug status fields",
+				func(field string) {
+					fields := statusFieldPath(field)
+					assertField(false, fields...)
+				},
+				Entry("network interface conditions", "network.interfaces.[].conditions"),
+				Entry("network interface hardware", "network.interfaces.[].hardware"),
+			)
+		})
+
+		When("VM network hot plug capability is enabled", func() {
+			BeforeEach(func() {
+				pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkHotPlug = true
+				})
+			})
+
+			DescribeTable("vm api should have status fields",
+				func(field string) {
+					fields := statusFieldPath(field)
+					assertField(true, fields...)
+				},
+				Entry("network interface conditions", "network.interfaces.[].conditions"),
+				Entry("network interface hardware", "network.interfaces.[].hardware"),
+			)
+
+			DescribeTable("vm api should not have network unit number fields",
+				func(field string) {
+					assertField(false, specFieldPath(field)...)
+					assertField(false, statusFieldPath(field)...)
+				},
+				Entry("network interface unitNumber", "network.interfaces.[].unitNumber"),
+			)
 		})
 
 		When("VM shared disks (OracleRAC) is enabled", func() {
@@ -1039,6 +1075,7 @@ var _ = Describe("Install", func() {
 					config.Features.K8sWorkloadMgmtAPI = true
 					config.Features.TaggingAPI = true
 					config.Features.VMNetworkUnitNumbers = true
+					config.Features.VMNetworkHotPlug = true
 				})
 			})
 			It("should get the expected crds", func() {
@@ -1088,6 +1125,7 @@ var _ = Describe("Install", func() {
 						TaggingAPI:                   true,
 						VMNetworkUnitNumbers:         true,
 						BringYourOwnNetworkInterface: true,
+						VMNetworkHotPlug:             true,
 					},
 				}),
 				client,
@@ -1205,6 +1243,8 @@ var _ = Describe("Install", func() {
 					},
 					Entry("currentSnapshot", "currentSnapshot"),
 					Entry("network interface unitNumber", "network.interfaces.[].unitNumber"),
+					Entry("network interface conditions", "network.interfaces.[].conditions"),
+					Entry("network interface hardware", "network.interfaces.[].hardware"),
 					Entry("rootSnapshots", "rootSnapshots"),
 					Entry("policies", "policies"),
 					Entry("volumes diskMode", "volumes.[].diskMode"),
@@ -1283,6 +1323,8 @@ var _ = Describe("Install", func() {
 					},
 					Entry("currentSnapshot", "currentSnapshot"),
 					Entry("network interface unitNumber", "network.interfaces.[].unitNumber"),
+					Entry("network interface conditions", "network.interfaces.[].conditions"),
+					Entry("network interface hardware", "network.interfaces.[].hardware"),
 					Entry("rootSnapshots", "rootSnapshots"),
 					Entry("policies", "policies"),
 					Entry("volumes diskMode", "volumes.[].diskMode"),
@@ -1363,6 +1405,8 @@ var _ = Describe("Install", func() {
 						},
 						Entry("currentSnapshot", "currentSnapshot"),
 						Entry("network interface unitNumber", "network.interfaces.[].unitNumber"),
+						Entry("network interface conditions", "network.interfaces.[].conditions"),
+						Entry("network interface hardware", "network.interfaces.[].hardware"),
 						Entry("rootSnapshots", "rootSnapshots"),
 						Entry("policies", "policies"),
 						Entry("volumes diskMode", "volumes.[].diskMode"),

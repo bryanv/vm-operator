@@ -462,6 +462,19 @@ func Install( //nolint:gocyclo
 						}
 					}
 
+					if !features.VMNetworkHotPlug {
+						if err := removeFields(
+							ctx,
+							k,
+							obj,
+							shouldRemoveFields,
+							statusFieldPath("network", "interfaces", "[]", "conditions"),
+							statusFieldPath("network", "interfaces", "[]", "hardware")); err != nil {
+
+							return err
+						}
+					}
+
 					if !features.WorkloadIPv6 {
 						if err := removeFields(
 							ctx,

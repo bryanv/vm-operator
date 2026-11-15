@@ -11,6 +11,100 @@ import (
 	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
 )
 
+const (
+	// VirtualMachineNetworkInterfaceConditionProviderReady is the condition
+	// type on status.network.interfaces[].conditions that indicates whether
+	// the interface's required network provider resources and backing data
+	// are resolved.
+	VirtualMachineNetworkInterfaceConditionProviderReady = "ProviderReady"
+
+	// VirtualMachineNetworkInterfaceConditionHardwareReady is the condition
+	// type on status.network.interfaces[].conditions that indicates whether
+	// the interface's observed virtual device type, attachment, and
+	// connection policy match the desired state.
+	VirtualMachineNetworkInterfaceConditionHardwareReady = "HardwareReady"
+
+	// VirtualMachineNetworkInterfaceConditionReady is the condition type on
+	// status.network.interfaces[].conditions that is true when both
+	// VirtualMachineNetworkInterfaceConditionProviderReady and
+	// VirtualMachineNetworkInterfaceConditionHardwareReady are true. It
+	// describes readiness at the provider and virtual hardware boundary only,
+	// and makes no promise of guest IP configuration or reachability.
+	VirtualMachineNetworkInterfaceConditionReady = ReadyConditionType
+
+	// VirtualMachineNetworkInterfaceConditionGuestInfoValid is the condition
+	// type on status.network.interfaces[].conditions that indicates whether
+	// the guest information reported by VMware Tools for the interface passes
+	// the current identity checks against its observed virtual device and
+	// attachment.
+	VirtualMachineNetworkInterfaceConditionGuestInfoValid = "GuestInfoValid"
+)
+
+// Reasons used on status.network.interfaces[].conditions. When a change to
+// an interface cannot be applied while the VM is powered on, the conditions
+// use VirtualMachinePowerOffRequiredReason.
+const (
+	// VirtualMachineNetworkInterfaceProviderPendingReason indicates the
+	// interface is waiting on its network provider resources, such as a
+	// port allocation, to become ready.
+	VirtualMachineNetworkInterfaceProviderPendingReason = "ProviderPending"
+
+	// VirtualMachineNetworkInterfaceDeviceNotPresentReason indicates no
+	// virtual device has been observed for the interface.
+	VirtualMachineNetworkInterfaceDeviceNotPresentReason = "DeviceNotPresent"
+
+	// VirtualMachineNetworkInterfaceHardwarePendingReason indicates a change
+	// to the interface's virtual device, such as a device type replacement,
+	// has not yet been applied.
+	VirtualMachineNetworkInterfaceHardwarePendingReason = "HardwarePending"
+
+	// VirtualMachineNetworkInterfaceAttachmentPendingReason indicates the
+	// interface's virtual device is not yet attached to its desired network.
+	VirtualMachineNetworkInterfaceAttachmentPendingReason = "AttachmentPending"
+
+	// VirtualMachineNetworkInterfaceReplacementPendingReason indicates the
+	// interface's virtual device remains on its previous attachment while the
+	// replacement attachment is pending.
+	VirtualMachineNetworkInterfaceReplacementPendingReason = "ReplacementPending"
+
+	// VirtualMachineNetworkInterfaceRemovalPendingReason indicates a virtual
+	// device whose interface was removed from the desired state has not yet
+	// been removed.
+	VirtualMachineNetworkInterfaceRemovalPendingReason = "RemovalPending"
+
+	// VirtualMachineNetworkInterfaceDisconnectFailedReason indicates an
+	// attempt to disconnect the interface's virtual device failed.
+	VirtualMachineNetworkInterfaceDisconnectFailedReason = "DisconnectFailed"
+
+	// VirtualMachineNetworkInterfaceMACMismatchReason indicates the guest
+	// reported a MAC address for the interface that contradicts the MAC
+	// address of its observed virtual device.
+	VirtualMachineNetworkInterfaceMACMismatchReason = "MACMismatch"
+
+	// VirtualMachineNetworkInterfaceNotReportedReason indicates VMware Tools
+	// has not reported guest information for the interface's virtual device.
+	VirtualMachineNetworkInterfaceNotReportedReason = "NotReported"
+
+	// VirtualMachineNetworkInterfaceToolsUnavailableReason indicates guest
+	// information cannot be validated because VMware Tools is unavailable.
+	VirtualMachineNetworkInterfaceToolsUnavailableReason = "ToolsUnavailable"
+
+	// VirtualMachineNetworkInterfaceVMNotRunningReason indicates guest
+	// information cannot be validated because the VM is not running.
+	VirtualMachineNetworkInterfaceVMNotRunningReason = "VMNotRunning"
+
+	// VirtualMachineNetworkInterfaceAwaitingGuestReportReason indicates
+	// previously reported guest information was invalidated by a change to
+	// the interface's attachment or virtual device, and a revalidated report
+	// has not yet been observed.
+	VirtualMachineNetworkInterfaceAwaitingGuestReportReason = "AwaitingGuestReport"
+
+	// VirtualMachineNetworkInterfaceGuestReportUnverifiedReason indicates
+	// guest information has remained unvalidated beyond the documented
+	// observation interval. It changes feedback only, not validity.
+	VirtualMachineNetworkInterfaceGuestReportUnverifiedReason = "GuestReportUnverified"
+)
+
 // VirtualMachineNetworkRouteSpec defines a static route for a guest.
 type VirtualMachineNetworkRouteSpec struct {
 	// To is either "default", or an IP4 or IP6 address.
@@ -258,13 +352,25 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	// newly-requested slot on the VM's next reconcile. The new device has a
 	// new identity -- a new key, and, for an automatically assigned MAC
 	// address, a new MAC address (and therefore possibly a new DHCP-assigned
-	// IP) -- and the change does not take effect while the VM stays powered
-	// on.
+	// IP).
 	//
-	// Note that once this field is set, other changes to the interface --
-	// such as re-pointing it at a different network -- are likewise applied
-	// by replacing the device at this unit number rather than by modifying
-	// it in place, and so carry the same new-key/new-MAC caveat.
+	// How other changes to an interface with this field set -- such as
+	// re-pointing it at a different network -- are applied depends on whether
+	// the Supervisor supports network hot plug:
+	//
+	// - Without network hot plug support, such changes are likewise applied by
+	//   replacing the device at this unit number rather than by modifying it
+	//   in place, and so carry the same new-key/new-MAC caveat. Neither these
+	//   changes nor a change to this field take effect while the VM stays
+	//   powered on.
+	//
+	// - With network hot plug support, re-pointing the interface at a
+	//   different network edits its existing device in place where supported,
+	//   keeping its unit number, device key, and, where it remains valid for
+	//   the new network, its MAC address. A change to this field remains a
+	//   replacement. Changes the platform cannot apply to a powered-on VM wait
+	//   until the VM is powered off; the VM is never power-cycled
+	//   automatically.
 	UnitNumber *int32 `json:"unitNumber,omitempty"`
 
 	// +optional
@@ -772,9 +878,15 @@ type VirtualMachineNetworkInterfaceStatus struct {
 	// VM's desired network interface list, and reflects the slot actually
 	// observed in vSphere even when it differs from the spec value.
 	//
-	// Please note this field only appears for interfaces reported by VMware
-	// Tools in guest info; a VM without Tools running has no interface status
-	// entries at all.
+	// Without network hot plug support on the Supervisor, this field only
+	// appears for interfaces reported by VMware Tools in guest info; a VM
+	// without Tools running has no interface status entries at all.
+	//
+	// With network hot plug support on the Supervisor, every desired network
+	// interface has a status entry whether or not VMware Tools reports it,
+	// and this field is set whenever the interface's virtual device has been
+	// observed. It is unset while no device has been observed for the
+	// interface, such as before a pending interface's device is added.
 	UnitNumber *int32 `json:"unitNumber,omitempty"`
 
 	// +optional
@@ -798,6 +910,69 @@ type VirtualMachineNetworkInterfaceStatus struct {
 	// VMXNet3 reflects the observed VMXNet3-specific device properties for
 	// this interface. Unset if the interface is not a VMXNet3 adapter.
 	VMXNet3 *VirtualMachineNetworkInterfaceVMXNet3Status `json:"vmxnet3,omitempty"`
+
+	// +optional
+
+	// Hardware describes the observed state of this interface's virtual
+	// device, as reported by vSphere independently of VMware Tools.
+	//
+	// This field is set only when a virtual device has been definitively
+	// matched to this interface and observed. It is unset while no device
+	// has been observed, such as before a pending interface's device is
+	// added; desired values are never copied into it.
+	//
+	// Please note this field is populated only when the Supervisor supports
+	// network hot plug.
+	Hardware *VirtualMachineNetworkInterfaceHardwareStatus `json:"hardware,omitempty"`
+
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+
+	// Conditions describes the observed conditions of this network
+	// interface. The condition types are:
+	//
+	// - ProviderReady: the interface's network provider resources and
+	//   backing data are resolved.
+	// - HardwareReady: the interface's virtual device type, attachment, and
+	//   connection policy match the desired state.
+	// - Ready: both ProviderReady and HardwareReady are true. Ready describes
+	//   the provider and virtual hardware only; it makes no promise of guest
+	//   IP configuration or reachability.
+	// - GuestInfoValid: the guest information reported by VMware Tools for
+	//   this interface passes the current identity checks against the
+	//   observed virtual device and attachment. Guest IP and DNS fields for
+	//   this interface are published only when this condition is true.
+	//
+	// Please note this field is populated only when the Supervisor supports
+	// network hot plug.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// VirtualMachineNetworkInterfaceHardwareStatus describes the observed state
+// of a network interface's virtual device, as reported by vSphere.
+type VirtualMachineNetworkInterfaceHardwareStatus struct {
+	// +optional
+	// +kubebuilder:validation:MaxLength=17
+	// +kubebuilder:validation:Pattern="^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$"
+
+	// MACAddress describes the MAC address of the interface's virtual device
+	// as configured in vSphere. Unlike the guest-reported MAC address in
+	// ip.macAddr, this value is available without VMware Tools.
+	MACAddress string `json:"macAddress,omitempty"`
+
+	// +optional
+
+	// Connected describes whether the interface's virtual device is currently
+	// connected. This field is unset when the runtime connection state is not
+	// meaningful, such as when the VM is powered off.
+	Connected *bool `json:"connected,omitempty"`
+
+	// +optional
+
+	// StartConnected describes whether the interface's virtual device is
+	// configured to connect when the VM is powered on.
+	StartConnected *bool `json:"startConnected,omitempty"`
 }
 
 // VirtualMachineNetworkInterfaceVMXNet3Status describes observed VMXNet3 device
@@ -914,6 +1089,15 @@ type VirtualMachineNetworkStatus struct {
 	// +optional
 
 	// Interfaces describes the status of the VM's network interfaces.
+	//
+	// Without network hot plug support on the Supervisor, entries appear only
+	// for interfaces reported by VMware Tools in guest info.
+	//
+	// With network hot plug support on the Supervisor, there is one entry for
+	// each desired network interface, in the order of the VM's desired
+	// network interface list, whether or not VMware Tools reports it. Entries
+	// for observed virtual devices that do not correspond to a desired
+	// interface follow, without a name.
 	Interfaces []VirtualMachineNetworkInterfaceStatus `json:"interfaces,omitempty"`
 
 	// +optional

@@ -18,7 +18,7 @@ NIC tuning status later looks up an existing status entry by interface name and 
 
 ## Proposed public fields
 
-Q6 confirms the API version before these fields are implemented. The default is spec 008's precedent: extend v1alpha6 `VirtualMachineNetworkInterfaceStatus`, and remove the new fields from the installed CRD in `pkg/crd/crd.go` while the hot-plug capability is absent, as is done for `unitNumber`. Add:
+Q6 is resolved (2026-11-15) with spec 008's precedent: extend v1alpha6 `VirtualMachineNetworkInterfaceStatus`, and remove the new fields from the installed CRD in `pkg/crd/crd.go` while the hot-plug capability is absent, as is done for `unitNumber`. T023 adds:
 
 | Field | Type and validation | Meaning |
 |---|---|---|
@@ -151,7 +151,7 @@ Unknown guest data on one interface does not withdraw valid primary addresses fr
 
 ## API compatibility and verification
 
-Q6 confirms v1alpha6 (spec 008 precedent) or chooses the next version. Generate deepcopy, conversions, and CRDs. Document whether older APIs retain their historical Tools-driven projection or expose compatible subsets of spec-first entries; do not accidentally change that contract via generated conversion alone.
+Q6 is resolved: v1alpha6, following spec 008's precedent. Deepcopy, conversions, and CRDs are regenerated. Older APIs (v1alpha2–v1alpha5) expose the compatible subset of each interface entry, including spec-first entries when the capability is enabled: every entry converts with the fields that version defines, and the hub-only `conditions` and `hardware` fields are preserved by the existing whole-status restore from the conversion annotation. Conversion code is unchanged.
 
 Test conversion annotation round trips, annotation-lossy old clients, status-subresource patches, and conflicts. Existing older conversions restore whole status from conversion data; new fields must not be erased, nor may old restoration data overwrite fresher guest validity. Never use restored condition values as evidence that an attachment's report is valid. Test absent versus false `hardware.connected`, condition list merging, unmanaged unnamed entries, and no fake observed device/unit when hardware is absent.
 

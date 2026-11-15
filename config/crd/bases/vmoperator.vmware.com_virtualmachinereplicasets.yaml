@@ -10572,13 +10572,25 @@ spec:
                                     newly-requested slot on the VM's next reconcile. The new device has a
                                     new identity -- a new key, and, for an automatically assigned MAC
                                     address, a new MAC address (and therefore possibly a new DHCP-assigned
-                                    IP) -- and the change does not take effect while the VM stays powered
-                                    on.
+                                    IP).
 
-                                    Note that once this field is set, other changes to the interface --
-                                    such as re-pointing it at a different network -- are likewise applied
-                                    by replacing the device at this unit number rather than by modifying
-                                    it in place, and so carry the same new-key/new-MAC caveat.
+                                    How other changes to an interface with this field set -- such as
+                                    re-pointing it at a different network -- are applied depends on whether
+                                    the Supervisor supports network hot plug:
+
+                                    - Without network hot plug support, such changes are likewise applied by
+                                      replacing the device at this unit number rather than by modifying it
+                                      in place, and so carry the same new-key/new-MAC caveat. Neither these
+                                      changes nor a change to this field take effect while the VM stays
+                                      powered on.
+
+                                    - With network hot plug support, re-pointing the interface at a
+                                      different network edits its existing device in place where supported,
+                                      keeping its unit number, device key, and, where it remains valid for
+                                      the new network, its MAC address. A change to this field remains a
+                                      replacement. Changes the platform cannot apply to a powered-on VM wait
+                                      until the VM is powered off; the VM is never power-cycled
+                                      automatically.
                                   format: int32
                                   maximum: 16
                                   minimum: 7

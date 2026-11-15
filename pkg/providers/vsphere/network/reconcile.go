@@ -17,8 +17,6 @@ import (
 	vpcv1alpha1 "github.com/vmware-tanzu/nsx-operator/pkg/apis/vpc/v1alpha1"
 
 	ncpv1alpha1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
-
-	"github.com/vmware-tanzu/vm-operator/pkg/util/resize"
 )
 
 func ReconcileNetworkInterfaces(
@@ -140,47 +138,30 @@ func findExistingEthCardForOrphanedCR(
 	return -1
 }
 
+// FindMatchingEthCard returns the index of the first card in currentEthCards
+// that ethCard's attachment identity matches, or -1. It uses the identity
+// predicate MatchInterfaces uses. A standard network backing is compared by
+// its device name.
 func FindMatchingEthCard(
 	currentEthCards object.VirtualDeviceList,
 	ethCard vimtypes.BaseVirtualEthernetCard,
 ) int {
 	ethDev := ethCard.GetVirtualEthernetCard()
-	matchingIdx := -1
+
+	want := observedAttachment(ethDev)
+	if b, ok := ethDev.Backing.(*vimtypes.VirtualEthernetCardNetworkBackingInfo); ok && b.DeviceName != "" {
+		want.Backing.ID = b.DeviceName
+	}
 
 	for idx := range currentEthCards {
-		curDev := currentEthCards[idx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-
-		if ethDev.AddressType == string(vimtypes.VirtualEthernetCardMacTypeManual) {
-			if !strings.EqualFold(ethDev.MacAddress, curDev.MacAddress) {
-				continue
-			}
-		}
-
-		if ethDev.ExternalId != "" {
-			if ethDev.ExternalId != curDev.ExternalId {
-				continue
-			}
-		}
-
-		if curDev.Backing == nil {
+		have, ok := observeAdapter(currentEthCards[idx])
+		if !ok {
 			continue
 		}
-
-		var backingMatch bool
-		switch a := ethDev.Backing.(type) {
-		case *vimtypes.VirtualEthernetCardNetworkBackingInfo:
-			backingMatch = resize.MatchVirtualEthernetCardNetworkBackingInfo(a, curDev.Backing)
-		case *vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo:
-			backingMatch = resize.MatchVirtualEthernetCardDistributedVirtualPortBackingInfo(a, curDev.Backing)
-		case *vimtypes.VirtualEthernetCardOpaqueNetworkBackingInfo:
-			backingMatch = resize.MatchVirtualEthernetCardOpaqueNetworkBackingInfo(a, curDev.Backing)
-		}
-
-		if backingMatch {
-			matchingIdx = idx
-			break
+		if matches, _ := compareAttachment(want, have); matches {
+			return idx
 		}
 	}
 
-	return matchingIdx
+	return -1
 }

@@ -7,6 +7,7 @@ package network
 import (
 	"github.com/vmware/govmomi/object"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -29,4 +30,30 @@ func ObservedAdapterDeviceForTest(a ObservedAdapter) vimtypes.BaseVirtualDevice 
 // on i.
 func InfoOwnedObjectsForTest(i *Info) []ctrlclient.Object {
 	return i.owned
+}
+
+// NewObservedAdapterForTest normalizes dev the way Observe does.
+func NewObservedAdapterForTest(dev vimtypes.BaseVirtualDevice) ObservedAdapter {
+	a, _ := observeAdapter(dev)
+	return a
+}
+
+// SetInfoOwnedObjectsForTest sets the raw owned provider resources on i.
+func SetInfoOwnedObjectsForTest(i *Info, objs []ctrlclient.Object) {
+	i.owned = objs
+}
+
+// SetResolutionObjectForTest sets the raw provider resource retained on r.
+func SetResolutionObjectForTest(r *Resolution, obj ctrlclient.Object) {
+	r.obj = obj
+}
+
+// SetAdapterRecordInterfaceForTest replaces the operation record lookup and
+// returns a function that restores it.
+func SetAdapterRecordInterfaceForTest(
+	fn func(a ObservedAdapter, vmUID types.UID) (string, bool)) func() {
+
+	saved := adapterRecordInterface
+	adapterRecordInterface = fn
+	return func() { adapterRecordInterface = saved }
 }

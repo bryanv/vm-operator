@@ -107,6 +107,10 @@ type Info struct {
 	// observed device order.
 	Adapters []ObservedAdapter
 
+	// Disposition holds the disposition of every adapter, keyed by device
+	// key.
+	Disposition map[int32]AdapterDisposition
+
 	// Owned is the list of VM-owned provider resources from the list call.
 	Owned []ProviderRef
 

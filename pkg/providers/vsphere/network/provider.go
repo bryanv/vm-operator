@@ -114,8 +114,9 @@ type PrepareInput struct {
 // Observe reads the VM's network provider resources and virtual ethernet
 // cards and returns a normalized snapshot. It performs no writes and no
 // vCenter I/O: it lists the VM-owned provider resources, gets each desired
-// interface's provider resource by its expected name without creating it, and
-// normalizes the adapters from MoVM. A read failure sets Info.Complete to
+// interface's provider resource by its expected name without creating it,
+// normalizes the adapters from MoVM, and matches them with MatchInterfaces. A
+// read failure sets Info.Complete to
 // false and that interface's phase to Unknown; it is never returned as an
 // error so that status and shutdown still run.
 func Observe(ctx context.Context, in ObserveInput) *Info {
@@ -132,7 +133,8 @@ func Observe(ctx context.Context, in ObserveInput) *Info {
 // and is up to date, and returns a snapshot built by the same collection and
 // normalization code as Observe. It consumes the objects returned by the
 // create or patch calls directly, and resolves the vSphere network backing
-// of each Ready target. It never waits for a provider resource to become
+// of each Ready target. Its snapshot is matched with MatchInterfaces like
+// Observe's. It never waits for a provider resource to become
 // ready: a resource that is not ready yields a Pending interface.
 //
 // Per-interface outcomes, including failures, are retained on the returned
@@ -234,6 +236,10 @@ func (c collector) collect(ctx context.Context) (*Info, []error) {
 			}
 		}
 	}
+
+	// Match after the owned resources are listed because orphaned resources
+	// are matching evidence.
+	MatchInterfaces(ctx, info)
 
 	return info, errs
 }
@@ -730,39 +736,47 @@ func observeAdapters(moVM mo.VirtualMachine) ([]ObservedAdapter, bool) {
 
 	adapters := make([]ObservedAdapter, 0, len(ethCards))
 	for _, dev := range ethCards {
-		bEthCard, ok := dev.(vimtypes.BaseVirtualEthernetCard)
-		if !ok {
-			continue
+		if a, ok := observeAdapter(dev); ok {
+			adapters = append(adapters, a)
 		}
-		ethCard := bEthCard.GetVirtualEthernetCard()
-
-		a := ObservedAdapter{
-			Key:         ethCard.Key,
-			Type:        reflect.TypeOf(dev).Elem().Name(),
-			MAC:         strings.ToLower(ethCard.MacAddress),
-			AddressType: ethCard.AddressType,
-			Attachment:  observedAttachment(ethCard),
-			device:      dev,
-		}
-
-		if ethCard.UnitNumber != nil {
-			unitNumber := *ethCard.UnitNumber
-			a.UnitNumber = &unitNumber
-		}
-
-		if c := ethCard.Connectable; c != nil {
-			a.Connect = ConnectionState{
-				Present:           true,
-				Connected:         c.Connected,
-				StartConnected:    c.StartConnected,
-				AllowGuestControl: c.AllowGuestControl,
-			}
-		}
-
-		adapters = append(adapters, a)
 	}
 
 	return adapters, true
+}
+
+// observeAdapter normalizes one virtual ethernet card. It returns false when
+// the device is not a virtual ethernet card.
+func observeAdapter(dev vimtypes.BaseVirtualDevice) (ObservedAdapter, bool) {
+	bEthCard, ok := dev.(vimtypes.BaseVirtualEthernetCard)
+	if !ok {
+		return ObservedAdapter{}, false
+	}
+	ethCard := bEthCard.GetVirtualEthernetCard()
+
+	a := ObservedAdapter{
+		Key:         ethCard.Key,
+		Type:        reflect.TypeOf(dev).Elem().Name(),
+		MAC:         strings.ToLower(ethCard.MacAddress),
+		AddressType: ethCard.AddressType,
+		Attachment:  observedAttachment(ethCard),
+		device:      dev,
+	}
+
+	if ethCard.UnitNumber != nil {
+		unitNumber := *ethCard.UnitNumber
+		a.UnitNumber = &unitNumber
+	}
+
+	if c := ethCard.Connectable; c != nil {
+		a.Connect = ConnectionState{
+			Present:           true,
+			Connected:         c.Connected,
+			StartConnected:    c.StartConnected,
+			AllowGuestControl: c.AllowGuestControl,
+		}
+	}
+
+	return a, true
 }
 
 func observedAttachment(ethCard *vimtypes.VirtualEthernetCard) Attachment {

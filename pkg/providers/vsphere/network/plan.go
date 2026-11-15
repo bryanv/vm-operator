@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/vmware/govmomi/object"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
@@ -297,7 +296,7 @@ func BuildPlan(info *Info, in PlanInput) *Plan {
 	for i, action := range p.Actions {
 		switch action.Kind {
 		case ActionAdd, ActionReplace, ActionEdit:
-			card, err := newEthernetCard(info.Interfaces[i], in.CardBackings[action.Interface], in.UnitNumbers)
+			card, err := buildPlannedAdd(info.Interfaces[i], in)
 			if err != nil {
 				p.Actions[i] = deferred(action, PlanReasonDeviceChangeFailed, err.Error())
 				continue
@@ -567,52 +566,21 @@ func (p *Plan) legacyAttachmentEdit(a ObservedAdapter, newCard vimtypes.BaseVirt
 	return nil
 }
 
-// newEthernetCard builds the new card for a Ready interface the same way
-// CreateVirtualEthernetCard builds it from a Device: a VMXNET3 card with the
-// resolved backing and external ID, and the provider's MAC address as a
-// manual address or else a generated address. With unitNumbers, the card is
-// also placed at the interface's declared unit number, if any; its
-// controller key is left for vSphere to resolve.
-func newEthernetCard(
-	iface InterfaceState,
-	backing vimtypes.BaseVirtualDeviceBackingInfo,
-	unitNumbers bool) (vimtypes.BaseVirtualDevice, error) {
-
-	target := iface.Provider.Target
-	if target == nil {
-		return nil, fmt.Errorf("network interface %q has no target attachment", iface.Spec.Name)
+// buildPlannedAdd builds the new card for a Ready interface with BuildAdd.
+// With VMNetworkUnitNumbers, the card is placed at the interface's declared
+// unit number, if any. Today's update path never places an added card, so
+// vSphere could otherwise choose a different unit number, and the next pass
+// would replace the card again.
+func buildPlannedAdd(iface InterfaceState, in PlanInput) (vimtypes.BaseVirtualDevice, error) {
+	add := AddInput{
+		Interface: iface.Spec.Name,
+		Target:    iface.Provider.Target,
+		Backing:   in.CardBackings[iface.Spec.Name],
 	}
-	if backing == nil {
-		return nil, fmt.Errorf("network interface %q has no Ethernet card backing", iface.Spec.Name)
+	if in.UnitNumbers {
+		add.UnitNumber = iface.Spec.UnitNumber
 	}
-
-	// TODO(T037): With Policy.AdapterTypes, honor an explicit spec.type.
-	ethDev, err := object.EthernetCardTypes().CreateEthernetCard("vmxnet3", backing)
-	if err != nil {
-		return nil, fmt.Errorf("unable to create Ethernet card for network interface %q: %w",
-			iface.Spec.Name, err)
-	}
-
-	ethCard := ethDev.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-	if target.ExternalID.Op == IntentSet {
-		ethCard.ExternalId = target.ExternalID.Value
-	}
-	if mac := target.MAC.Pinned; mac != "" {
-		ethCard.MacAddress = mac
-		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeManual)
-	} else {
-		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeGenerated)
-	}
-
-	// Today's update path never places an added card, so with
-	// VMNetworkUnitNumbers vSphere could choose a different unit number, and
-	// the next pass would replace the card again.
-	if unitNumbers && iface.Spec.UnitNumber != nil {
-		unitNumber := *iface.Spec.UnitNumber
-		ethCard.UnitNumber = &unitNumber
-	}
-
-	return ethDev, nil
+	return BuildAdd(add)
 }
 
 func isClaim(kind MatchKind) bool {

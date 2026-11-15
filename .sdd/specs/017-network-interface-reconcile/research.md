@@ -126,6 +126,21 @@ Record VM hardware/guest versions, actual card subtype, provider/backing, host a
 
 14. **R14 / Q2**: Validate a single Remove+Add reconfigure at the same unit for concrete type changes in both directions for VMXNET3/E1000e and each additional supported type, powered off and powered on. Type-changing Edit comparison is not required. Capture the SOAP concrete type, task outcome, hardware read-back, and actual guest PCI device/driver before any reboot or power cycle. Cover destination-incompatible tuning/UPT fields, generated and pinned MACs, simultaneous attachment change, pending provider readiness, failure/uncertain completion, operator restart, and subsequent no-op. Record supported pairs separately from merely accepted requests; neither a config-only type change nor a vcsim result proves live replacement.
 
+## Experiment results
+
+### R1 (partial R14), 2026-11-15
+
+Environment: vCenter 9.2.0 build 25917935 (API 9.1.2.0), ESXi 9.2.0 build 25917897, VDS (NetOP) only, DVPG backing. Probe VM not managed by VM Operator, vmx-23, guestId `vmwarePhoton64Guest` (Photon OS 5.0, open-vm-tools), powered on for every operation.
+
+- Capability inputs: the guest descriptor reports `supportsHotPlugPCI=true`; `VirtualDeviceOption.plugAndPlay` and `hotRemoveSupported` are true for `VirtualVmxnet3` and `VirtualE1000e` at vmx-15 and vmx-23. At vmx-23, 24 of 193 guest descriptors report `supportsHotPlugPCI=false` (for example `winNTGuest`, `darwin*Guest`).
+- Live hot-add and hot-remove of `VirtualVmxnet3` and `VirtualE1000e` succeeded (add about 1 s, remove about 6 s). The guest bound the expected driver without a reboot. A hot-added card with no `connectable` given reads back `connected`, `startConnected`, and `allowGuestControl` all true.
+- A single-task Remove+Add at the same unit number changing concrete type succeeded live in both directions (three runs). The new card reused the device key, unit number, and PCI slot, received a new MAC and a new DV port, and the guest saw the new driver at the same PCI address with the same interface name.
+- A requested `addressType=generated` reads back as `assigned`. Device keys are reused after removal, so key alone cannot distinguish a replacement from the original adapter.
+- vCenter does not enforce the guest descriptor: it accepted live hot-add on a `winNTGuest` VM (`supportsHotPlugPCI=false`). An unacknowledged hot-remove failed after about 60 s with `msg.vigor.hotRemoveStillExists` and left the device in place. Live eligibility must therefore be decided by VM Operator from the configuration options, and a hot-remove fault must be treated as a real task failure.
+- Guest network information lags hardware: for 10–30 s after a hot-add or type swap `guest.net` was empty (including the untouched adapter), and for 10–20 s after a hot-remove it still listed the removed adapter. Task completion is not a guest-data freshness signal (R8/Q7).
+
+Not covered: other card types (SR-IOV, VRDMA), NSX-T and VPC backings, powered-off variants, pinned MACs, simultaneous attachment change, failed or uncertain tasks, and operator restart.
+
 ## Draft decisions
 
 Keep old backing plus disconnection as the baseline; make placeholder backing optional. Use explicit readiness data rather than conditions for control flow. Preserve unit-number identity and lazy bootstrap construction. Prefer unique matching evidence over destructive guesses. Keep old provider resources until observed detachment, even if this delays cleanup. Gate rollout of platform-dependent cases on the experiments above.

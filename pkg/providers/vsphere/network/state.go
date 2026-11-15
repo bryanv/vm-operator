@@ -6,6 +6,7 @@ package network
 
 import (
 	"context"
+	"time"
 
 	"github.com/vmware/govmomi/object"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
@@ -28,6 +29,17 @@ type ReconcileState struct {
 
 	// Observed is the most recent network observation for this pass.
 	Observed *Info
+
+	// Plan is the network plan built from Observed, if any.
+	Plan *Plan
+
+	// Submitted is true when a reconfigure task submitted on this pass
+	// carried network device changes from Plan.
+	Submitted bool
+
+	// RequeueAfter is the deferred retry interval to apply at the end of the
+	// pass. Zero means no network retry is needed.
+	RequeueAfter time.Duration
 }
 
 // Policy holds the capability-dependent choices for one pass. It is the only

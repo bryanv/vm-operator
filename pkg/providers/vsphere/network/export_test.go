@@ -48,6 +48,12 @@ func SetResolutionObjectForTest(r *Resolution, obj ctrlclient.Object) {
 	r.obj = obj
 }
 
+// SetResolutionBackingForTest sets the resolved network backing retained on
+// r.
+func SetResolutionBackingForTest(r *Resolution, backing object.NetworkReference) {
+	r.backing = backing
+}
+
 // SetAdapterRecordInterfaceForTest replaces the operation record lookup and
 // returns a function that restores it.
 func SetAdapterRecordInterfaceForTest(

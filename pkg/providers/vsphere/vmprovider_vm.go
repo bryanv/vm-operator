@@ -985,6 +985,7 @@ func errOrReconcileErr(reconcileErr, err error) error {
 //  2. Fetch recent tasks
 //  3. Fetch attached tags
 //  4. Fetch volume info
+//     4b. Observe network
 //  5. Reconcile status
 //  6. Reconcile location
 //  7. Reconcile schema upgrade
@@ -1040,6 +1041,15 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 		return fmt.Errorf("failed to fetch volume info: %w", err)
 	}
 	vmCtx.Context = ctxWithVolumeInfo
+
+	//
+	// 4b. Observe network
+	//
+	//     Allocate the per-pass network state and record a read-only
+	//     observation of the VM's network interfaces. An incomplete
+	//     observation does not change control flow.
+	//
+	vmCtx.Context = vs.observeNetwork(vmCtx)
 
 	//
 	// 5. Reconcile status
@@ -1456,6 +1466,36 @@ func (vs *vSphereVMProvider) getVolumeInfo(
 		ctx.Context,
 		pkgvol.GetVolumeInfoFromVM(ctx.VM, ctx.MoVM),
 	), nil
+}
+
+// observeNetwork allocates the per-pass network reconcile state, stores a
+// read-only network observation in it, and returns a context that carries
+// it. The observation is not consumed yet.
+func (vs *vSphereVMProvider) observeNetwork(
+	vmCtx pkgctx.VirtualMachineContext) context.Context {
+
+	st := &network.ReconcileState{Policy: network.PolicyFromContext(vmCtx)}
+	vmCtx.Context = network.WithContext(vmCtx.Context, st)
+
+	st.Observed = network.Observe(vmCtx, network.ObserveInput{
+		Client: vs.k8sClient,
+		VM:     vmCtx.VM,
+		MoVM:   vmCtx.MoVM,
+	})
+
+	if !st.Observed.Complete {
+		vmCtx.Logger.V(4).Info("Network observation is incomplete")
+	}
+	for _, iface := range st.Observed.Interfaces {
+		if err := iface.Provider.Err; err != nil {
+			vmCtx.Logger.V(4).Info("Network interface observation error",
+				"interface", iface.Spec.Name,
+				"phase", iface.Provider.Phase,
+				"error", err.Error())
+		}
+	}
+
+	return vmCtx.Context
 }
 
 func (vs *vSphereVMProvider) reconcileSchemaUpgrade(

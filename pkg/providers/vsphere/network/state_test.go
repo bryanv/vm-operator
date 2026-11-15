@@ -66,14 +66,16 @@ var _ = Describe("ReconcileState", Label(testlabels.API), func() {
 				To(Equal(network.Policy{}))
 		})
 
-		It("returns every field false even when VMNetworkHotPlug is enabled", func() {
+		It("returns every field false except NICsOutOfGOSCHash when VMNetworkHotPlug is enabled", func() {
 			ctx := pkgcfg.UpdateContext(
 				pkgcfg.NewContextWithDefaultConfig(),
 				func(config *pkgcfg.Config) {
 					config.Features.VMNetworkHotPlug = true
 				})
 			Expect(pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug).To(BeTrue())
-			Expect(network.PolicyFromContext(ctx)).To(Equal(network.Policy{}))
+			Expect(network.PolicyFromContext(ctx)).To(Equal(network.Policy{
+				NICsOutOfGOSCHash: true,
+			}))
 		})
 	})
 

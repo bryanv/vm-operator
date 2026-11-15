@@ -581,7 +581,7 @@ New operation records are written only for capability-enabled attachment or hard
 
 ### Bootstrap hash (G15)
 
-With `NICsOutOfGOSCHash`, `DoBootstrap` computes a second hash of the LinuxPrep/Sysprep `CustomizationSpec` with `NicSettingMap` cleared. It stores that hash in a new annotation next to `bootstrap-hash-customspec`:
+With `NICsOutOfGOSCHash`, `DoBootstrap` computes a second hash of the LinuxPrep/Sysprep `CustomizationSpec` with `NicSettingMap` cleared. It stores that hash in a new annotation, `vmoperator.vmware.com/bootstrap-hash-customspec-without-nics`, next to `bootstrap-hash-customspec`:
 
 ```text
 new hash present?  no  -> legacy hash == full(current)?

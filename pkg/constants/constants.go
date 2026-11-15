@@ -153,6 +153,13 @@ const (
 	// customization spec used to bootstrap a VM's guest information.
 	BootstrapHashCustomSpecAnnotationKey = "vmoperator.vmware.com/bootstrap-hash-customspec"
 
+	// BootstrapHashCustomSpecWithoutNICsAnnotationKey is the annotation used
+	// to track the customization spec used to bootstrap a VM's guest
+	// information, excluding the per-NIC settings. It is written only when the
+	// network hot plug capability keeps NIC changes from triggering guest
+	// re-customization.
+	BootstrapHashCustomSpecWithoutNICsAnnotationKey = "vmoperator.vmware.com/bootstrap-hash-customspec-without-nics"
+
 	// SkipDeletePlatformResourceKey is a privileged annotation that may be used
 	// to skip the deletion of a Kubernetes object's underlying platform
 	// resource. For example, when applied to a VM, deleting the VirtualMachine

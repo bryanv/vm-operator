@@ -5,6 +5,7 @@
 package vmlifecycle
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,6 +129,7 @@ func DoBootstrap( //nolint:gocyclo
 		configSpec     *vimtypes.VirtualMachineConfigSpec
 		customSpec     *vimtypes.CustomizationSpec
 		customizeLatch *bool
+		isGOSC         bool
 		err            error
 	)
 
@@ -135,9 +137,11 @@ func DoBootstrap( //nolint:gocyclo
 	case cloudInit != nil:
 		configSpec, customSpec, err = BootStrapCloudInit(vmCtx, config, cloudInit, &bootstrapArgs)
 	case linuxPrep != nil:
+		isGOSC = true
 		configSpec, customSpec, customizeLatch, err = BootStrapLinuxPrep(
 			vmCtx, config, linuxPrep, vAppConfig, &bootstrapArgs)
 	case sysPrep != nil:
+		isGOSC = true
 		configSpec, customSpec, customizeLatch, err = BootstrapSysPrep(
 			vmCtx, config, sysPrep, vAppConfig, &bootstrapArgs)
 	case vAppConfig != nil:
@@ -188,7 +192,16 @@ func DoBootstrap( //nolint:gocyclo
 		}
 	}
 
-	if customSpec != nil {
+	if customSpec != nil && isGOSC && nicsOutOfGOSCHash(vmCtx) {
+		customized, err := reconcileGOSCCustomizeWithoutNICs(
+			vmCtx, vcVM, config, customSpec, customizeLatch)
+		if err != nil {
+			return err
+		}
+		if customized {
+			retErr = errors.Join(retErr, ErrBootstrapCustomize)
+		}
+	} else if customSpec != nil {
 		const hashKey = pkgconst.BootstrapHashCustomSpecAnnotationKey
 
 		newHash, err := getVimTypeHash(customSpec)
@@ -240,6 +253,99 @@ func DoBootstrap( //nolint:gocyclo
 	}
 
 	return retErr
+}
+
+// nicsOutOfGOSCHash returns whether NIC changes are kept out of the
+// LinuxPrep/Sysprep customization hash. It reads the policy from the per-pass
+// network reconcile state when one is present, and otherwise from the
+// capability in the context.
+func nicsOutOfGOSCHash(ctx context.Context) bool {
+	if st, ok := network.FromContext(ctx); ok {
+		return st.Policy.NICsOutOfGOSCHash
+	}
+	return network.PolicyFromContext(ctx).NICsOutOfGOSCHash
+}
+
+// reconcileGOSCCustomizeWithoutNICs decides whether to customize a
+// LinuxPrep/Sysprep VM when NIC changes are kept out of the customization
+// hash, customizes the VM when needed, and records both customization hashes.
+// It returns true when the VM was customized.
+//
+// The decision is:
+//
+//   - When the without-NICs hash annotation is absent, the legacy full hash
+//     is compared, so that enabling the capability on a VM whose inputs are
+//     unchanged does not customize it.
+//   - When the without-NICs hash annotation is present, only that hash is
+//     compared, so that a NIC-only change does not customize the VM.
+//
+// The customize latch, when set, decides instead. Customization always uses
+// the full customSpec, including its current NicSettingMap.
+func reconcileGOSCCustomizeWithoutNICs(
+	vmCtx pkgctx.VirtualMachineContext,
+	vcVM *object.VirtualMachine,
+	config *vimtypes.VirtualMachineConfigInfo,
+	customSpec *vimtypes.CustomizationSpec,
+	customizeLatch *bool) (bool, error) {
+
+	const (
+		fullHashKey    = pkgconst.BootstrapHashCustomSpecAnnotationKey
+		partialHashKey = pkgconst.BootstrapHashCustomSpecWithoutNICsAnnotationKey
+	)
+
+	fullHash, err := getVimTypeHash(customSpec)
+	if err != nil {
+		return false, err
+	}
+
+	// Hash a shallow copy with the NIC settings cleared. The spec that is
+	// sent to vSphere is never modified.
+	partialSpec := *customSpec
+	partialSpec.NicSettingMap = nil
+	partialHash, err := getVimTypeHash(&partialSpec)
+	if err != nil {
+		return false, err
+	}
+
+	var customizeNeeded bool
+	switch {
+	case customizeLatch != nil:
+		customizeNeeded = *customizeLatch
+	case vmCtx.VM.Annotations[partialHashKey] != "":
+		customizeNeeded = partialHash != vmCtx.VM.Annotations[partialHashKey]
+	default:
+		customizeNeeded = fullHash != vmCtx.VM.Annotations[fullHashKey]
+	}
+
+	if customizeNeeded {
+		vmCtx.Logger.V(0).Info("Doing bootstrap customize")
+		if err := doCustomize(vmCtx, vcVM, config, customSpec); err != nil {
+			// Mark the customization condition as failed with the error message.
+			// This handles immediate failures (e.g., unsupported tools version) that
+			// occur at the vSphere API level before the guest customization starts.
+			conditions.MarkError(vmCtx.VM, vmopv1.GuestCustomizationCondition,
+				vmopv1.GuestCustomizationFailedReason, err)
+			return false, fmt.Errorf("bootstrap customize failed: %w", err)
+		}
+	} else {
+		vmCtx.Logger.V(4).Info(
+			"Skipping bootstrap customize as nothing but NICs has changed")
+	}
+
+	for _, kv := range [...][2]string{
+		{fullHashKey, fullHash},
+		{partialHashKey, partialHash},
+	} {
+		if k, v := kv[0], kv[1]; vmCtx.VM.Annotations[k] != v {
+			vmCtx.Logger.V(4).Info("Updating bootstrap customize hash", k, v)
+			if vmCtx.VM.Annotations == nil {
+				vmCtx.VM.Annotations = map[string]string{}
+			}
+			vmCtx.VM.Annotations[k] = v
+		}
+	}
+
+	return customizeNeeded, nil
 }
 
 // GetBootstrapArgs returns the information used to bootstrap the VM via

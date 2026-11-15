@@ -91,6 +91,14 @@ const (
 	// BringYourOwnNetworkInterfaceCapabilityName gates externally managed NICs.
 	BringYourOwnNetworkInterfaceCapabilityName = "supports_vm_service_byo_network_interface"
 
-	// MutableNetworksCapabilityName gates changes to existing VM interfaces.
+	// MutableNetworksCapabilityName gates adding, removing, and changing the
+	// network interfaces of an existing VM; must match
+	// pkg/config/capabilities.CapabilityKeyMutableNetworks.
 	MutableNetworksCapabilityName = "supports_VM_service_mutable_networks"
+
+	// NetworkHotPlugCapabilityName gates network interface hot plug and
+	// keeping network interface changes from re-running LinuxPrep/Sysprep
+	// customization; must match
+	// pkg/config/capabilities.CapabilityKeyVMServiceNetworkHotPlug.
+	NetworkHotPlugCapabilityName = "supports_VM_service_network_hot_plug"
 )

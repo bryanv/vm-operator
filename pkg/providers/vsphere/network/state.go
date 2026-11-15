@@ -62,14 +62,15 @@ type Policy struct {
 // Each field is wired to pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug
 // by the last task of its delivery group. Until then, each field is a literal
 // false so the restructured code reproduces today's behavior even when the
-// capability is enabled.
-func PolicyFromContext(_ context.Context) Policy {
+// capability is enabled. NICsOutOfGOSCHash is wired.
+func PolicyFromContext(ctx context.Context) Policy {
+	on := pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug
 	return Policy{
 		LiveChanges:       false,
 		EditAttachments:   false,
 		InterfaceStatus:   false,
 		AdapterTypes:      false,
-		NICsOutOfGOSCHash: false,
+		NICsOutOfGOSCHash: on,
 		ChangeVersion:     false,
 	}
 }

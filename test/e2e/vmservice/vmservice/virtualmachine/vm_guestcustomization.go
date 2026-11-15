@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/mo"
@@ -31,6 +33,7 @@ import (
 	vmopv1a5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
+	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/test/e2e/framework"
@@ -692,6 +695,104 @@ func VMGOSCSpec(ctx context.Context, inputGetter func() VMGOSCSpecInput) {
 				}
 				createAndVerifyVM(ctx, vm)
 				vmoperator.WaitForLinuxPrepCustomizeNextPowerOnFalse(ctx, config, svClusterClient, input.WCPNamespaceName, vm.Name)
+			})
+		})
+
+		Context("LinuxPrep with network hot plug", func() {
+			BeforeEach(func() {
+				skipper.SkipUnlessSupervisorCapabilityEnabled(input.Config.SupervisorCapabilities, consts.NetworkHotPlugCapabilityName)
+				skipper.SkipUnlessSupervisorCapabilityEnabled(input.Config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
+			})
+
+			It("should not re-run customization after a network interface is added", Label("experimental"), func() {
+				const (
+					fullHashKey    = pkgconst.BootstrapHashCustomSpecAnnotationKey
+					partialHashKey = pkgconst.BootstrapHashCustomSpecWithoutNICsAnnotationKey
+				)
+
+				ns := input.WCPNamespaceName
+				createAndVerifyVM(ctx, v1a2VM.DeepCopy())
+				vmoperator.WaitForVirtualMachineIP(ctx, config, svClusterClient, ns, vmName)
+
+				vmMoID := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, ns, vmName)
+				vmMoRef := types.ManagedObjectReference{Type: "VirtualMachine", Value: vmMoID}
+				vCenterClient := vcenter.NewVimClientFromKubeconfig(ctx, clusterProxy.GetKubeconfigPath())
+				propCollector := property.DefaultCollector(vCenterClient)
+
+				By("Waiting for the first customization to finish")
+				var firstStartTime time.Time
+				Eventually(func(g Gomega) {
+					var vmMO mo.VirtualMachine
+					g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"guest"}, &vmMO)).To(Succeed())
+					g.Expect(vmMO.Guest).ToNot(BeNil())
+					info := vmMO.Guest.CustomizationInfo
+					g.Expect(info).ToNot(BeNil())
+					g.Expect(info.CustomizationStatus).To(Equal(string(types.GuestInfoCustomizationStatusTOOLSDEPLOYPKG_SUCCEEDED)))
+					g.Expect(info.StartTime).ToNot(BeNil())
+					firstStartTime = *info.StartTime
+				}, config.GetIntervals("default", "wait-virtual-machine-vmip")...).Should(Succeed(), "Timed out waiting for the first customization of VM %s", vmName)
+
+				By("Recording both customization hashes")
+				var firstHashes map[string]string
+				Eventually(func(g Gomega) {
+					vm, err := utils.GetVirtualMachine(ctx, svClusterClient, ns, vmName)
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(vm.Annotations).To(HaveKeyWithValue(fullHashKey, Not(BeEmpty())))
+					g.Expect(vm.Annotations).To(HaveKeyWithValue(partialHashKey, Not(BeEmpty())))
+					firstHashes = map[string]string{
+						fullHashKey:    vm.Annotations[fullHashKey],
+						partialHashKey: vm.Annotations[partialHashKey],
+					}
+				}, config.GetIntervals("default", "wait-virtual-machine-vmip")...).Should(Succeed(), "Timed out waiting for VM %s customization hashes", vmName)
+
+				By("Powering off the VM")
+				vmoperator.PowerOffVirtualMachineAndWait(ctx, config, svClusterClient, ns, vmName)
+
+				By("Adding a second network interface")
+				Eventually(func() error {
+					return vmoperator.PatchVirtualMachine(ctx, svClusterClient, ns, vmName, func(vm *vmopv1.VirtualMachine) error {
+						if vm.Spec.Network == nil || len(vm.Spec.Network.Interfaces) != 1 {
+							return fmt.Errorf("expected one network interface, got %v", vm.Spec.Network)
+						}
+						iface := vm.Spec.Network.Interfaces[0]
+						iface.Name = "eth1"
+						vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, iface)
+						return nil
+					}, ctrlclient.MergeFromWithOptimisticLock{})
+				}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out adding a second network interface to VM %s", vmName)
+
+				Eventually(func(g Gomega) {
+					var vmMO mo.VirtualMachine
+					g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config.hardware.device"}, &vmMO)).To(Succeed())
+					g.Expect(vmMO.Config).ToNot(BeNil())
+					ethCards := object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
+					g.Expect(ethCards).To(HaveLen(2), "VM should have two EthernetCards configured")
+				}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out waiting for VM %s to have a second EthernetCard", vmName)
+
+				By("Powering on the VM")
+				vmoperator.PowerOnVirtualMachineAndWait(ctx, config, svClusterClient, ns, vmName)
+				vmoperator.WaitForVirtualMachineIP(ctx, config, svClusterClient, ns, vmName)
+
+				By("Verifying that only the full customization hash changed")
+				Eventually(func(g Gomega) {
+					vm, err := utils.GetVirtualMachine(ctx, svClusterClient, ns, vmName)
+					g.Expect(err).ToNot(HaveOccurred())
+					g.Expect(vm.Annotations).To(HaveKeyWithValue(partialHashKey, firstHashes[partialHashKey]))
+					g.Expect(vm.Annotations).To(HaveKeyWithValue(fullHashKey, Not(BeEmpty())))
+					g.Expect(vm.Annotations[fullHashKey]).ToNot(Equal(firstHashes[fullHashKey]))
+				}, config.GetIntervals("default", "wait-virtual-machine-vmip")...).Should(Succeed(), "Timed out waiting for VM %s customization hashes", vmName)
+
+				By("Verifying that vSphere did not customize the VM again")
+				var vmMO mo.VirtualMachine
+				Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"guest", "config.tools"}, &vmMO)).To(Succeed())
+				Expect(vmMO.Config).ToNot(BeNil())
+				Expect(vmMO.Config.Tools).ToNot(BeNil())
+				Expect(vmMO.Config.Tools.PendingCustomization).To(BeEmpty())
+				Expect(vmMO.Guest).ToNot(BeNil())
+				Expect(vmMO.Guest.CustomizationInfo).ToNot(BeNil())
+				Expect(vmMO.Guest.CustomizationInfo.StartTime).ToNot(BeNil())
+				Expect(vmMO.Guest.CustomizationInfo.StartTime.Equal(firstStartTime)).To(BeTrue(),
+					"customization start time changed from %s to %s", firstStartTime, vmMO.Guest.CustomizationInfo.StartTime)
 			})
 		})
 	})

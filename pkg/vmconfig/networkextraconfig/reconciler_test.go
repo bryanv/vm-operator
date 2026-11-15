@@ -19,7 +19,9 @@ import (
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	"github.com/vmware-tanzu/vm-operator/pkg/constants/testlabels"
 	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig/networkextraconfig"
 )
@@ -338,6 +340,351 @@ var _ = Describe("networkextraconfig.Reconcile", func() {
 				Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
 				Expect(collectEditChanges(configSpec)).To(BeEmpty())
 			})
+		})
+	})
+})
+
+// newNetworkCard returns a VMXNET3 card with the given key and unit number,
+// backed by the named standard network.
+func newNetworkCard(key, unitNumber int32, networkName string) *vimtypes.VirtualVmxnet3 {
+	d := &vimtypes.VirtualVmxnet3{}
+	d.Key = key
+	d.UnitNumber = ptr.To(unitNumber)
+	d.Backing = networkBacking(networkName)
+	return d
+}
+
+func networkBacking(networkName string) *vimtypes.VirtualEthernetCardNetworkBackingInfo {
+	return &vimtypes.VirtualEthernetCardNetworkBackingInfo{
+		VirtualDeviceDeviceBackingInfo: vimtypes.VirtualDeviceDeviceBackingInfo{
+			DeviceName: networkName,
+		},
+	}
+}
+
+// extraConfigValue returns the value of key in cs.ExtraConfig.
+func extraConfigValue(cs *vimtypes.VirtualMachineConfigSpec, key string) (string, bool) {
+	for _, ec := range cs.ExtraConfig {
+		if kv := ec.GetOptionValue(); kv != nil && kv.Key == key {
+			v, _ := kv.Value.(string)
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// expectOneChangePerKey asserts that cs carries at most one device change per
+// device key, so never two Edits and never an Edit and a Remove for one key.
+func expectOneChangePerKey(cs *vimtypes.VirtualMachineConfigSpec) {
+	GinkgoHelper()
+	ops := map[int32][]vimtypes.VirtualDeviceConfigSpecOperation{}
+	for _, dc := range cs.DeviceChange {
+		spec := dc.GetVirtualDeviceConfigSpec()
+		key := spec.Device.GetVirtualDevice().Key
+		ops[key] = append(ops[key], spec.Operation)
+	}
+	for key, o := range ops {
+		Expect(o).To(HaveLen(1), "device %d has device changes %v", key, o)
+	}
+}
+
+var _ = Describe("networkextraconfig.Reconcile with network reconcile state", Label(testlabels.Update), func() {
+	var (
+		ctx        context.Context
+		vm         *vmopv1.VirtualMachine
+		moVM       mo.VirtualMachine
+		configSpec *vimtypes.VirtualMachineConfigSpec
+		st         *network.ReconcileState
+		r          = networkextraconfig.New()
+	)
+
+	BeforeEach(func() {
+		ctx = pkgcfg.NewContext()
+		ctx = pkgcfg.UpdateContext(ctx, func(cfg *pkgcfg.Config) {
+			cfg.Features.VMServiceClasslessVM = true
+			// The named-network provider resolves every interface Ready
+			// without any Kubernetes calls.
+			cfg.NetworkProviderType = pkgcfg.NetworkProviderTypeNamed
+		})
+
+		vm = &vmopv1.VirtualMachine{}
+		vm.Name, vm.Namespace = "vm", "ns"
+		vm.Status.PowerState = vmopv1.VirtualMachinePowerStateOff
+		vm.Spec.MemoryAdvanced = &vmopv1.VirtualMachineMemoryAdvancedSpec{
+			ReservationLockedToMax: ptr.To(true),
+		}
+		vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{}
+
+		moVM = mo.VirtualMachine{
+			Config: &vimtypes.VirtualMachineConfigInfo{Version: "vmx-21"},
+		}
+		configSpec = &vimtypes.VirtualMachineConfigSpec{}
+		st = nil
+	})
+
+	// observe stores the shared observation of vm and moVM in the context.
+	observe := func() {
+		st = &network.ReconcileState{
+			Observed: network.Observe(ctx, network.ObserveInput{VM: vm, MoVM: moVM}),
+		}
+		Expect(st.Observed.Complete).To(BeTrue())
+		ctx = network.WithContext(ctx, st)
+	}
+
+	// plan builds the plan for the observation and puts its device changes
+	// in configSpec, as the powered-off dispatch sites do before
+	// doReconfigure runs the vmconfig reconcilers.
+	plan := func() {
+		backings := map[string]vimtypes.BaseVirtualDeviceBackingInfo{}
+		for _, iface := range vm.Spec.Network.Interfaces {
+			backings[iface.Name] = networkBacking(iface.Network.Name)
+		}
+		st.Plan = network.BuildPlan(st.Observed, network.PlanInput{
+			PowerState:   vimtypes.VirtualMachinePowerStatePoweredOff,
+			ApplyChanges: true,
+			CardBackings: backings,
+		})
+		configSpec.DeviceChange = append(configSpec.DeviceChange, st.Plan.DeviceChanges().Specs()...)
+	}
+
+	iface := func(name, networkName string) vmopv1.VirtualMachineNetworkInterfaceSpec {
+		return vmopv1.VirtualMachineNetworkInterfaceSpec{
+			Name:    name,
+			Network: &vmopv1common.PartialObjectRef{Name: networkName},
+		}
+	}
+
+	It("tunes the adapters the shared match claims rather than zipping by position", func() {
+		vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			iface("eth0", "net-b"),
+			iface("eth1", "net-a"),
+		}
+		vm.Spec.Network.Interfaces[0].AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth0"}}
+		vm.Spec.Network.Interfaces[1].AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth1"}}
+		moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+			newNetworkCard(4000, 7, "net-a"),
+			newNetworkCard(4001, 8, "net-b"),
+		}
+		observe()
+
+		Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+		v, ok := extraConfigValue(configSpec, "ethernet1.foo")
+		Expect(ok).To(BeTrue())
+		Expect(v).To(Equal("eth0"))
+		v, ok = extraConfigValue(configSpec, "ethernet0.foo")
+		Expect(ok).To(BeTrue())
+		Expect(v).To(Equal("eth1"))
+	})
+
+	It("tunes a numbered interface's adapter and skips a numbered interface with no adapter", func() {
+		ctx = pkgcfg.UpdateContext(ctx, func(cfg *pkgcfg.Config) {
+			cfg.Features.VMNetworkUnitNumbers = true
+		})
+		vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			iface("eth0", "net-x"),
+			iface("eth1", "net-x"),
+		}
+		vm.Spec.Network.Interfaces[0].UnitNumber = ptr.To(int32(9))
+		vm.Spec.Network.Interfaces[0].AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth0"}}
+		vm.Spec.Network.Interfaces[1].AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth1"}}
+		moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{newNetworkCard(4000, 7, "net-y")}
+		observe()
+
+		Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+		// eth0 has no adapter at unit 9; eth1 takes 4000 positionally.
+		v, ok := extraConfigValue(configSpec, "ethernet0.foo")
+		Expect(ok).To(BeTrue())
+		Expect(v).To(Equal("eth1"))
+	})
+
+	Context("with a plan", func() {
+		BeforeEach(func() {
+			vm.Spec.BootOptions = &vmopv1.VirtualMachineBootOptions{
+				Firmware: vmopv1.VirtualMachineBootOptionsFirmwareTypeEFI,
+			}
+			vm.Spec.CPUAdvanced = &vmopv1.VirtualMachineCPUAdvancedSpec{
+				Topology: &vmopv1.VirtualMachineCPUTopologySpec{
+					VNUMANodeCount: ptr.To(int32(2)),
+				},
+			}
+		})
+
+		It("folds the tuning of an added adapter into the plan's Add", func() {
+			eth0 := iface("eth0", "net-a")
+			eth0.AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth0"}}
+			eth1 := iface("eth1", "net-b")
+			eth1.VMXNet3 = &vmopv1.VirtualMachineNetworkInterfaceVMXNet3Spec{UPTv2Enabled: ptr.To(true)}
+			eth1.VNUMANodeID = ptr.To(int32(1))
+			eth1.AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth1"}}
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{eth0, eth1}
+			observed := newNetworkCard(4000, 7, "net-a")
+			moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{observed}
+			observe()
+			plan()
+
+			action, _ := st.Plan.InterfaceAction("eth1")
+			Expect(action.Kind).To(Equal(network.ActionAdd))
+
+			Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+			Expect(configSpec.DeviceChange).To(HaveLen(1), "tuning adds no device change of its own")
+			spec := configSpec.DeviceChange[0].GetVirtualDeviceConfigSpec()
+			Expect(spec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
+			Expect(spec.Device.GetVirtualDevice().Key).To(Equal(action.DeviceKey))
+			added := spec.Device.(*vimtypes.VirtualVmxnet3)
+			Expect(added.Uptv2Enabled).To(Equal(ptr.To(true)))
+			Expect(added.NumaNode).To(Equal(ptr.To(int32(1))))
+
+			// The added adapter's ethernetN ExtraConfig waits for its real
+			// key; eth0's is applied.
+			v, ok := extraConfigValue(configSpec, "ethernet0.foo")
+			Expect(ok).To(BeTrue())
+			Expect(v).To(Equal("eth0"))
+			for _, ec := range configSpec.ExtraConfig {
+				Expect(ec.GetOptionValue().Value).ToNot(Equal("eth1"))
+			}
+			Expect(observed.Uptv2Enabled).To(BeNil())
+			expectOneChangePerKey(configSpec)
+		})
+
+		It("folds the tuning of a replaced adapter into the Add and does not edit the removed adapter", func() {
+			eth0 := iface("eth0", "net-b")
+			eth0.VNUMANodeID = ptr.To(int32(1))
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{eth0}
+			observed := newNetworkCard(4000, 7, "net-a")
+			moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{observed}
+			observe()
+			plan()
+
+			action, _ := st.Plan.InterfaceAction("eth0")
+			Expect(action.Kind).To(Equal(network.ActionReplace))
+
+			Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+			Expect(configSpec.DeviceChange).To(HaveLen(2))
+			for _, dc := range configSpec.DeviceChange {
+				spec := dc.GetVirtualDeviceConfigSpec()
+				switch spec.Operation {
+				case vimtypes.VirtualDeviceConfigSpecOperationRemove:
+					Expect(spec.Device.GetVirtualDevice().Key).To(Equal(int32(4000)))
+					Expect(spec.Device.GetVirtualDevice().NumaNode).To(BeNil())
+				case vimtypes.VirtualDeviceConfigSpecOperationAdd:
+					Expect(spec.Device.GetVirtualDevice().NumaNode).To(Equal(ptr.To(int32(1))))
+				default:
+					Fail("unexpected device change " + string(spec.Operation))
+				}
+			}
+			Expect(observed.NumaNode).To(BeNil())
+			expectOneChangePerKey(configSpec)
+		})
+
+		It("edits the plan's copy instead of adding a duplicate Edit", func() {
+			eth0 := iface("eth0", "net-a")
+			eth0.VNUMANodeID = ptr.To(int32(1))
+			eth0.VMXNet3 = &vmopv1.VirtualMachineNetworkInterfaceVMXNet3Spec{UPTv2Enabled: ptr.To(true)}
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{eth0}
+			observed := newNetworkCard(4000, 7, "net-a")
+			moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{observed}
+			observe()
+			plan()
+			// Stand in for a planned attachment Edit of the claimed adapter.
+			planned, err := st.Plan.DeviceChanges().Edit(st.Observed.Adapters[0])
+			Expect(err).ToNot(HaveOccurred())
+			configSpec.DeviceChange = st.Plan.DeviceChanges().Specs()
+
+			Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+			edits := collectEditChanges(configSpec)
+			Expect(edits).To(HaveLen(1))
+			Expect(edits[0].Device).To(BeIdenticalTo(planned))
+			Expect(planned.(*vimtypes.VirtualVmxnet3).Uptv2Enabled).To(Equal(ptr.To(true)))
+			Expect(planned.GetVirtualDevice().NumaNode).To(Equal(ptr.To(int32(1))))
+			Expect(observed.Uptv2Enabled).To(BeNil())
+			Expect(observed.NumaNode).To(BeNil())
+			expectOneChangePerKey(configSpec)
+		})
+
+		It("edits a copy of an adapter the plan does not change", func() {
+			eth0 := iface("eth0", "net-a")
+			eth0.VNUMANodeID = ptr.To(int32(1))
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{eth0}
+			observed := newNetworkCard(4000, 7, "net-a")
+			moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{observed}
+			observe()
+			plan()
+			Expect(configSpec.DeviceChange).To(BeEmpty())
+
+			Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+			edits := collectEditChanges(configSpec)
+			Expect(edits).To(HaveLen(1))
+			Expect(edits[0].Device).ToNot(BeIdenticalTo(observed))
+			Expect(edits[0].Device.GetVirtualDevice().NumaNode).To(Equal(ptr.To(int32(1))))
+			Expect(observed.NumaNode).To(BeNil())
+			Expect(st.Plan.DeviceChanges().Len()).To(BeZero())
+		})
+
+		It("does not tune an adapter the plan removes", func() {
+			eth0 := iface("eth0", "net-a")
+			eth0.VNUMANodeID = ptr.To(int32(1))
+			eth0.AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth0"}}
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{eth0}
+			moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{newNetworkCard(4000, 7, "net-a")}
+			observe()
+			plan()
+			Expect(st.Plan.DeviceChanges().Remove(st.Observed.Adapters[0])).To(Succeed())
+			configSpec.DeviceChange = st.Plan.DeviceChanges().Specs()
+
+			Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+			Expect(collectEditChanges(configSpec)).To(BeEmpty())
+			_, ok := extraConfigValue(configSpec, "ethernet0.foo")
+			Expect(ok).To(BeFalse())
+			expectOneChangePerKey(configSpec)
+		})
+	})
+
+	When("there is no network reconcile state", func() {
+		It("zips spec interfaces to adapters by position as before", func() {
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				iface("eth0", "net-b"),
+				iface("eth1", "net-a"),
+			}
+			vm.Spec.Network.Interfaces[0].AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth0"}}
+			vm.Spec.Network.Interfaces[1].AdvancedProperties = []vmopv1common.KeyValuePair{{Key: "foo", Value: "eth1"}}
+			moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+				newNetworkCard(4000, 7, "net-a"),
+				newNetworkCard(4001, 8, "net-b"),
+			}
+
+			Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+			v, _ := extraConfigValue(configSpec, "ethernet0.foo")
+			Expect(v).To(Equal("eth0"))
+			v, _ = extraConfigValue(configSpec, "ethernet1.foo")
+			Expect(v).To(Equal("eth1"))
+		})
+
+		It("does not edit an adapter the ConfigSpec already removes", func() {
+			eth0 := iface("eth0", "net-a")
+			eth0.VNUMANodeID = ptr.To(int32(1))
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{eth0}
+			observed := newNetworkCard(4000, 7, "net-a")
+			moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{observed}
+			configSpec.DeviceChange = []vimtypes.BaseVirtualDeviceConfigSpec{
+				&vimtypes.VirtualDeviceConfigSpec{
+					Device:    newNetworkCard(4000, 7, "net-a"),
+					Operation: vimtypes.VirtualDeviceConfigSpecOperationRemove,
+				},
+			}
+
+			Expect(r.Reconcile(ctx, nil, nil, vm, moVM, configSpec)).To(Succeed())
+
+			Expect(collectEditChanges(configSpec)).To(BeEmpty())
+			Expect(observed.NumaNode).To(BeNil())
+			expectOneChangePerKey(configSpec)
 		})
 	})
 })

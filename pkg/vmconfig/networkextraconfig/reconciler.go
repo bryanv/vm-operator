@@ -22,6 +22,7 @@ import (
 	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
 	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
 	vsphereconst "github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine/extraconfig"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine/networkextraconfig"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
@@ -84,7 +85,15 @@ func (r reconciler) Reconcile(
 	ci := *moVM.Config
 	observed := pkgutil.OptionValues(ci.ExtraConfig)
 	poweredOn := vm.Status.PowerState == vmopv1.VirtualMachinePowerStateOn
-	matcher := networkextraconfig.DefaultNICMatcher(ci.Hardware.Device)
+	matcher := networkextraconfig.NICMatcherFromContext(ctx, ci.Hardware.Device)
+
+	// When this pass has a network plan, its device changes are part of this
+	// reconfigure. NIC tuning edits the plan's copies, skips the adapters the
+	// plan removes, and folds tuning into the adapters the plan adds.
+	var changes *network.DeviceChanges
+	if st, ok := network.FromContext(ctx); ok && st.Plan != nil {
+		changes = st.Plan.DeviceChanges()
+	}
 
 	var overlay pkgutil.OptionValues
 	log := pkglog.FromContextOrDefault(ctx)
@@ -97,28 +106,31 @@ func (r reconciler) Reconcile(
 			continue
 		}
 
-		namespaceIdx, ok := networkextraconfig.EthernetDeviceIndex(matchedDev)
-		if !ok {
+		// An adapter this reconfigure adds has only a temporary key, so its
+		// ethernetN ExtraConfig is applied on a later pass, once vSphere has
+		// assigned its key. Its device-spec fields are folded into the Add.
+		if namespaceIdx, ok := networkextraconfig.EthernetDeviceIndex(matchedDev); ok {
+			devKey := matchedDev.GetVirtualDevice().Key
+			mkKey := fmt.Sprintf(vsphereconst.NICExtraConfigManagedKeysKeyFmt, namespaceIdx)
+			managed := extraconfig.LoadDeviceManagedKeys(observed, mkKey)
+
+			// ── ExtraConfig path ──────────────────────────────────────────────
+			overlay = append(overlay, networkextraconfig.DesiredNICExtraConfig(ctx, iface, devKey, managed)...)
+
+			// Update the managed keys tracking entry when the bag key set
+			// changes. Not part of the diff below since it's pure bookkeeping,
+			// not a vmxmode-routed field.
+			specBagKeys := networkextraconfig.NICSpecBagKeys(ctx, iface)
+			nextMK := sets.List(specBagKeys)
+			if strings.Join(nextMK, ",") != strings.Join(managed, ",") {
+				overlay = append(overlay, &vimtypes.OptionValue{Key: mkKey, Value: strings.Join(nextMK, ",")})
+			}
+		} else if !networkextraconfig.IsAddedDevice(matchedDev) {
 			continue
-		}
-		devKey := matchedDev.GetVirtualDevice().Key
-		mkKey := fmt.Sprintf(vsphereconst.NICExtraConfigManagedKeysKeyFmt, namespaceIdx)
-		managed := extraconfig.LoadDeviceManagedKeys(observed, mkKey)
-
-		// ── ExtraConfig path ──────────────────────────────────────────────────
-		overlay = append(overlay, networkextraconfig.DesiredNICExtraConfig(ctx, iface, devKey, managed)...)
-
-		// Update the managed keys tracking entry when the bag key set
-		// changes. Not part of the diff below since it's pure bookkeeping,
-		// not a vmxmode-routed field.
-		specBagKeys := networkextraconfig.NICSpecBagKeys(ctx, iface)
-		nextMK := sets.List(specBagKeys)
-		if strings.Join(nextMK, ",") != strings.Join(managed, ",") {
-			overlay = append(overlay, &vimtypes.OptionValue{Key: mkKey, Value: strings.Join(nextMK, ",")})
 		}
 
 		// ── DeviceChange path ─────────────────────────────────────────────────
-		networkextraconfig.ReconcileNICFields(*vm, iface, matchedDev, ci, configSpec, false)
+		networkextraconfig.ReconcileNICFieldsWithChanges(*vm, iface, matchedDev, ci, configSpec, changes, false)
 	}
 
 	// Diff the assembled overlay against observed, merged onto whatever other

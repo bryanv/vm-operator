@@ -14,6 +14,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vim25/mo"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
@@ -306,6 +307,53 @@ func powerCycleVM(
 ) {
 	vmoperator.PowerOffVirtualMachineAndWait(ctx, config, svClusterClient, key.Namespace, key.Name)
 	vmoperator.PowerOnVirtualMachineAndWait(ctx, config, svClusterClient, key.Namespace, key.Name)
+}
+
+// nicMatchingUsesProviderIdentity reports whether the supervisor's network
+// provider gives every network interface a distinct attachment identity (an
+// external ID), so VM Operator matches spec.network.interfaces to ethernet
+// cards by identity rather than by position. That is the case for NSX-T and
+// NSX-T VPC. On a vSphere Distributed Switch, interfaces on the same network
+// are indistinguishable and keep the legacy positional matching.
+func nicMatchingUsesProviderIdentity(
+	ctx context.Context,
+	client ctrlclient.Client,
+	config *e2eConfig.E2EConfig,
+) bool {
+	envs, err := utils.GetCommandEnvVars(ctx, client,
+		config.GetVariable("VMOPNamespace"),
+		config.GetVariable("VMOPDeploymentName"),
+		config.GetVariable("VMOPManagerCommand"))
+	Expect(err).ToNot(HaveOccurred(), "%q cannot be fetched from %q",
+		config.GetVariable("EnvNetworkProvider"), config.GetVariable("VMOPManagerCommand"))
+
+	switch envs[config.GetVariable("EnvNetworkProvider")] {
+	case "NSXT", vmoperator.NetworkProviderTypeVPC:
+		return true
+	default:
+		return false
+	}
+}
+
+// ethernetCardKeys returns the device keys of the VM's ethernet cards in
+// device order.
+func ethernetCardKeys(
+	ctx context.Context,
+	propCollector *property.Collector,
+	moRef vimtypes.ManagedObjectReference,
+) ([]int32, error) {
+	var vmMO mo.VirtualMachine
+	if err := propCollector.RetrieveOne(ctx, moRef, []string{"config.hardware.device"}, &vmMO); err != nil {
+		return nil, err
+	}
+	if vmMO.Config == nil {
+		return nil, fmt.Errorf("VM %s has no config", moRef.Value)
+	}
+	var keys []int32
+	for _, dev := range object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*vimtypes.VirtualEthernetCard)(nil)) {
+		keys = append(keys, dev.GetVirtualDevice().Key)
+	}
+	return keys, nil
 }
 
 // VMNICExtraConfigSpec exercises the NIC ExtraConfig feature: live-mode
@@ -851,14 +899,14 @@ func VMNICExtraConfigSpec(ctx context.Context, inputGetter func() VMNICExtraConf
 				"PromoteDisksMode must remain Online after NIC ExtraConfig reconciliation")
 		})
 
-	// Characterization test: pins today's known limitation that
-	// DefaultNICMatcher matches spec.network.interfaces to hardware devices
-	// purely by call order, with no notion of interface identity. See the
-	// TODO on DefaultNICMatcher (nic_matcher.go) and the unit-level
-	// characterization test in nic_test.go: this must be revisited (and
-	// this test rewritten to assert no cross-wiring) once matching moves to
-	// a stable per-NIC identity (e.g. the NIC unit-number feature).
-	It("cross-wires ExtraConfig when spec.network.interfaces entries are reordered",
+	// NIC tuning uses the shared interface-to-adapter match (spec 017). With a
+	// network provider that gives each interface a distinct attachment
+	// identity (NSX-T, VPC), reordering spec.network.interfaces leaves each
+	// interface's ExtraConfig on its own adapter. On a vSphere Distributed
+	// Switch, interfaces on the same network are indistinguishable, so the
+	// legacy positional fallback still applies and may cross-wire them; the
+	// condition must nevertheless become True for whichever mapping is used.
+	It("keeps ExtraConfig consistent when spec.network.interfaces entries are reordered",
 		Label("core-functional", "experimental"), func() {
 			vmName := "nic-ec-reorder-" + capiutil.RandomString(5)
 			vmKey := types.NamespacedName{Namespace: vmNamespace, Name: vmName}
@@ -919,16 +967,154 @@ func VMNICExtraConfigSpec(ctx context.Context, inputGetter func() VMNICExtraConf
 			Expect(svClusterClient.Patch(ctx, vmPatch, ctrlclient.MergeFrom(vm))).To(Succeed(),
 				"failed to patch VM %s to reorder eth1/eth2", vmName)
 
-			By("Verifying the reorder cross-wires ExtraConfig onto the wrong physical device: " +
-				"ethernet1 now carries eth2's former values, ethernet2 now carries eth1's")
+			if nicMatchingUsesProviderIdentity(ctx, svClusterClient, config) {
+				By("Verifying each interface's ExtraConfig stays on its own adapter")
 
+				// The reorder must not move any value, so the expected values
+				// hold now and must keep holding while the reorder is
+				// reconciled.
+				waitForNICExtraConfigSyncedWithExtraConfigs(ctx, svClusterClient, config, vmKey,
+					map[string]string{
+						"ethernet0.coalescingScheme": "adapt",
+						"ethernet1.coalescingScheme": "disabled",
+						"ethernet2.coalescingScheme": "static",
+						"ethernet2.coalescingParams": "32",
+					})
+				Consistently(func(g Gomega) {
+					vm, err := utils.GetVirtualMachine(ctx, svClusterClient, vmNamespace, vmName)
+					g.Expect(err).NotTo(HaveOccurred())
+					ecMap := statusExtraConfigMap(vm)
+					g.Expect(ecMap).To(HaveKeyWithValue("ethernet1.coalescingScheme", "disabled"))
+					g.Expect(ecMap).To(HaveKeyWithValue("ethernet2.coalescingScheme", "static"))
+					g.Expect(ecMap).NotTo(HaveKey("ethernet1.coalescingParams"))
+				}, 30*time.Second, 5*time.Second).Should(Succeed())
+				return
+			}
+
+			By("Verifying the reorder leaves ExtraConfig consistent with the positional mapping")
+
+			Eventually(func(g Gomega) {
+				vm, err := utils.GetVirtualMachine(ctx, svClusterClient, vmNamespace, vmName)
+				g.Expect(err).NotTo(HaveOccurred())
+				cond := getNICExtraConfigCondition(vm)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+				ecMap := statusExtraConfigMap(vm)
+				g.Expect(ecMap).To(HaveKeyWithValue("ethernet0.coalescingScheme", "adapt"))
+
+				// Either each interface keeps its adapter, or eth1 and eth2
+				// swap adapters as their positions did.
+				kept := ecMap["ethernet1.coalescingScheme"] == "disabled" &&
+					ecMap["ethernet2.coalescingScheme"] == "static" &&
+					ecMap["ethernet2.coalescingParams"] == "32"
+				swapped := ecMap["ethernet1.coalescingScheme"] == "static" &&
+					ecMap["ethernet1.coalescingParams"] == "32" &&
+					ecMap["ethernet2.coalescingScheme"] == "disabled"
+				if swapped {
+					_, stale := ecMap["ethernet2.coalescingParams"]
+					g.Expect(stale).To(BeFalse(), "ethernet2.coalescingParams must be cleared after the swap")
+				}
+				g.Expect(kept || swapped).To(BeTrue(),
+					"status.extraConfig %v matches neither mapping", ecMap)
+			}, config.GetIntervals("default", "wait-vm-nic-extra-config-synced")...).Should(Succeed())
+		})
+
+	It("keeps NIC tuning on each adapter when a network interface is added while powered off",
+		Label("core-functional", "experimental"), func() {
+			skipper.SkipUnlessSupervisorCapabilityEnabled(input.Config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
+
+			vmName := "nic-ec-add-" + capiutil.RandomString(5)
+			vmKey := types.NamespacedName{Namespace: vmNamespace, Name: vmName}
+
+			By("Creating a powered-off VM with CoalescingScheme=Adapt on eth0")
+
+			vm := buildNICExtraConfigVM(
+				nicExtraConfigVMOptions{
+					Name:         vmName,
+					Namespace:    vmNamespace,
+					ClassName:    clusterResources.VMClassName,
+					ImageName:    linuxVMIName,
+					StorageClass: clusterResources.StorageClassName,
+					PowerState:   vmopv1.VirtualMachinePowerStateOff,
+					VMXNet3: &vmopv1.VirtualMachineNetworkInterfaceVMXNet3Spec{
+						CoalescingScheme: ptr.To(vmopv1.CoalescingSchemeAdapt),
+					},
+				},
+			)
+			vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vm, input.SkipCleanup)
+
+			vmoperator.WaitForVirtualMachineConditionCreated(ctx, config, svClusterClient, vmNamespace, vmName)
+			waitForNICExtraConfigSyncedWithExtraConfig(ctx, svClusterClient, config, vmKey,
+				"ethernet0.coalescingScheme", "adapt")
+
+			moid := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, vmNamespace, vmName)
+			Expect(moid).NotTo(BeEmpty(), "failed to resolve MoRef for %s", vmName)
+			moRef := vimtypes.ManagedObjectReference{Type: "VirtualMachine", Value: moid}
+			vcClient := vcenter.NewVimClientFromKubeconfig(ctx, clusterProxy.GetKubeconfigPath())
+			DeferCleanup(func() {
+				vcenter.LogoutVimClient(vcClient)
+			})
+			propCollector := property.DefaultCollector(vcClient)
+
+			keys, err := ethernetCardKeys(ctx, propCollector, moRef)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keys).To(HaveLen(1), "VM %s should have one EthernetCard", vmName)
+			eth0Key := keys[0]
+
+			By("Adding eth1 with CoalescingScheme=Static and CoalescingParams=32")
+
+			schemeStatic := vmopv1.CoalescingSchemeStatic
+			params32 := "32"
+			Eventually(func() error {
+				return vmoperator.PatchVirtualMachine(ctx, svClusterClient, vmNamespace, vmName, func(vm *vmopv1.VirtualMachine) error {
+					if vm.Spec.Network == nil || len(vm.Spec.Network.Interfaces) != 1 {
+						return fmt.Errorf("expected one network interface, got %v", vm.Spec.Network)
+					}
+					iface := *vm.Spec.Network.Interfaces[0].DeepCopy()
+					iface.Name = "eth1"
+					iface.VMXNet3 = &vmopv1.VirtualMachineNetworkInterfaceVMXNet3Spec{
+						CoalescingScheme: &schemeStatic,
+						CoalescingParams: &params32,
+					}
+					vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, iface)
+					return nil
+				}, ctrlclient.MergeFromWithOptimisticLock{})
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(),
+				"Timed out adding eth1 to VM %s", vmName)
+
+			var eth1Key int32
+			Eventually(func(g Gomega) {
+				keys, err := ethernetCardKeys(ctx, propCollector, moRef)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(keys).To(HaveLen(2), "VM should have two EthernetCards")
+				g.Expect(keys).To(ContainElement(eth0Key), "eth0's EthernetCard must be kept")
+				for _, k := range keys {
+					if k != eth0Key {
+						eth1Key = k
+					}
+				}
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(),
+				"Timed out waiting for VM %s to have a second EthernetCard", vmName)
+
+			By("Powering on the VM")
+
+			vmoperator.PowerOnVirtualMachineAndWait(ctx, config, svClusterClient, vmNamespace, vmName)
+
+			By("Verifying eth0's tuning is intact and eth1's adapter has eth1's tuning")
+
+			eth0Prefix := fmt.Sprintf("ethernet%d.", eth0Key-4000)
+			eth1Prefix := fmt.Sprintf("ethernet%d.", eth1Key-4000)
 			waitForNICExtraConfigSyncedWithExtraConfigs(ctx, svClusterClient, config, vmKey,
 				map[string]string{
-					"ethernet1.coalescingScheme": "static",
-					"ethernet1.coalescingParams": "32",
-					"ethernet2.coalescingScheme": "disabled",
+					eth0Prefix + "coalescingScheme": "adapt",
+					eth1Prefix + "coalescingScheme": "static",
+					eth1Prefix + "coalescingParams": "32",
 				})
-			waitForNICExtraConfigSyncedWithExtraConfigAbsent(ctx, svClusterClient, config, vmKey,
-				"ethernet2.coalescingParams")
+
+			finalVM, err := utils.GetVirtualMachine(ctx, svClusterClient, vmNamespace, vmName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(statusExtraConfigMap(finalVM)).NotTo(HaveKey(eth0Prefix+"coalescingParams"),
+				"eth1's tuning must not land on eth0's adapter")
+			Expect(finalVM.Status.PowerState).To(Equal(vmopv1.VirtualMachinePowerStateOn))
 		})
 }

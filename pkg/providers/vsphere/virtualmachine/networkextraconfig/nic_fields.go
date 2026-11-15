@@ -10,6 +10,7 @@ import (
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 )
@@ -45,13 +46,12 @@ type nicFieldDef struct {
 		ci vimtypes.VirtualMachineConfigInfo,
 		cs *vimtypes.VirtualMachineConfigSpec,
 	) bool
-	// apply writes the desired value to cs.DeviceChange.
+	// apply writes the desired value to mutable, the single device in the
+	// ConfigSpec's device changes that edits or adds the matched device (see
+	// findOrCreateDeviceEdit).
 	apply func(
-		vm vmopv1.VirtualMachine,
 		iface vmopv1.VirtualMachineNetworkInterfaceSpec,
-		dev vimtypes.BaseVirtualDevice,
-		ci vimtypes.VirtualMachineConfigInfo,
-		cs *vimtypes.VirtualMachineConfigSpec,
+		mutable vimtypes.BaseVirtualDevice,
 	)
 }
 
@@ -85,10 +85,13 @@ var nicFields = []nicFieldDef{
 			}
 			return ptr.Deref(vmxnet3.Uptv2Enabled) != desiredUPTv2Enabled(iface)
 		},
-		apply: func(_ vmopv1.VirtualMachine, iface vmopv1.VirtualMachineNetworkInterfaceSpec, dev vimtypes.BaseVirtualDevice, _ vimtypes.VirtualMachineConfigInfo, cs *vimtypes.VirtualMachineConfigSpec) {
-			mutable := findOrCreateDeviceEdit(cs, dev)
+		apply: func(iface vmopv1.VirtualMachineNetworkInterfaceSpec, mutable vimtypes.BaseVirtualDevice) {
+			vmxnet3, ok := mutable.(*vimtypes.VirtualVmxnet3)
+			if !ok {
+				return
+			}
 			v := desiredUPTv2Enabled(iface)
-			mutable.(*vimtypes.VirtualVmxnet3).Uptv2Enabled = &v
+			vmxnet3.Uptv2Enabled = &v
 		},
 	},
 	{
@@ -120,8 +123,7 @@ var nicFields = []nicFieldDef{
 			}
 			return *current != *desired
 		},
-		apply: func(_ vmopv1.VirtualMachine, iface vmopv1.VirtualMachineNetworkInterfaceSpec, dev vimtypes.BaseVirtualDevice, _ vimtypes.VirtualMachineConfigInfo, cs *vimtypes.VirtualMachineConfigSpec) {
-			mutable := findOrCreateDeviceEdit(cs, dev)
+		apply: func(iface vmopv1.VirtualMachineNetworkInterfaceSpec, mutable vimtypes.BaseVirtualDevice) {
 			mutable.GetVirtualDevice().NumaNode = desiredVNUMANodeID(iface)
 		},
 	},
@@ -135,6 +137,8 @@ var nicFields = []nicFieldDef{
 // computation, which must not stamp not-yet-confirmed values onto vmCtx.MoVM.
 // Returns the names of blocked (prerequisite failure) and blockedPowerOff
 // (hot-plug not possible) fields either way.
+//
+// It is ReconcileNICFieldsWithChanges without a network plan.
 func ReconcileNICFields(
 	vm vmopv1.VirtualMachine,
 	iface vmopv1.VirtualMachineNetworkInterfaceSpec,
@@ -143,8 +147,32 @@ func ReconcileNICFields(
 	cs *vimtypes.VirtualMachineConfigSpec,
 	dryRun bool,
 ) (blocked, blockedPowerOff []string) {
+	return ReconcileNICFieldsWithChanges(vm, iface, dev, ci, cs, nil, dryRun)
+}
+
+// ReconcileNICFieldsWithChanges is ReconcileNICFields for a pass whose
+// network plan owns changes, the network device changes of the same
+// reconfigure. When dryRun is false and changes is not nil, the fields are
+// applied to the plan's copy of dev, or to the new device the plan adds when
+// dev is that device, rather than to a second Edit of dev; a device the plan
+// removes is not edited; and dev itself is never mutated. See
+// findOrCreateDeviceEdit.
+func ReconcileNICFieldsWithChanges(
+	vm vmopv1.VirtualMachine,
+	iface vmopv1.VirtualMachineNetworkInterfaceSpec,
+	dev vimtypes.BaseVirtualDevice,
+	ci vimtypes.VirtualMachineConfigInfo,
+	cs *vimtypes.VirtualMachineConfigSpec,
+	changes *network.DeviceChanges,
+	dryRun bool,
+) (blocked, blockedPowerOff []string) {
 	hwVer, _ := vimtypes.ParseHardwareVersion(ci.Version)
 	poweredOn := vm.Status.PowerState == vmopv1.VirtualMachinePowerStateOn
+
+	var (
+		mutable  vimtypes.BaseVirtualDevice
+		resolved bool
+	)
 
 	for _, f := range nicFields {
 		// Skip early if current state already matches desired.
@@ -170,7 +198,13 @@ func ReconcileNICFields(
 		if poweredOn && !f.hotPluggable(vm, iface, dev, ci) {
 			blockedPowerOff = append(blockedPowerOff, f.fieldName)
 		} else if !dryRun {
-			f.apply(vm, iface, dev, ci, cs)
+			if !resolved {
+				mutable = findOrCreateDeviceEdit(cs, changes, dev)
+				resolved = true
+			}
+			if mutable != nil {
+				f.apply(iface, mutable)
+			}
 		}
 	}
 	return blocked, blockedPowerOff
@@ -203,24 +237,98 @@ func desiredVNUMANodeID(iface vmopv1.VirtualMachineNetworkInterfaceSpec) *int32 
 	return iface.VNUMANodeID
 }
 
-// findOrCreateDeviceEdit finds the existing Edit DeviceChange entry in cs for
-// the device matching dev's key. If none is found, dev is appended directly as
-// a new Edit entry. Returns the mutable device in the (found or new) entry,
-// ensuring at most one Edit entry per device key regardless of how many fields
-// need updating or whether another reconciler already added an entry.
-func findOrCreateDeviceEdit(cs *vimtypes.VirtualMachineConfigSpec, dev vimtypes.BaseVirtualDevice) vimtypes.BaseVirtualDevice {
+// findOrCreateDeviceEdit returns the single mutable device through which dev
+// is edited in this reconfigure, so that cs carries at most one Edit per
+// device key regardless of how many fields need updating or which other
+// contributor edited the device first. It returns nil when dev must not be
+// edited. In order:
+//
+//  1. A device that changes removes, or that cs already removes, is not
+//     edited, so cs never carries both an Edit and a Remove for one key.
+//  2. An Edit or Add of the same key already in cs is reused. With a plan,
+//     this is the plan's own copy, which addNetworkChanges put in cs.
+//  3. With a plan, its copy of the device (changes.Lookup) is reused; it is
+//     the device the plan's Edit or Add carries.
+//  4. Otherwise a new Edit is appended to cs. With a plan, the new Edit
+//     carries a deep copy of dev, so the observed device is never mutated.
+//     Without a plan, dev itself is appended, as before the network planner
+//     existed.
+//
+// The new Edit is appended to cs rather than recorded in changes: changes
+// holds only the plan's own network changes, which is what decides whether
+// the reconfigure is guarded by the VM's ChangeVersion.
+func findOrCreateDeviceEdit(
+	cs *vimtypes.VirtualMachineConfigSpec,
+	changes *network.DeviceChanges,
+	dev vimtypes.BaseVirtualDevice) vimtypes.BaseVirtualDevice {
+
 	key := dev.GetVirtualDevice().Key
+	if changes != nil && changes.Removed(key) {
+		return nil
+	}
+
+	var existing vimtypes.BaseVirtualDevice
 	for _, dc := range cs.DeviceChange {
-		if spec, ok := dc.(*vimtypes.VirtualDeviceConfigSpec); ok {
-			if spec.Operation == vimtypes.VirtualDeviceConfigSpecOperationEdit &&
-				spec.Device != nil && spec.Device.GetVirtualDevice().Key == key {
-				return spec.Device
+		if dc == nil {
+			continue
+		}
+		spec := dc.GetVirtualDeviceConfigSpec()
+		if spec == nil || spec.Device == nil || spec.Device.GetVirtualDevice().Key != key {
+			continue
+		}
+		switch spec.Operation {
+		case vimtypes.VirtualDeviceConfigSpecOperationRemove:
+			return nil
+		case vimtypes.VirtualDeviceConfigSpecOperationEdit, vimtypes.VirtualDeviceConfigSpecOperationAdd:
+			if existing == nil {
+				existing = spec.Device
 			}
 		}
 	}
+	if existing != nil {
+		return existing
+	}
+
+	if changes == nil {
+		cs.DeviceChange = append(cs.DeviceChange, &vimtypes.VirtualDeviceConfigSpec{
+			Device:    dev,
+			Operation: vimtypes.VirtualDeviceConfigSpecOperationEdit,
+		})
+		return dev
+	}
+
+	if planned, ok := changes.Lookup(key); ok {
+		return planned
+	}
+
+	// A device with a temporary key is one that is being added, and only its
+	// Add may carry it.
+	if key < 0 {
+		return nil
+	}
+
+	mutable, err := copyDevice(dev)
+	if err != nil {
+		return nil
+	}
 	cs.DeviceChange = append(cs.DeviceChange, &vimtypes.VirtualDeviceConfigSpec{
-		Device:    dev,
+		Device:    mutable,
 		Operation: vimtypes.VirtualDeviceConfigSpecOperationEdit,
 	})
-	return dev
+	return mutable
+}
+
+// copyDevice returns a deep copy of a device that keeps its concrete type.
+// The device is wrapped in a device config spec because the copy facility
+// round-trips its argument through JSON, which records the concrete type of
+// an interface-typed field but not of the root value.
+func copyDevice(dev vimtypes.BaseVirtualDevice) (vimtypes.BaseVirtualDevice, error) {
+	spec, err := vimtypes.DeepCopy(vimtypes.VirtualDeviceConfigSpec{Device: dev})
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy device %d: %w", dev.GetVirtualDevice().Key, err)
+	}
+	if spec.Device == nil {
+		return nil, fmt.Errorf("failed to copy device %d", dev.GetVirtualDevice().Key)
+	}
+	return spec.Device, nil
 }

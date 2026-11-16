@@ -141,6 +141,14 @@ Environment: vCenter 9.2.0 build 25917935 (API 9.1.2.0), ESXi 9.2.0 build 259178
 
 Not covered: other card types (SR-IOV, VRDMA), NSX-T and VPC backings, powered-off variants, pinned MACs, simultaneous attachment change, failed or uncertain tasks, and operator restart.
 
+### Implementation verification on a Supervisor, 2026-11-15
+
+Same vCenter/ESXi 9.2 VDS environment, with the hot-plug capability enabled and VM Operator built from the implementation branch. The VMs used Photon OS 5.0.
+
+- Parity (after T011–T014, T023, T032 and again after T020): an existing Cloud-Init VM with one interface kept its adapter key, MAC, IP, and all conditions after the operator was redeployed. The only reconfigure was the routine backup ExtraConfig refresh.
+- G15 (T032): a LinuxPrep VM customized at first power-on and recorded both customization hashes. After power-off, adding a second interface, and power-on, vCenter shows no second customization task; the without-NICs hash was unchanged and the legacy hash was refreshed. The new adapter has no guest status entry, as expected while per-interface status is off and the guest has not configured it (AC21).
+- G2 (T020): adding an interface on a nonexistent network to a running VM left it running with `VirtualMachineNetworkReady=False`, reason `ProviderPending`, naming the interface. A power-off request succeeded (previously blocked). A power-on request was held for 60 s with `VirtualMachinePowerStateSynced=False`. Removing the interface let the VM power on with its remaining adapter unchanged, and the pending provider resource was deleted. Before T022, each requeued pass emitted an `UpdateFailure` Event; T022 removes that.
+
 ## Draft decisions
 
 Keep old backing plus disconnection as the baseline; make placeholder backing optional. Use explicit readiness data rather than conditions for control flow. Preserve unit-number identity and lazy bootstrap construction. Prefer unique matching evidence over destructive guesses. Keep old provider resources until observed detachment, even if this delays cleanup. Gate rollout of platform-dependent cases on the experiments above.

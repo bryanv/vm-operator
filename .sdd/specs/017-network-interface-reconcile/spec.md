@@ -4,7 +4,7 @@
   - **Fork**: `bryanv/vm-operator`
   - **PR target**: `vmware-tanzu/vm-operator`
 - **Created**: 2026-10-18
-- **Status**: Draft
+- **Status**: In Progress (implementation through T024; see tasks.md "Implementation progress")
 - **Epic**: vmop-4418
 - **Related work**: [NIC unit numbers](../008-nic-unit-numbers/spec.md), vmop-3982 — this spec is the powered-on and edit-in-place follow-on that spec 008 task T032 (vmop-4092) commits to; [device and bootstrap separation](../004-remove-network-interface-result/plan.md), vmop-3999
 

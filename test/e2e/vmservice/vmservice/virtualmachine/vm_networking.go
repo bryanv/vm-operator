@@ -19,9 +19,15 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
+	vpcv1alpha1 "github.com/vmware-tanzu/nsx-operator/pkg/apis/vpc/v1alpha1"
+
+	ncpv1alpha1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
 
 	vmopv1a2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
@@ -732,4 +738,150 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
 		}, config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed(), "VirtualMachine %s network is not ready", vmName)
 	})
+
+	// Spec 017 T021 (G8): a provider resource that no interface references
+	// any longer is retired once the VM's hardware no longer uses its
+	// attachment, while the resources of the remaining interfaces are kept.
+	It("Should delete the provider resource of a removed network interface once its Ethernet card is gone", Label("experimental"), func() {
+		skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
+
+		const addedInterfaceName = "eth1"
+
+		vmToCreate := &vmopv1a2.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: input.WCPNamespaceName,
+				Name:      vmName,
+			},
+			Spec: vmopv1a2.VirtualMachineSpec{
+				ImageName:    linuxVMIName,
+				ClassName:    clusterResources.VMClassName,
+				StorageClass: clusterResources.StorageClassName,
+				PowerState:   vmopv1a2.VirtualMachinePowerStateOff,
+			},
+		}
+		vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vmToCreate, false)
+		vmoperator.WaitForVirtualMachineToExist(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		vmoperator.WaitForVirtualMachineMOID(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		vmMoID := vmoperator.GetVirtualMachineMOID(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+		vmMoRef := types.ManagedObjectReference{Type: "VirtualMachine", Value: vmMoID}
+
+		vCenterClient := vcenter.NewVimClientFromKubeconfig(ctx, clusterProxy.GetKubeconfigPath())
+		propCollector := property.DefaultCollector(vCenterClient)
+
+		By("The first network interface has one provider resource")
+		var firstResources map[string]k8stypes.UID
+		Eventually(func(g Gomega) {
+			var err error
+			firstResources, err = ownedNetworkProviderResources(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(firstResources).To(HaveLen(1))
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VirtualMachine %s does not have one network provider resource", vmName)
+
+		By("Add a second network interface on the same network")
+		Eventually(func(g Gomega) {
+			g.Expect(vmoperator.PatchVirtualMachine(ctx, svClusterClient, input.WCPNamespaceName, vmName, func(vm *vmopv1.VirtualMachine) error {
+				if vm.Spec.Network == nil || len(vm.Spec.Network.Interfaces) != 1 {
+					return fmt.Errorf("expected one network interface, got %+v", vm.Spec.Network)
+				}
+				added := *vm.Spec.Network.Interfaces[0].DeepCopy()
+				added.Name = addedInterfaceName
+				added.MACAddr = ""
+				added.UnitNumber = nil
+				vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, added)
+				return nil
+			}, ctrlclient.MergeFromWithOptimisticLock{})).To(Succeed())
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out adding a network interface to VirtualMachine %s", vmName)
+
+		By("Wait for the second EthernetCard and provider resource")
+		var addedResources map[string]k8stypes.UID
+		Eventually(func(g Gomega) {
+			var vmMO mo.VirtualMachine
+			g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config"}, &vmMO)).To(Succeed())
+			ethCards := object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
+			g.Expect(ethCards).To(HaveLen(2), "VM should have two EthernetCards configured")
+
+			resources, err := ownedNetworkProviderResources(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resources).To(HaveLen(2))
+			addedResources = map[string]k8stypes.UID{}
+			for name, uid := range resources {
+				if _, ok := firstResources[name]; !ok {
+					addedResources[name] = uid
+				}
+			}
+			g.Expect(addedResources).To(HaveLen(1))
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VirtualMachine %s was not reconfigured with a second network interface", vmName)
+
+		By("Power on the VM")
+		vmoperator.PowerOnVirtualMachineAndWait(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+
+		By("Power off the VM and remove the second network interface")
+		vmoperator.PowerOffVirtualMachineAndWait(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		Eventually(func(g Gomega) {
+			g.Expect(vmoperator.PatchVirtualMachine(ctx, svClusterClient, input.WCPNamespaceName, vmName, func(vm *vmopv1.VirtualMachine) error {
+				if vm.Spec.Network == nil || len(vm.Spec.Network.Interfaces) != 2 {
+					return fmt.Errorf("expected two network interfaces, got %+v", vm.Spec.Network)
+				}
+				vm.Spec.Network.Interfaces = vm.Spec.Network.Interfaces[:1]
+				return nil
+			}, ctrlclient.MergeFromWithOptimisticLock{})).To(Succeed())
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out removing a network interface from VirtualMachine %s", vmName)
+
+		By("Power on the VM")
+		vmoperator.PowerOnVirtualMachineAndWait(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+
+		By("The removed interface's provider resource is deleted and the remaining one is kept")
+		Eventually(func(g Gomega) {
+			var vmMO mo.VirtualMachine
+			g.Expect(propCollector.RetrieveOne(ctx, vmMoRef, []string{"config"}, &vmMO)).To(Succeed())
+			ethCards := object.VirtualDeviceList(vmMO.Config.Hardware.Device).SelectByType((*types.VirtualEthernetCard)(nil))
+			g.Expect(ethCards).To(HaveLen(1), "VM should have one EthernetCard configured")
+
+			resources, err := ownedNetworkProviderResources(ctx, svClusterClient, input.WCPNamespaceName, vmName)
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resources).To(Equal(firstResources))
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VirtualMachine %s still has the provider resource of its removed network interface", vmName)
+	})
+}
+
+// ownedNetworkProviderResources returns the UIDs of the network provider
+// resources the VM owns, keyed by kind and name. A provider resource kind that
+// the cluster does not serve is skipped.
+func ownedNetworkProviderResources(
+	ctx context.Context,
+	c ctrlclient.Client,
+	namespace, vmName string) (map[string]k8stypes.UID, error) {
+
+	lists := []ctrlclient.ObjectList{
+		&netopv1alpha1.NetworkInterfaceList{},
+		&ncpv1alpha1.VirtualNetworkInterfaceList{},
+		&vpcv1alpha1.SubnetPortList{},
+	}
+
+	out := map[string]k8stypes.UID{}
+	for _, list := range lists {
+		if err := c.List(ctx, list, ctrlclient.InNamespace(namespace)); err != nil {
+			if meta.IsNoMatchError(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to list %T: %w", list, err)
+		}
+		items, err := meta.ExtractList(list)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract %T: %w", list, err)
+		}
+		for _, item := range items {
+			obj, ok := item.(ctrlclient.Object)
+			if !ok {
+				continue
+			}
+			for _, ref := range obj.GetOwnerReferences() {
+				if ref.Kind == "VirtualMachine" && ref.Name == vmName {
+					out[fmt.Sprintf("%T/%s", obj, obj.GetName())] = obj.GetUID()
+					break
+				}
+			}
+		}
+	}
+	return out, nil
 }

@@ -34,6 +34,8 @@ var suite = builder.NewTestSuiteForControllerWithContext(
 				config.AsyncSignalEnabled = false
 				config.AsyncCreateEnabled = false
 				config.Features.BringYourOwnNetworkInterface = true
+				// Watch the NetOP NetworkInterface, the only network
+				// interface CRD the integration environment installs.
 				config.ClusterNetworkProviderTypes = string(pkgcfg.NetworkProviderTypeVDS)
 			}))),
 	virtualmachine.AddToManager,

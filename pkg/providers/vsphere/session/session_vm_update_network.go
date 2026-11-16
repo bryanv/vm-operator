@@ -10,7 +10,6 @@ import (
 
 	"github.com/vmware/govmomi/object"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
@@ -175,9 +174,9 @@ func setNetworkReadyCondition(
 	network.SetReadyCondition(vmCtx.VM, hasInterfaces, pending, nil)
 }
 
-// finishNetwork runs when the pass submitted no reconfigure task. It deletes
-// the provider resources that no desired interface references any longer,
-// and then bootstraps the guest, but only when the network is ready.
+// finishNetwork runs when the pass submitted no reconfigure task. It
+// bootstraps the guest, but only when the network is ready. Retiring unused
+// provider resources is independent of bootstrap; see retireNetworkResources.
 //
 // Bootstrap is built from the observation: each interface's provider
 // resource, its spec, and the MAC address of its observed adapter. While the
@@ -199,8 +198,6 @@ func (s *Session) finishNetwork(
 			"pending", readiness.PendingNames())
 		return nil
 	}
-
-	s.deleteOrphanedNetworkInterfaces(vmCtx, st)
 
 	bootstraps, err := network.BootstrapsFromInfo(vmCtx, vmCtx.VM, st.Observed)
 	if err != nil {
@@ -231,28 +228,49 @@ func (s *Session) finishNetwork(
 		bootstrapArgs)
 }
 
-// deleteOrphanedNetworkInterfaces deletes the VM-owned provider resources that
-// no desired interface references, as the update path has done after a pass
-// that changed nothing. It runs only with MutableNetworks while the VM is
-// powered off and the network is ready, so no adapter can still use such a
-// resource. Failures are logged, as before.
+// retireNetworkResources retires the VM-owned provider resources that no
+// desired interface references, with network.RetireProviderResources, and
+// stores the results on st.
 //
-// TODO(T021): Replace this with RetireProviderResources, which deletes with
-// UID preconditions and retries failures.
-func (s *Session) deleteOrphanedNetworkInterfaces(
+// It runs at the end of every powered-on or powered-off update pass that
+// reached reconcileNetwork, whatever the pass did afterward and regardless of
+// network readiness, bootstrap, and MutableNetworks. Suspended, paused, and
+// task-busy passes never reach it, so they keep their lifecycle restrictions.
+// It reads st.Submitted when it runs, so it retains every candidate on a pass
+// that submitted network device changes, because their result is not
+// observed yet.
+//
+// Retirement never fails the pass and never blocks readiness or power-on. A
+// failed retirement is logged and recorded on st, and it asks for a bounded
+// retry through st.RequeueAfter.
+func (s *Session) retireNetworkResources(
 	vmCtx pkgctx.VirtualMachineContext,
 	st *network.ReconcileState) {
 
-	if !pkgcfg.FromContext(vmCtx).Features.MutableNetworks ||
-		vmCtx.MoVM.Runtime.PowerState != vimtypes.VirtualMachinePowerStatePoweredOff {
-		return
+	st.Retirement = network.RetireProviderResources(vmCtx, network.RetireInput{
+		Client:    s.K8sClient,
+		VM:        vmCtx.VM,
+		Observed:  st.Observed,
+		Submitted: st.Submitted,
+	})
+
+	for _, r := range st.Retirement {
+		switch r.Outcome {
+		case network.RetireOutcomeDeleted:
+			vmCtx.Logger.Info("Deleted unused network provider resource",
+				"type", r.Ref.Type, "name", r.Ref.Name, "uid", r.Ref.UID)
+		case network.RetireOutcomeFailed:
+			vmCtx.Logger.Error(r.Err, "Failed to retire unused network provider resource",
+				"type", r.Ref.Type, "name", r.Ref.Name, "reason", r.Reason)
+		case network.RetireOutcomeRetained:
+			vmCtx.Logger.V(4).Info("Retaining unused network provider resource",
+				"type", r.Ref.Type, "name", r.Ref.Name,
+				"reason", r.Reason, "message", r.Message)
+		}
 	}
 
-	for _, obj := range network.OrphanedNetworkInterfaces(st.Observed) {
-		if err := s.K8sClient.Delete(vmCtx, obj); ctrlclient.IgnoreNotFound(err) != nil {
-			vmCtx.Logger.Error(err, "failed to delete orphaned network interface",
-				"name", obj.GetName())
-		}
+	if d := network.RetireRequeueAfter(st.Retirement); d > st.RequeueAfter {
+		st.RequeueAfter = d
 	}
 }
 

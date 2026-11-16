@@ -303,6 +303,11 @@ func (s *Session) reconcilePoweredOffOrPoweredOnVM(
 	networkErr := s.reconcileNetwork(vmCtx, st)
 	defer setNetworkReadyCondition(vmCtx, st)
 
+	// Unused provider resources are retired on every exit path from here,
+	// independently of readiness and bootstrap. The deferred call reads
+	// st.Submitted when it runs, i.e. after any reconfigure of this pass.
+	defer s.retireNetworkResources(vmCtx, st)
+
 	switch vmCtx.MoVM.Runtime.PowerState {
 	case vimtypes.VirtualMachinePowerStatePoweredOn:
 

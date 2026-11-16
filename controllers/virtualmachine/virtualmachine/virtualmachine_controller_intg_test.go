@@ -576,6 +576,111 @@ func intgTestsReconcile() {
 			})
 		})
 
+		// Spec 017 T022: a pending interface ends the pass without a failure
+		// and relies on the provider resource watch to wake the VM when the
+		// resource becomes ready, fails, or is deleted.
+		It("Reconciles after a network interface the VM owns is updated or deleted", func() {
+			const (
+				netIfName = "dummy-vm-eth0"
+				noNetIf   = "none"
+			)
+
+			netIfKey := client.ObjectKey{Namespace: vm.Namespace, Name: netIfName}
+
+			// Reflect the network interface's current status onto the VM's
+			// status on every reconcile, as the PVC test does. Only the watch
+			// can advance it after the network interface changes.
+			providerfake.SetCreateOrUpdateFunction(
+				ctx,
+				intgFakeVMProvider,
+				func(_ context.Context, vm *vmopv1.VirtualMachine) error {
+					conditions.MarkTrue(vm, vmopv1.VirtualMachineConditionCreated)
+
+					netIf := &netopv1alpha1.NetworkInterface{}
+					switch err := ctx.Client.Get(ctx, netIfKey, netIf); {
+					case err == nil:
+						vm.Status.InstanceUUID = netIf.Status.NetworkID
+					case apierrors.IsNotFound(err):
+						vm.Status.InstanceUUID = noNetIf
+					}
+					return nil
+				},
+			)
+
+			Expect(ctx.Client.Create(ctx, vm)).To(Succeed())
+			waitForVirtualMachineFinalizer(ctx, vmKey)
+
+			created := getVirtualMachine(ctx, vmKey)
+			Expect(created).ToNot(BeNil())
+
+			netIf := &netopv1alpha1.NetworkInterface{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      netIfName,
+					Namespace: vm.Namespace,
+					OwnerReferences: []metav1.OwnerReference{{
+						APIVersion:         vmopv1.GroupVersion.String(),
+						Kind:               "VirtualMachine",
+						Name:               created.Name,
+						UID:                created.UID,
+						Controller:         ptr.To(true),
+						BlockOwnerDeletion: ptr.To(true),
+					}},
+				},
+			}
+			Expect(ctx.Client.Create(ctx, netIf)).To(Succeed())
+
+			By("VirtualMachine should be reconciled due to the pending network interface", func() {
+				Eventually(func(g Gomega) {
+					vm := getVirtualMachine(ctx, vmKey)
+					g.Expect(vm).NotTo(BeNil())
+					g.Expect(vm.Status.InstanceUUID).To(BeEmpty())
+					g.Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionCreated)).To(BeTrue())
+				}).Should(Succeed())
+			})
+
+			By("VirtualMachine should be reconciled when the network interface becomes ready", func() {
+				Expect(ctx.Client.Get(ctx, netIfKey, netIf)).To(Succeed())
+				netIf.Status.NetworkID = "dvportgroup-ready"
+				netIf.Status.Conditions = []netopv1alpha1.NetworkInterfaceCondition{{
+					Type:   netopv1alpha1.NetworkInterfaceReady,
+					Status: corev1.ConditionTrue,
+				}}
+				Expect(ctx.Client.Update(ctx, netIf)).To(Succeed())
+
+				Eventually(func(g Gomega) {
+					vm := getVirtualMachine(ctx, vmKey)
+					g.Expect(vm).NotTo(BeNil())
+					g.Expect(vm.Status.InstanceUUID).To(Equal("dvportgroup-ready"))
+				}).Should(Succeed())
+			})
+
+			By("VirtualMachine should be reconciled when the network interface fails", func() {
+				Expect(ctx.Client.Get(ctx, netIfKey, netIf)).To(Succeed())
+				netIf.Status.NetworkID = "dvportgroup-failed"
+				netIf.Status.Conditions = []netopv1alpha1.NetworkInterfaceCondition{{
+					Type:   netopv1alpha1.NetworkInterfaceFailure,
+					Status: corev1.ConditionTrue,
+				}}
+				Expect(ctx.Client.Update(ctx, netIf)).To(Succeed())
+
+				Eventually(func(g Gomega) {
+					vm := getVirtualMachine(ctx, vmKey)
+					g.Expect(vm).NotTo(BeNil())
+					g.Expect(vm.Status.InstanceUUID).To(Equal("dvportgroup-failed"))
+				}).Should(Succeed())
+			})
+
+			By("VirtualMachine should be reconciled when the network interface is deleted", func() {
+				Expect(ctx.Client.Delete(ctx, netIf)).To(Succeed())
+
+				Eventually(func(g Gomega) {
+					vm := getVirtualMachine(ctx, vmKey)
+					g.Expect(vm).NotTo(BeNil())
+					g.Expect(vm.Status.InstanceUUID).To(Equal(noNetIf))
+				}).Should(Succeed())
+			})
+		})
+
 		It("Reconciles after VirtualMachine deletion", func() {
 			Expect(ctx.Client.Create(ctx, vm)).To(Succeed())
 			// Wait for initial reconcile.

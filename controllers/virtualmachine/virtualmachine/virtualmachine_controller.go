@@ -855,8 +855,15 @@ func (r *Reconciler) isVMICacheReady(ctx *pkgctx.VirtualMachineContext) bool {
 	return true
 }
 
+// filterNoRequeueErr returns the error to record in the result Event of a
+// reconcile. A NoRequeueError and a RequeueError are not failures: the former
+// stops reconciling on purpose, and the latter asks for a later reconcile,
+// e.g. a bounded retry while a network interface is pending, without failing
+// the pass. pkgerr.ResultFromError does not retry either one as an error, so
+// neither is recorded as a failure Event, and a requeued pass does not emit a
+// failure Event every time it runs.
 func filterNoRequeueErr(err error) error {
-	if pkgerr.IsNoRequeueError(err) {
+	if pkgerr.IsNoRequeueError(err) || pkgerr.IsRequeueError(err) {
 		return nil
 	}
 	return err

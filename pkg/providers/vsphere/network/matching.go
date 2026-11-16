@@ -148,7 +148,10 @@ func newMatcher(ctx context.Context, info *Info) *matcher {
 }
 
 // orphanedObjects returns the VM-owned provider resources that no desired
-// interface references, the same way ListOrphanedNetworkInterfaces does.
+// interface references. A resource is keyed by its provider type and name, so
+// resources with the same name from different network providers are distinct.
+// Every desired interface takes part, including the Pending, Failed, and
+// Unknown ones.
 func orphanedObjects(info *Info) []ctrlclient.Object {
 	if len(info.owned) == 0 {
 		return nil

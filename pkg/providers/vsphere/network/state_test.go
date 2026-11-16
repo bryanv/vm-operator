@@ -397,6 +397,33 @@ var _ = Describe("ReconcileState Readiness", Label(testlabels.API), func() {
 		Expect(r.Pending[0].Reason).To(Equal(network.ReadinessReasonObservationStale))
 	})
 
+	// Spec 017 T022: a readiness result is never carried over a change that
+	// the observation does not describe.
+	DescribeTable("is not ready after a change the observation does not describe",
+		func(change func()) {
+			Expect(st.Readiness(vmCtx).Ready()).To(BeTrue())
+
+			change()
+
+			r := st.Readiness(vmCtx)
+			Expect(r.Ready()).To(BeFalse())
+			Expect(r.Known).To(BeFalse())
+			Expect(r.Pending[0].Reason).To(Equal(network.ReadinessReasonObservationStale))
+		},
+		Entry("a spec change bumps the generation", func() {
+			vm.Generation++
+		}),
+		Entry("the schema upgrade backfills an interface's unit number", func() {
+			vm.Spec.Network.Interfaces[0].UnitNumber = ptr.To[int32](7)
+		}),
+		Entry("a snapshot revert changes the VM's configuration", func() {
+			vmCtx.MoVM.Config = &vimtypes.VirtualMachineConfigInfo{ChangeVersion: "cv-reverted"}
+		}),
+		Entry("the VM was recreated", func() {
+			vm.UID = "readiness-uid-2"
+		}),
+	)
+
 	It("is not ready when the hardware changed after the observation", func() {
 		vmCtx.MoVM.Config = &vimtypes.VirtualMachineConfigInfo{ChangeVersion: "cv-2"}
 		Expect(st.Readiness(vmCtx).Ready()).To(BeFalse())

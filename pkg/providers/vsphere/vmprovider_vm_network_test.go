@@ -35,8 +35,10 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
+	ctxop "github.com/vmware-tanzu/vm-operator/pkg/context/operation"
 	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
 	netsetutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube/networksettings"
@@ -1602,7 +1604,223 @@ func vmNetworkTests() {
 				Entry("VPC", builder.NetworkEnvVPC),
 			)
 		})
+
+		// Spec 017 T021 (G8): unused provider resources are retired from a
+		// fresh hardware observation, independently of bootstrap and power
+		// state, and never on a pass that submits network device changes.
+		Context("provider resource retirement", func() {
+			DescribeTableSubtree("with an interface moved to another network",
+				func(networkEnv builder.NetworkEnv) {
+					var np fakeNetworkProvider
+
+					BeforeEach(func() {
+						var providerType pkgcfg.NetworkProviderType
+						switch networkEnv {
+						case builder.NetworkEnvVDS:
+							providerType = pkgcfg.NetworkProviderTypeVDS
+							np = vdsNetworkProvider{}
+						case builder.NetworkEnvNSXT:
+							providerType = pkgcfg.NetworkProviderTypeNSXT
+							np = nsxtNetworkProvider{}
+						case builder.NetworkEnvVPC:
+							providerType = pkgcfg.NetworkProviderTypeVPC
+							np = vpcNetworkProvider{}
+						default:
+							Fail(fmt.Sprintf("unexpected network env: %v", networkEnv))
+						}
+
+						testConfig.NumNetworks = 0
+						testConfig.WithNetworkConfig = []builder.VCSimNetworkConfig{
+							{Provider: providerType},
+							{Provider: providerType},
+						}
+
+						vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name: interfaceName0,
+									Network: &vmopv1common.PartialObjectRef{
+										TypeMeta: np.getTypeMeta(),
+										Name:     networkName0,
+									},
+								},
+							},
+						}
+					})
+
+					createVM := func(powerState vmopv1.VirtualMachinePowerState) *object.VirtualMachine {
+						GinkgoHelper()
+
+						Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(MatchError(network.ErrNetworkInterfaceNotReady))
+						np.simulateInterfaceReconcile(ctx, vm, vm.Spec.Network.Interfaces[0], 0)
+
+						vm.Spec.PowerState = powerState
+						Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+						Expect(vm.Status.UniqueID).ToNot(BeEmpty())
+						return ctx.GetVMFromMoID(vm.Status.UniqueID)
+					}
+
+					// onePass runs exactly one update pass, unlike
+					// createOrUpdateVM, which repeats until the VM converges.
+					onePass := func() error {
+						return vmProvider.CreateOrUpdateVirtualMachine(ctxop.WithContext(ctx), vm)
+					}
+
+					useNetwork := func(networkName string) {
+						vm.Spec.Network.Interfaces[0].Network.Name = networkName
+					}
+
+					It("retains the old resource while the adapter uses it and deletes it once the hardware no longer does", func() {
+						vcVM := createVM(vmopv1.VirtualMachinePowerStateOff)
+						oldCR := getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)
+						Expect(oldCR).ToNot(BeNil())
+
+						By("the old resource is retained while the new one is pending", func() {
+							useNetwork(networkName1)
+							Expect(pkgerr.IsRequeueError(onePass())).To(BeTrue())
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)).
+								To(HaveField("ObjectMeta.UID", oldCR.GetUID()))
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName1, interfaceName0)).ToNot(BeNil())
+						})
+
+						By("changing back to the old network cancels its retirement", func() {
+							useNetwork(networkName0)
+							Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)).
+								To(HaveField("ObjectMeta.UID", oldCR.GetUID()))
+							// The pending resource for the abandoned change was
+							// never attached, so it is retired instead.
+							np.assertNetworkInterfacesDNE(ctx, vm, networkName1, interfaceName0)
+						})
+
+						By("moving to the new network again", func() {
+							useNetwork(networkName1)
+							Expect(pkgerr.IsRequeueError(onePass())).To(BeTrue())
+							np.simulateInterfaceReconcile(ctx, vm, vm.Spec.Network.Interfaces[0], 1)
+						})
+
+						By("the pass that submits the change retains the old resource", func() {
+							err := onePass()
+							Expect(err).To(MatchError(vsphere.ErrReconfigure))
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)).
+								To(HaveField("ObjectMeta.UID", oldCR.GetUID()))
+						})
+
+						By("the next pass observes the new hardware and deletes the old resource", func() {
+							Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+							np.assertNetworkInterfacesDNE(ctx, vm, networkName0, interfaceName0)
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName1, interfaceName0)).ToNot(BeNil())
+
+							devList, err := vcVM.Device(ctx)
+							Expect(err).ToNot(HaveOccurred())
+							l := devList.SelectByType(&vimtypes.VirtualEthernetCard{})
+							Expect(l).To(HaveLen(1))
+							np.assertEthernetCard(ctx, l[0], vm.Spec.Network.Interfaces[0], 1)
+						})
+					})
+
+					It("does not retire anything on a pass that submits network device changes", func() {
+						createVM(vmopv1.VirtualMachinePowerStateOff)
+
+						By("abandoning a pending resource and adding an interface", func() {
+							useNetwork(networkName1)
+							vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces,
+								vmopv1.VirtualMachineNetworkInterfaceSpec{
+									Name: interfaceName1,
+									Network: &vmopv1common.PartialObjectRef{
+										TypeMeta: np.getTypeMeta(),
+										Name:     networkName1,
+									},
+								})
+							Expect(pkgerr.IsRequeueError(onePass())).To(BeTrue())
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName1, interfaceName0)).ToNot(BeNil())
+
+							np.simulateInterfaceReconcile(ctx, vm, vm.Spec.Network.Interfaces[1], 1)
+							useNetwork(networkName0)
+						})
+
+						By("the pass that adds the adapter retains the abandoned resource", func() {
+							// No adapter uses the abandoned resource, but the
+							// pass submits an Add, so its observation is stale.
+							Expect(onePass()).To(MatchError(vsphere.ErrReconfigure))
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName1, interfaceName0)).ToNot(BeNil())
+						})
+
+						By("the next pass retires it", func() {
+							Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+							np.assertNetworkInterfacesDNE(ctx, vm, networkName1, interfaceName0)
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)).ToNot(BeNil())
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName1, interfaceName1)).ToNot(BeNil())
+						})
+					})
+
+					It("retires an unused resource while the VM is powered on", func() {
+						vcVM := createVM(vmopv1.VirtualMachinePowerStateOn)
+						oldCR := getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)
+						Expect(oldCR).ToNot(BeNil())
+
+						By("a change deferred until power-off retains the resource the adapter uses", func() {
+							useNetwork(networkName1)
+							Expect(pkgerr.IsRequeueError(onePass())).To(BeTrue())
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)).
+								To(HaveField("ObjectMeta.UID", oldCR.GetUID()))
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName1, interfaceName0)).ToNot(BeNil())
+						})
+
+						By("the abandoned resource is retired without powering off", func() {
+							useNetwork(networkName0)
+							Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+							np.assertNetworkInterfacesDNE(ctx, vm, networkName1, interfaceName0)
+							Expect(getNetworkInterfaceCR(ctx, np, vm, networkName0, interfaceName0)).
+								To(HaveField("ObjectMeta.UID", oldCR.GetUID()))
+							Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+						})
+					})
+				},
+				Entry("VDS", builder.NetworkEnvVDS),
+				Entry("NSX-T", builder.NetworkEnvNSXT),
+				Entry("VPC", builder.NetworkEnvVPC),
+			)
+		})
 	})
+}
+
+// getNetworkInterfaceCR returns the provider resource of the interface on the
+// network, or nil when it does not exist.
+func getNetworkInterfaceCR(
+	ctx *builder.TestContextForVCSim,
+	np fakeNetworkProvider,
+	vm *vmopv1.VirtualMachine,
+	networkName, interfaceName string) *metav1.PartialObjectMetadata {
+
+	GinkgoHelper()
+
+	var obj client.Object
+	switch np.(type) {
+	case vdsNetworkProvider, *vdsNetworkProvider:
+		obj = &netopv1alpha1.NetworkInterface{}
+		obj.SetName(network.NetOPCRName(vm.Name, networkName, interfaceName, false))
+	case nsxtNetworkProvider, *nsxtNetworkProvider:
+		obj = &ncpv1alpha1.VirtualNetworkInterface{}
+		obj.SetName(network.NCPCRName(vm.Name, networkName, interfaceName, false))
+	case vpcNetworkProvider, *vpcNetworkProvider:
+		obj = &vpcv1alpha1.SubnetPort{}
+		obj.SetName(network.VPCCRName(vm.Name, networkName, interfaceName))
+	default:
+		Fail(fmt.Sprintf("unknown network provider: %T", np))
+	}
+	obj.SetNamespace(vm.Namespace)
+
+	if err := ctx.Client.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "err: %v", err)
+		return nil
+	}
+
+	return &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+		UID:       obj.GetUID(),
+	}}
 }
 
 type fakeNetworkProvider interface {

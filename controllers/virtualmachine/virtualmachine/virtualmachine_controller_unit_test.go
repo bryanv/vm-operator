@@ -7,8 +7,10 @@ package virtualmachine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -394,6 +396,46 @@ func unitTestsReconcile() {
 			Entry("vsphere.ErrSetPowerState", vsphere.ErrSetPowerState),
 			Entry("vsphere.ErrUpgradeHardwareVersion", vsphere.ErrUpgradeHardwareVersion),
 		)
+
+		// Spec 017 T022 (G13): a pass that ends with a bounded retry, e.g.
+		// while a network interface is pending, is not a failure, so each
+		// requeued pass does not emit a failure Event.
+		DescribeTable("Should emit UpdateSuccess event if ReconcileNormal causes a successful VM update that returns a RequeueError",
+			func(requeueErr error) {
+				providerfake.SetCreateOrUpdateFunction(
+					vmCtx,
+					fakeVMProvider,
+					func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
+						ctxop.MarkUpdate(ctx)
+						return requeueErr
+					},
+				)
+
+				err := reconciler.ReconcileNormal(vmCtx)
+				Expect(pkgerr.IsRequeueError(err)).To(BeTrue())
+				expectEvents(ctx, "UpdateSuccess")
+
+				result, err := pkgerr.ResultFromError(err)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(result.RequeueAfter).To(Equal(10 * time.Second))
+			},
+			Entry("pkgerr.RequeueError", pkgerr.RequeueError{After: 10 * time.Second}),
+			Entry("a wrapped pkgerr.RequeueError",
+				fmt.Errorf("wrapped: %w", pkgerr.RequeueError{After: 10 * time.Second})),
+		)
+
+		It("Should not emit a ReconcileNormalFailure event for a RequeueError for neither create or update op", func() {
+			providerfake.SetCreateOrUpdateFunction(
+				vmCtx,
+				fakeVMProvider,
+				func(ctx context.Context, vm *vmopv1.VirtualMachine) error {
+					return pkgerr.RequeueError{After: time.Second}
+				},
+			)
+
+			Expect(pkgerr.IsRequeueError(reconciler.ReconcileNormal(vmCtx))).To(BeTrue())
+			expectEvents(ctx)
+		})
 
 		It("Should emit UpdateFailure event if ReconcileNormal causes a failed VM update", func() {
 			providerfake.SetCreateOrUpdateFunction(

@@ -320,9 +320,10 @@ After the existing empty-spec check, `doReconfigure` sets `configSpec.ChangeVers
 
 If no task was needed, `finishNetwork` runs where `reconcileNetworkAndGuestCustomizationState` runs today:
 
-1. `RetireProviderResources` deletes eligible old CRs (see "Cleanup"). Failures are recorded on state and set `st.RequeueAfter`; they are not returned.
-2. If `st.Readiness(vmCtx).Ready()`, it asks the network package to build the complete ordered bootstrap projection from each `Interfaces` entry's `Provider`, `Spec`, and the observed MAC selected by its `Match`, then calls `GetBootstrapArgs` and `DoBootstrap` as today. Any temporary `[]Device` required by existing `BuildBootstraps` stays inside that compatibility adapter; it is not stored on Session args or state. `fixupMacAddresses` is not called: the current observation already contains the applied MACs.
-3. `status.network.config` is published from per-interface `BuildBootstrap` results for every Ready interface, even when bootstrap itself is not ready.
+1. If `st.Readiness(vmCtx).Ready()`, it asks the network package to build the complete ordered bootstrap projection from each `Interfaces` entry's `Provider`, `Spec`, and the observed MAC selected by its `Match`, then calls `GetBootstrapArgs` and `DoBootstrap` as today. Any temporary `[]Device` required by existing `BuildBootstraps` stays inside that compatibility adapter; it is not stored on Session args or state. `fixupMacAddresses` is not called: the current observation already contains the applied MACs.
+2. `status.network.config` is published from per-interface `BuildBootstrap` results for every Ready interface, even when bootstrap itself is not ready.
+
+Independently of whether a task was needed, `reconcilePoweredOffOrPoweredOnVM` defers `RetireProviderResources` (see "Cleanup") right after `reconcileNetwork`, so it runs on every powered-on or powered-off pass that observed the network, regardless of readiness, bootstrap, and `MutableNetworks`. It reads `st.Submitted` when it runs. Results are stored in `st.Retirement`; failures set `st.RequeueAfter` and are not returned. Suspended, paused, and task-busy passes never reach it (AC11).
 
 ### Step 11: power state
 
@@ -504,17 +505,25 @@ Operation evidence is written in the same `ConfigSpec` as the Disconnect, Edit, 
 ## Cleanup
 
 ```go
-func RetireProviderResources(ctx context.Context, c ctrlclient.Client,
-	info *Info, plan *Plan) []RetireResult
+type RetireInput struct {
+	Client    ctrlclient.Client
+	VM        *vmopv1.VirtualMachine
+	Observed  *Info
+	Submitted bool // st.Submitted when retirement runs
+}
+
+func RetireProviderResources(ctx context.Context, in RetireInput) []RetireResult
+func RetireRequeueAfter(results []RetireResult) time.Duration
 ```
 
 A CR in `info.Owned` is deleted only when all of these hold:
 
-- No desired interface resolves to it by name and UID.
-- No adapter is claimed, protected, or retiring through it, judged by its provider-specific attachment and any operation record (Q8). Sharing a backing alone neither proves nor rules out a reference.
-- `info.Complete` is true and the plan submitted nothing this pass.
+- No desired interface, including Pending, Failed, and Unknown ones, references it by provider type and name. A desired interface without a provider resource name retains every candidate.
+- No adapter, whatever its disposition, carries the attachment the CR last reported, judged by provider-specific identity: the external ID, and for a NetOP CR without one, its backing plus MAC address. An adapter that only shares the backing retains the CR as `AttachmentAmbiguous`. A CR that reports no attachment is retained while any adapter is unclaimed. T028 refines reachability with operation records and handoff rules (Q8).
+- `info.Complete` is true and nothing was submitted this pass.
+- Re-read just before the delete, the VirtualMachine still has the observed UID and generation, so a spec change made meanwhile (e.g. back to the old network) cancels the retirement until the pass it triggers.
 
-Deletion uses `ctrlclient.Preconditions{UID: &uid}`, so a newer object that reused the name is never deleted. `NotFound` counts as success; any other failure becomes a `RetireResult` for the cleanup condition and a deferred requeue.
+Deletion uses `ctrlclient.Preconditions{UID: &uid, ResourceVersion: &rv}`, so a newer object that reused the name is never deleted. `NotFound` counts as success; any other failure becomes a Failed `RetireResult` for the cleanup condition and a deferred requeue. Retained results do not requeue: the hardware, spec, or provider change that releases them triggers a reconcile.
 
 ## Errors and requeue
 

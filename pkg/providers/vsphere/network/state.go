@@ -48,6 +48,11 @@ type ReconcileState struct {
 	// RequeueAfter is the deferred retry interval to apply at the end of the
 	// pass. Zero means no network retry is needed.
 	RequeueAfter time.Duration
+
+	// Retirement holds the results of retiring the VM-owned provider
+	// resources that no desired interface references on this pass, from
+	// RetireProviderResources. It is nil when retirement did not run.
+	Retirement []RetireResult
 }
 
 // PendingRequeueAfter is the bounded retry interval for a network wait that

@@ -1323,15 +1323,21 @@ func (vs *vSphereVMProvider) reconcileStatus(
 
 	// Name the guest-reported interfaces from the shared hardware match. This
 	// is the pass's network observation when it is still current.
-	networkDeviceKeysToSpecIdx := network.DeviceKeyToSpecIdx(
-		network.ObservedInfo(vmCtx, vs.k8sClient, vmCtx.VM, vmCtx.MoVM))
+	networkInfo := network.ObservedInfo(vmCtx, vs.k8sClient, vmCtx.VM, vmCtx.MoVM)
+
+	networkPolicy := network.PolicyFromContext(vmCtx)
+	if st, ok := network.FromContext(vmCtx); ok {
+		networkPolicy = st.Policy
+	}
 
 	return vmlifecycle.ReconcileStatus(
 		vmCtx,
 		vs.k8sClient,
 		vcVM,
 		vmlifecycle.ReconcileStatusData{
-			NetworkDeviceKeysToSpecIdx: networkDeviceKeysToSpecIdx,
+			NetworkDeviceKeysToSpecIdx: network.DeviceKeyToSpecIdx(networkInfo),
+			NetworkPolicy:              networkPolicy,
+			NetworkInfo:                networkInfo,
 		})
 }
 

@@ -5,6 +5,7 @@
 package vmlifecycle
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net"
@@ -51,6 +52,16 @@ type ReconcileStatusData struct {
 	// NetworkDeviceKeysToSpecIdx maps the network device's DeviceKey to its
 	// corresponding index in the VM's Spec.Network.Interfaces[].
 	NetworkDeviceKeysToSpecIdx map[int32]int
+
+	// NetworkPolicy is the network policy of the pass. When its
+	// InterfaceStatus field is true, status.network.interfaces is assembled
+	// spec-first from NetworkInfo instead of from the interfaces VMware Tools
+	// reports.
+	NetworkPolicy network.Policy
+
+	// NetworkInfo is the matched network observation of the pass. It is used
+	// only when NetworkPolicy.InterfaceStatus is true.
+	NetworkInfo *network.Info
 }
 
 func ReconcileStatus(
@@ -512,11 +523,19 @@ func reconcileStatusGuest(
 		extraConfig = object.OptionValueList(config.ExtraConfig).StringMap()
 	}
 
-	updateGuestNetworkStatus(
-		vmCtx.VM,
-		vmCtx.MoVM.Guest,
-		extraConfig,
-		data.NetworkDeviceKeysToSpecIdx)
+	if data.NetworkPolicy.InterfaceStatus {
+		updateSpecFirstNetworkStatus(
+			vmCtx.VM,
+			vmCtx.MoVM,
+			extraConfig,
+			data.NetworkInfo)
+	} else {
+		updateGuestNetworkStatus(
+			vmCtx.VM,
+			vmCtx.MoVM.Guest,
+			extraConfig,
+			data.NetworkDeviceKeysToSpecIdx)
+	}
 
 	if vmCtx.MoVM.Summary.Guest != nil && vmCtx.MoVM.Summary.Guest.HostName != "" {
 		if vmCtx.VM.Status.Network == nil {
@@ -1178,6 +1197,22 @@ func UpdateNetworkStatusConfig(vm *vmopv1.VirtualMachine, args BootstrapArgs) {
 	}
 }
 
+// validatePrimaryIP returns the parsed IP address when ip may be a primary IP
+// address, otherwise nil. Local IP addresses, i.e. addresses that are only
+// valid on the guest OS, are ignored. Please note this does not include
+// private, or RFC 1918 (IPv4) and RFC 4193 (IPv6) addresses, ex. 192.168.0.2.
+func validatePrimaryIP(ip string) net.IP {
+	if a := net.ParseIP(ip); len(a) > 0 {
+		if !a.IsUnspecified() &&
+			!a.IsLinkLocalMulticast() &&
+			!a.IsLinkLocalUnicast() &&
+			!a.IsLoopback() {
+			return a
+		}
+	}
+	return nil
+}
+
 // updateGuestNetworkStatus updates the provided VM's status.network
 // field with information from the guestInfo.
 func updateGuestNetworkStatus(
@@ -1192,21 +1227,6 @@ func updateGuestNetworkStatus(
 		ifaceStatuses   []vmopv1.VirtualMachineNetworkInterfaceStatus
 		ipStackStatuses []vmopv1.VirtualMachineNetworkIPStackStatus
 	)
-
-	validatePrimaryIP := func(ip string) net.IP {
-		if a := net.ParseIP(ip); len(a) > 0 {
-			// Ignore local IP addresses, i.e. addresses that are only valid on
-			// the guest OS. Please note this does not include private, or RFC
-			// 1918 (IPv4) and RFC 4193 (IPv6) addresses, ex. 192.168.0.2.
-			if !a.IsUnspecified() &&
-				!a.IsLinkLocalMulticast() &&
-				!a.IsLinkLocalUnicast() &&
-				!a.IsLoopback() {
-				return a
-			}
-		}
-		return nil
-	}
 
 	if gi != nil {
 		if ip := gi.IpAddress; ip != "" {
@@ -1363,6 +1383,673 @@ func updateGuestNetworkStatus(
 		}
 	}
 
+}
+
+// Reasons used on status.network.interfaces[].conditions in addition to the
+// reasons the API and the network package define.
+const (
+	// NetworkInterfaceGuestReportAmbiguousReason is the GuestInfoValid reason
+	// when VMware Tools reports more than one guest record for the device key
+	// of the interface's adapter, so no record can be associated with it.
+	NetworkInterfaceGuestReportAmbiguousReason = "GuestReportAmbiguous"
+
+	// NetworkInterfaceObservationUnavailableReason is the reason used when the
+	// VM's network interfaces and virtual hardware were not observed.
+	NetworkInterfaceObservationUnavailableReason = "ObservationUnavailable"
+)
+
+// specFirstNetworkStatus is the spec-first assembly of the interface status
+// entries of one pass.
+type specFirstNetworkStatus struct {
+	// interfaces holds one entry per desired interface in spec order,
+	// followed by one entry per adapter that no desired interface claims, in
+	// device key order.
+	interfaces []vmopv1.VirtualMachineNetworkInterfaceStatus
+
+	// eligible holds the indexes in interfaces of the entries whose accepted
+	// guest addresses may select the primary IP addresses.
+	eligible []int
+
+	// reported is the number of entries with accepted guest information.
+	reported int
+
+	// invalidated is true when the guest information of an interface was
+	// withheld because its attachment is changing.
+	invalidated bool
+}
+
+// guestNICReports indexes the per-NIC guest information VMware Tools
+// reports, together with the facts every guest report depends on.
+type guestNICReports struct {
+	poweredOn    bool
+	toolsRunning bool
+	byKey        map[int32][]*vimtypes.GuestNicInfo
+}
+
+// guestVerdict is the outcome of validating the guest information for one
+// adapter. report is set only when the information is accepted.
+type guestVerdict struct {
+	condition *metav1.Condition
+	report    *vimtypes.GuestNicInfo
+}
+
+// updateSpecFirstNetworkStatus updates the provided VM's status.network field
+// with one entry per desired interface, in spec order, before any provider
+// resource or adapter exists. Each entry is overlaid with the observed
+// hardware of the adapter the shared match claims for it, and with the guest
+// information VMware Tools reports for that adapter only when the guest
+// record's device key and MAC address agree with the adapter. Adapters no
+// desired interface claims follow in device key order without a name. Guest
+// records for devices that are no longer present are dropped.
+//
+// The primary IP addresses are selected only from accepted guest addresses on
+// eligible interfaces, so a global guest IP address or a cloud-init hint that
+// no accepted per-interface report corroborates is not published.
+//
+// status.network.config and status.network.hostName are owned by other
+// contributors and are preserved.
+func updateSpecFirstNetworkStatus(
+	vm *vmopv1.VirtualMachine,
+	moVM mo.VirtualMachine,
+	extraConfig map[string]string,
+	info *network.Info) {
+
+	reports := newGuestNICReports(moVM)
+	st := buildSpecFirstInterfaceStatuses(vm, info, reports)
+
+	var ipStackStatuses []vmopv1.VirtualMachineNetworkIPStackStatus
+	if gi := moVM.Guest; gi != nil && reports.poweredOn && reports.toolsRunning && !st.invalidated {
+		for i := range gi.IpStack {
+			ipStackStatuses = append(ipStackStatuses, guestIPStackInfoToIPStackStatus(&gi.IpStack[i]))
+		}
+	}
+
+	primaryIP4, primaryIP6, rejectedIP4, rejectedIP6 := selectSpecFirstPrimaryIPs(
+		vm, moVM.Guest, extraConfig, st)
+
+	if primaryIP4 == "" && primaryIP6 == "" &&
+		len(ipStackStatuses) == 0 && len(st.interfaces) == 0 {
+
+		if vm.Status.Network != nil {
+			if cfg := vm.Status.Network.Config; cfg != nil {
+				// Config is the only field we need to preserve.
+				vm.Status.Network = &vmopv1.VirtualMachineNetworkStatus{
+					Config: cfg,
+				}
+			} else {
+				vm.Status.Network = nil
+			}
+		}
+		if conditions.Has(vm, vmopv1.VirtualMachineGuestNetworkConfigSynced) {
+			markGuestNetworkConfigSynced(vm, "", "", "", "")
+		}
+		return
+	}
+
+	if vm.Status.Network == nil {
+		vm.Status.Network = &vmopv1.VirtualMachineNetworkStatus{}
+	}
+	vm.Status.Network.PrimaryIP4 = primaryIP4
+	vm.Status.Network.PrimaryIP6 = primaryIP6
+	vm.Status.Network.IPStacks = ipStackStatuses
+	vm.Status.Network.Interfaces = st.interfaces
+
+	markGuestNetworkConfigSynced(vm, primaryIP4, primaryIP6, rejectedIP4, rejectedIP6)
+}
+
+// markGuestNetworkConfigSynced sets VirtualMachineGuestNetworkConfigSynced
+// from the primary IP addresses selected from accepted per-interface guest
+// information. Selected addresses are corroborated by construction. A
+// rejected address is a global guest address or a cloud-init hint that no
+// accepted per-interface report corroborates.
+func markGuestNetworkConfigSynced(
+	vm *vmopv1.VirtualMachine,
+	primaryIP4, primaryIP6, rejectedIP4, rejectedIP6 string) {
+
+	switch {
+	case primaryIP4 != "" || primaryIP6 != "":
+		c := conditions.TrueCondition(vmopv1.VirtualMachineGuestNetworkConfigSynced)
+		c.Reason = "Synced"
+		c.Message = fmt.Sprintf("IPv4=%q, IPv6=%q", primaryIP4, primaryIP6)
+		conditions.Set(vm, c)
+	case rejectedIP4 != "" || rejectedIP6 != "":
+		conditions.MarkFalse(vm,
+			vmopv1.VirtualMachineGuestNetworkConfigSynced,
+			"NotSynced",
+			"guest primary IPs (IPv4=%q, IPv6=%q)"+
+				" are not corroborated by validated per-NIC guest data",
+			rejectedIP4, rejectedIP6)
+	default:
+		conditions.MarkFalse(vm,
+			vmopv1.VirtualMachineGuestNetworkConfigSynced,
+			"NotSynced",
+			"%s",
+			"Neither IPv4 nor IPv6 address reported by guest")
+	}
+}
+
+// newGuestNICReports indexes the per-NIC guest information of moVM by device
+// key. Pseudo devices with a negative key are skipped.
+func newGuestNICReports(moVM mo.VirtualMachine) guestNICReports {
+	r := guestNICReports{
+		poweredOn: moVM.Runtime.PowerState == vimtypes.VirtualMachinePowerStatePoweredOn,
+		byKey:     map[int32][]*vimtypes.GuestNicInfo{},
+	}
+
+	gi := moVM.Guest
+	if gi == nil {
+		return r
+	}
+
+	switch gi.ToolsRunningStatus {
+	case string(vimtypes.VirtualMachineToolsRunningStatusGuestToolsRunning),
+		string(vimtypes.VirtualMachineToolsRunningStatusGuestToolsExecutingScripts):
+		r.toolsRunning = true
+	}
+
+	for i := range gi.Net {
+		if key := gi.Net[i].DeviceConfigId; key >= 0 {
+			r.byKey[key] = append(r.byKey[key], &gi.Net[i])
+		}
+	}
+
+	return r
+}
+
+// verdict validates the guest information for adapter a. invalidated is true
+// when the adapter's attachment is changing, so a report describes the
+// previous attachment even when its identity checks pass.
+func (r guestNICReports) verdict(
+	a network.ObservedAdapter,
+	invalidated bool) guestVerdict {
+
+	unknown := func(reason, format string, args ...any) guestVerdict {
+		return guestVerdict{condition: conditions.UnknownCondition(
+			vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+			reason, format, args...)}
+	}
+
+	switch {
+	case !r.poweredOn:
+		return unknown(vmopv1.VirtualMachineNetworkInterfaceVMNotRunningReason,
+			"The VM is not running, so guest information cannot be validated")
+	case !r.toolsRunning:
+		return unknown(vmopv1.VirtualMachineNetworkInterfaceToolsUnavailableReason,
+			"VMware Tools is not running, so guest information cannot be validated")
+	case invalidated:
+		return unknown(vmopv1.VirtualMachineNetworkInterfaceAwaitingGuestReportReason,
+			"The attachment of adapter %d is changing; guest information"+
+				" for its previous attachment is withheld", a.Key)
+	}
+
+	records := r.byKey[a.Key]
+	switch len(records) {
+	case 0:
+		return unknown(vmopv1.VirtualMachineNetworkInterfaceNotReportedReason,
+			"VMware Tools has not reported guest information for adapter %d", a.Key)
+	case 1:
+	default:
+		return unknown(NetworkInterfaceGuestReportAmbiguousReason,
+			"VMware Tools reported %d guest records for adapter %d",
+			len(records), a.Key)
+	}
+
+	rec := records[0]
+	guestMAC := normalizeMAC(rec.MacAddress)
+	switch {
+	case guestMAC == "" || a.MAC == "":
+		return unknown(vmopv1.VirtualMachineNetworkInterfaceNotReportedReason,
+			"The guest information for adapter %d cannot be associated with it"+
+				" without both a guest and an adapter MAC address", a.Key)
+	case guestMAC != normalizeMAC(a.MAC):
+		return guestVerdict{condition: conditions.FalseCondition(
+			vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+			vmopv1.VirtualMachineNetworkInterfaceMACMismatchReason,
+			"VMware Tools reported MAC address %s for adapter %d,"+
+				" which has MAC address %s", guestMAC, a.Key, a.MAC)}
+	}
+
+	return guestVerdict{
+		condition: conditions.TrueCondition(
+			vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid),
+		report: rec,
+	}
+}
+
+// normalizeMAC returns the lower-case, colon-separated form of mac.
+func normalizeMAC(mac string) string {
+	return strings.ToLower(strings.ReplaceAll(mac, "-", ":"))
+}
+
+// buildSpecFirstInterfaceStatuses assembles the interface status entries
+// from the desired interfaces, the observed hardware in info, and the
+// validated guest reports. Conditions keep their last transition time from
+// the VM's current status entry of the same name when their status, reason,
+// and message are unchanged.
+func buildSpecFirstInterfaceStatuses(
+	vm *vmopv1.VirtualMachine,
+	info *network.Info,
+	reports guestNICReports) specFirstNetworkStatus {
+
+	prevConditions := map[string][]metav1.Condition{}
+	if vm.Status.Network != nil {
+		for _, s := range vm.Status.Network.Interfaces {
+			if s.Name != "" {
+				prevConditions[s.Name] = s.Conditions
+			}
+		}
+	}
+
+	var st specFirstNetworkStatus
+
+	if info == nil {
+		// Without an observation, every desired interface still has an
+		// entry, and its state is unknown.
+		if vm.Spec.Network != nil && !vm.Spec.Network.Disabled {
+			for _, spec := range vm.Spec.Network.Interfaces {
+				st.interfaces = append(st.interfaces, unobservedInterfaceStatus(
+					spec.Name, vm.Generation, prevConditions[spec.Name]))
+			}
+		}
+		return st
+	}
+
+	adapters := make(map[int32]network.ObservedAdapter, len(info.Adapters))
+	for _, a := range info.Adapters {
+		adapters[a.Key] = a
+	}
+
+	claimed := map[int32]struct{}{}
+	for _, iface := range info.Interfaces {
+		s, a, ok := desiredInterfaceStatus(iface, adapters, reports.poweredOn)
+
+		var guest guestVerdict
+		if ok {
+			claimed[a.Key] = struct{}{}
+			guest = reports.verdict(a, iface.AttachmentChange == network.AttachmentChangeReplacement)
+			if c := guest.condition; c.Reason == vmopv1.VirtualMachineNetworkInterfaceAwaitingGuestReportReason {
+				st.invalidated = true
+			}
+		} else {
+			guest = unmatchedGuestVerdict(iface)
+		}
+
+		if guest.report != nil {
+			overlayGuestReport(&s, guest.report)
+			st.reported++
+			if adapterConnected(a, reports.poweredOn) {
+				st.eligible = append(st.eligible, len(st.interfaces))
+			}
+		}
+
+		provider := providerReadyCondition(iface)
+		hardware := hardwareReadyCondition(iface, a, ok)
+		s.Conditions = interfaceConditions(
+			prevConditions[s.Name],
+			vm.Generation,
+			readyCondition(provider, hardware),
+			provider,
+			hardware,
+			guest.condition)
+
+		st.interfaces = append(st.interfaces, s)
+	}
+
+	// Adapters that no desired interface claims follow in device key order
+	// without a name. When the network is disabled or nil, there are no
+	// desired interfaces to corroborate, so their accepted reports remain
+	// eligible for the primary IP addresses.
+	var unclaimed []network.ObservedAdapter
+	for _, a := range info.Adapters {
+		if _, ok := claimed[a.Key]; !ok {
+			unclaimed = append(unclaimed, a)
+		}
+	}
+	slices.SortStableFunc(unclaimed, func(a, b network.ObservedAdapter) int {
+		return cmp.Compare(a.Key, b.Key)
+	})
+	for _, a := range unclaimed {
+		var s vmopv1.VirtualMachineNetworkInterfaceStatus
+		overlayHardware(&s, a, reports.poweredOn)
+		if v := reports.verdict(a, false); v.report != nil {
+			overlayGuestReport(&s, v.report)
+			st.reported++
+			if !info.Enabled && adapterConnected(a, reports.poweredOn) {
+				st.eligible = append(st.eligible, len(st.interfaces))
+			}
+		}
+		st.interfaces = append(st.interfaces, s)
+	}
+
+	return st
+}
+
+// unobservedInterfaceStatus returns the status entry of a desired interface
+// when the VM's network was not observed.
+func unobservedInterfaceStatus(
+	name string,
+	generation int64,
+	prev []metav1.Condition) vmopv1.VirtualMachineNetworkInterfaceStatus {
+
+	const msg = "The VM's network interfaces have not been observed"
+	unknown := func(t string) *metav1.Condition {
+		return conditions.UnknownCondition(
+			t, NetworkInterfaceObservationUnavailableReason, msg)
+	}
+
+	return vmopv1.VirtualMachineNetworkInterfaceStatus{
+		Name: name,
+		Conditions: interfaceConditions(
+			prev,
+			generation,
+			unknown(vmopv1.VirtualMachineNetworkInterfaceConditionReady),
+			unknown(vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady),
+			unknown(vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady),
+			unknown(vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid)),
+	}
+}
+
+// desiredInterfaceStatus seeds the status entry of a desired interface and
+// overlays the hardware of the adapter its match claims. It returns the
+// claimed adapter and true when the match claims an observed adapter.
+func desiredInterfaceStatus(
+	iface network.InterfaceState,
+	adapters map[int32]network.ObservedAdapter,
+	poweredOn bool) (vmopv1.VirtualMachineNetworkInterfaceStatus, network.ObservedAdapter, bool) {
+
+	s := vmopv1.VirtualMachineNetworkInterfaceStatus{
+		Name: iface.Spec.Name,
+	}
+
+	if !network.IsClaim(iface.Match.Kind) {
+		return s, network.ObservedAdapter{}, false
+	}
+	a, ok := adapters[iface.Match.AdapterKey]
+	if !ok {
+		return s, network.ObservedAdapter{}, false
+	}
+
+	overlayHardware(&s, a, poweredOn)
+	return s, a, true
+}
+
+// overlayHardware fills the observed hardware fields of s from adapter a. The
+// runtime connection state is set only while the VM is powered on.
+func overlayHardware(
+	s *vmopv1.VirtualMachineNetworkInterfaceStatus,
+	a network.ObservedAdapter,
+	poweredOn bool) {
+
+	s.DeviceKey = a.Key
+	if a.UnitNumber != nil {
+		s.UnitNumber = ptr.To(*a.UnitNumber)
+	}
+
+	hw := &vmopv1.VirtualMachineNetworkInterfaceHardwareStatus{
+		MACAddress: a.MAC,
+	}
+	if a.Connect.Present {
+		hw.StartConnected = ptr.To(a.Connect.StartConnected)
+		if poweredOn {
+			hw.Connected = ptr.To(a.Connect.Connected)
+		}
+	}
+	s.Hardware = hw
+}
+
+// overlayGuestReport fills the guest-reported IP and DNS fields of s from an
+// accepted guest record.
+func overlayGuestReport(
+	s *vmopv1.VirtualMachineNetworkInterfaceStatus,
+	rec *vimtypes.GuestNicInfo) {
+
+	g := guestNicInfoToInterfaceStatus(s.Name, s.DeviceKey, rec)
+	s.IP = g.IP
+	s.DNS = g.DNS
+}
+
+// adapterConnected returns false when adapter a is observed to be
+// disconnected while the VM is powered on. Addresses reported for a
+// disconnected adapter are not eligible primary IP addresses.
+func adapterConnected(a network.ObservedAdapter, poweredOn bool) bool {
+	return !poweredOn || !a.Connect.Present || a.Connect.Connected
+}
+
+// unmatchedGuestVerdict returns the GuestInfoValid condition of a desired
+// interface that does not claim an adapter.
+func unmatchedGuestVerdict(iface network.InterfaceState) guestVerdict {
+	if iface.Match.Kind == network.MatchAmbiguous {
+		return guestVerdict{condition: conditions.UnknownCondition(
+			vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+			network.PlanReasonInterfaceMappingAmbiguous,
+			"No adapter is definitively matched to associate with guest information")}
+	}
+	return guestVerdict{condition: conditions.UnknownCondition(
+		vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+		vmopv1.VirtualMachineNetworkInterfaceDeviceNotPresentReason,
+		"No adapter is available to associate with guest information")}
+}
+
+// providerReadyCondition returns the ProviderReady condition of a desired
+// interface from its provider resolution.
+func providerReadyCondition(iface network.InterfaceState) *metav1.Condition {
+	const t = vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady
+
+	msg := iface.Provider.Message
+	if msg == "" {
+		msg = "The network provider resource is not ready"
+	}
+
+	switch iface.Provider.Phase {
+	case network.ResolutionReady:
+		return conditions.TrueCondition(t)
+	case network.ResolutionPending:
+		return conditions.FalseCondition(t, network.PlanReasonProviderPending, "%s", msg)
+	case network.ResolutionFailed:
+		return conditions.FalseCondition(t, network.PlanReasonProviderFailed, "%s", msg)
+	case network.ResolutionUnknown:
+	}
+	return conditions.UnknownCondition(t, network.PlanReasonProviderUnknown, "%s", msg)
+}
+
+// hardwareReadyCondition returns the HardwareReady condition of a desired
+// interface from its match and attachment-change classification. It
+// describes only what observation established, using the same predicates as
+// the network readiness of the pass: an adapter whose attachment cannot be
+// compared with a Ready target is retained, as the planner retains it.
+func hardwareReadyCondition(
+	iface network.InterfaceState,
+	a network.ObservedAdapter,
+	claimed bool) *metav1.Condition {
+
+	const t = vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady
+
+	providerReady := iface.Provider.Phase == network.ResolutionReady
+
+	switch {
+	case iface.Match.Kind == network.MatchAmbiguous:
+		return conditions.UnknownCondition(t, network.PlanReasonInterfaceMappingAmbiguous,
+			"Adapters %v are all candidates for this interface", iface.Match.Candidates)
+	case !claimed:
+		return conditions.FalseCondition(t, network.PlanReasonDeviceNotPresent,
+			"No adapter has been observed for this interface")
+	case iface.AttachmentChange == network.AttachmentChangeReplacement && providerReady:
+		return conditions.FalseCondition(t, network.PlanReasonAttachmentPending,
+			"Adapter %d is not attached to the desired network yet", a.Key)
+	case iface.AttachmentChange == network.AttachmentChangeReplacement:
+		return conditions.FalseCondition(t, network.PlanReasonReplacementPending,
+			"Adapter %d remains on its previous attachment while the desired"+
+				" network is pending", a.Key)
+	case providerReady && a.MAC == "":
+		return conditions.FalseCondition(t, network.ReadinessReasonMACAddressPending,
+			"Adapter %d does not report a MAC address yet", a.Key)
+	case providerReady && iface.Provider.Target != nil &&
+		iface.Provider.Target.MAC.Pinned != "" &&
+		!strings.EqualFold(iface.Provider.Target.MAC.Pinned, a.MAC):
+		return conditions.FalseCondition(t, network.ReadinessReasonMACMismatch,
+			"Adapter %d has MAC address %s instead of %s",
+			a.Key, a.MAC, iface.Provider.Target.MAC.Pinned)
+	case iface.AttachmentChange == network.AttachmentChangeUnchanged, providerReady:
+		return conditions.TrueCondition(t)
+	}
+	return conditions.UnknownCondition(t, network.PlanReasonAttachmentUnknown,
+		"The attachment of adapter %d cannot be compared with the desired"+
+			" network until the network provider resource is ready", a.Key)
+}
+
+// readyCondition returns the Ready condition of a desired interface. It is
+// True when both ProviderReady and HardwareReady are True, False with the
+// first False prerequisite's reason and message, and otherwise Unknown with
+// the first Unknown prerequisite's reason and message. It makes no claim
+// about guest information.
+func readyCondition(provider, hardware *metav1.Condition) *metav1.Condition {
+	const t = vmopv1.VirtualMachineNetworkInterfaceConditionReady
+
+	for _, c := range []*metav1.Condition{provider, hardware} {
+		if c.Status == metav1.ConditionFalse {
+			return conditions.FalseCondition(t, c.Reason, "%s", c.Message)
+		}
+	}
+	for _, c := range []*metav1.Condition{provider, hardware} {
+		if c.Status != metav1.ConditionTrue {
+			return conditions.UnknownCondition(t, c.Reason, "%s", c.Message)
+		}
+	}
+	return conditions.TrueCondition(t)
+}
+
+// interfaceConditions returns the desired conditions, sorted with Ready
+// first, with observedGeneration set to generation. A condition keeps the
+// last transition time of the condition of the same type in prev when its
+// status, reason, and message are unchanged.
+func interfaceConditions(
+	prev []metav1.Condition,
+	generation int64,
+	desired ...*metav1.Condition) []metav1.Condition {
+
+	old := conditions.Conditions(prev)
+	var out conditions.Conditions
+	for _, c := range desired {
+		c.ObservedGeneration = generation
+		if p := old.Get(c.Type); p != nil &&
+			p.Status == c.Status && p.Reason == c.Reason && p.Message == c.Message {
+
+			c.LastTransitionTime = p.LastTransitionTime
+		}
+		out = out.Set(c)
+	}
+	return out
+}
+
+// selectSpecFirstPrimaryIPs selects the primary IP addresses from the
+// accepted guest addresses of the eligible interfaces in st. The existing
+// preference rules apply, but every candidate must be corroborated: a
+// cloud-init local IP hint is preferred over the global guest IP address,
+// and either is used only when an eligible interface reports it. When a
+// family has no corroborated candidate, the dual-stack fallbacks select from
+// the eligible interfaces. It also returns, for each family without a
+// selected address, the preferred candidate that was rejected, if any.
+func selectSpecFirstPrimaryIPs(
+	vm *vmopv1.VirtualMachine,
+	gi *vimtypes.GuestInfo,
+	extraConfig map[string]string,
+	st specFirstNetworkStatus) (primaryIP4, primaryIP6, rejectedIP4, rejectedIP6 string) {
+
+	eligible := make([]vmopv1.VirtualMachineNetworkInterfaceStatus, 0, len(st.eligible))
+	for _, i := range st.eligible {
+		eligible = append(eligible, st.interfaces[i])
+	}
+
+	var candidates4, candidates6 []string
+	addCandidate := func(ip string, family int) {
+		a := validatePrimaryIP(ip)
+		switch {
+		case a == nil:
+		case a.To4() != nil && family != 6:
+			candidates4 = append(candidates4, ip)
+		case a.To4() == nil && family != 4:
+			candidates6 = append(candidates6, ip)
+		}
+	}
+
+	if bs := vm.Spec.Bootstrap; bs != nil && bs.CloudInit != nil {
+		// When CloudInit is used, prefer the local IPs that the VMware
+		// datasource publishes.
+		addCandidate(extraConfig[constants.CloudInitGuestInfoLocalIPv4Key], 4)
+		addCandidate(extraConfig[constants.CloudInitGuestInfoLocalIPv6Key], 6)
+	}
+	if gi != nil {
+		addCandidate(gi.IpAddress, 0)
+	}
+
+	corroborated := func(candidates []string) string {
+		for _, ip := range candidates {
+			if findInterfaceContainingIP(ip, eligible) >= 0 {
+				return ip
+			}
+		}
+		return ""
+	}
+	primaryIP4 = corroborated(candidates4)
+	primaryIP6 = corroborated(candidates6)
+
+	// As in updateGuestNetworkStatus, a fallback fills only a family for
+	// which the guest reported no primary address. A rejected candidate is
+	// not replaced with an address of a different interface.
+	primaryIP4, primaryIP6 = fallbackPrimaryIPs(
+		primaryIP4, primaryIP6, eligible,
+		len(candidates4) == 0, len(candidates6) == 0, st.reported == 1)
+
+	if primaryIP4 == "" && len(candidates4) > 0 {
+		rejectedIP4 = candidates4[0]
+	}
+	if primaryIP6 == "" && len(candidates6) > 0 {
+		rejectedIP6 = candidates6[0]
+	}
+
+	return primaryIP4, primaryIP6, rejectedIP4, rejectedIP6
+}
+
+// fallbackPrimaryIPs applies the dual-stack fallbacks of
+// updateGuestNetworkStatus to the eligible interfaces, for the families that
+// fill4 and fill6 permit: a missing family is filled from the interface that
+// reports the other family's primary address when it reports exactly one
+// usable address of the missing family, and when both are missing, from the
+// sole interface with accepted guest information when it is eligible.
+func fallbackPrimaryIPs(
+	primaryIP4, primaryIP6 string,
+	eligible []vmopv1.VirtualMachineNetworkInterfaceStatus,
+	fill4, fill6, soleReport bool) (string, string) {
+
+	if len(eligible) == 0 {
+		return primaryIP4, primaryIP6
+	}
+
+	switch {
+	case primaryIP4 != "" && primaryIP6 == "" && fill6:
+		if idx := findInterfaceContainingIP(primaryIP4, eligible); idx >= 0 {
+			if ips := extractIPsFromInterface(eligible[idx], false, validatePrimaryIP); len(ips) == 1 {
+				primaryIP6 = ips[0]
+			}
+		}
+	case primaryIP6 != "" && primaryIP4 == "" && fill4:
+		if idx := findInterfaceContainingIP(primaryIP6, eligible); idx >= 0 {
+			if ips := extractIPsFromInterface(eligible[idx], true, validatePrimaryIP); len(ips) == 1 {
+				primaryIP4 = ips[0]
+			}
+		}
+	case primaryIP4 == "" && primaryIP6 == "" && fill4 && fill6:
+		if soleReport && len(eligible) == 1 {
+			if ips := extractIPsFromInterface(eligible[0], true, validatePrimaryIP); len(ips) == 1 {
+				primaryIP4 = ips[0]
+			}
+			if ips := extractIPsFromInterface(eligible[0], false, validatePrimaryIP); len(ips) == 1 {
+				primaryIP6 = ips[0]
+			}
+		}
+	}
+
+	return primaryIP4, primaryIP6
 }
 
 func updateChangeBlockTracking(vm *vmopv1.VirtualMachine, moVM mo.VirtualMachine) {

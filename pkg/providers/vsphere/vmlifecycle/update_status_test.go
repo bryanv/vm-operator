@@ -10,6 +10,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1574,6 +1575,500 @@ var _ = Describe("UpdateStatus", func() {
 				It("should not set VirtualMachineGuestNetworkConfigSynced condition", func() {
 					cond := conditions.Get(vmCtx.VM, vmopv1.VirtualMachineGuestNetworkConfigSynced)
 					Expect(cond).To(BeNil())
+				})
+			})
+		})
+
+		Context("Spec 017 T024: spec-first interface status", func() {
+			const (
+				eth0 = "eth0"
+				eth1 = "eth1"
+
+				key0 = int32(4000)
+				key1 = int32(4001)
+				key2 = int32(4002)
+
+				mac0 = "00:50:56:aa:bb:01"
+				mac1 = "00:50:56:aa:bb:02"
+				mac2 = "00:50:56:aa:bb:03"
+
+				ip0 = "192.168.10.2"
+				ip1 = "192.168.20.2"
+			)
+
+			var info *network.Info
+
+			adapter := func(key, unit int32, mac string) network.ObservedAdapter {
+				return network.ObservedAdapter{
+					Key:        key,
+					UnitNumber: ptr.To(unit),
+					Type:       "VirtualVmxnet3",
+					MAC:        mac,
+					Connect: network.ConnectionState{
+						Present:        true,
+						Connected:      true,
+						StartConnected: true,
+					},
+				}
+			}
+
+			claimed := func(name string, key int32) network.InterfaceState {
+				return network.InterfaceState{
+					Spec:             vmopv1.VirtualMachineNetworkInterfaceSpec{Name: name},
+					Provider:         network.Resolution{Phase: network.ResolutionReady},
+					Match:            network.Match{Kind: network.MatchIdentity, AdapterKey: key},
+					AttachmentChange: network.AttachmentChangeUnchanged,
+				}
+			}
+
+			guestNIC := func(key int32, mac string, ips ...string) vimtypes.GuestNicInfo {
+				nic := vimtypes.GuestNicInfo{
+					DeviceConfigId: key,
+					MacAddress:     mac,
+					IpConfig:       &vimtypes.NetIpConfigInfo{},
+				}
+				for _, ip := range ips {
+					nic.IpConfig.IpAddress = append(nic.IpConfig.IpAddress,
+						vimtypes.NetIpConfigInfoIpAddress{IpAddress: ip, PrefixLength: 24, State: "preferred"})
+				}
+				return nic
+			}
+
+			entry := func(name string) vmopv1.VirtualMachineNetworkInterfaceStatus {
+				GinkgoHelper()
+				Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
+				for _, s := range vmCtx.VM.Status.Network.Interfaces {
+					if s.Name == name {
+						return s
+					}
+				}
+				Fail("no status entry named " + name)
+				return vmopv1.VirtualMachineNetworkInterfaceStatus{}
+			}
+
+			cond := func(name, conditionType string) *metav1.Condition {
+				GinkgoHelper()
+				c := conditions.Conditions(entry(name).Conditions).Get(conditionType)
+				Expect(c).ToNot(BeNil(), "%s has no %s condition", name, conditionType)
+				return c
+			}
+
+			expectCond := func(name, conditionType string, status metav1.ConditionStatus, reason string) {
+				GinkgoHelper()
+				c := cond(name, conditionType)
+				Expect(c.Status).To(Equal(status), "%s %s", name, conditionType)
+				if reason != "" {
+					Expect(c.Reason).To(Equal(reason), "%s %s", name, conditionType)
+				}
+			}
+
+			names := func() []string {
+				GinkgoHelper()
+				Expect(vmCtx.VM.Status.Network).ToNot(BeNil())
+				var out []string
+				for _, s := range vmCtx.VM.Status.Network.Interfaces {
+					out = append(out, s.Name)
+				}
+				return out
+			}
+
+			BeforeEach(func() {
+				vmCtx.VM.Generation = 3
+				vmCtx.VM.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+					Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{Name: eth0},
+						{Name: eth1},
+					},
+				}
+				vmCtx.VM.Status.Network = nil
+				vmCtx.MoVM.Runtime.PowerState = vimtypes.VirtualMachinePowerStatePoweredOn
+				vmCtx.MoVM.Guest = &vimtypes.GuestInfo{
+					ToolsRunningStatus: string(vimtypes.VirtualMachineToolsRunningStatusGuestToolsRunning),
+					IpAddress:          ip0,
+					Net: []vimtypes.GuestNicInfo{
+						guestNIC(key0, mac0, ip0),
+						guestNIC(key1, mac1, ip1),
+					},
+				}
+
+				info = &network.Info{
+					Enabled:  true,
+					Complete: true,
+					Interfaces: []network.InterfaceState{
+						claimed(eth0, key0),
+						claimed(eth1, key1),
+					},
+					Adapters: []network.ObservedAdapter{
+						adapter(key0, 7, mac0),
+						adapter(key1, 8, mac1),
+					},
+				}
+
+				data.NetworkPolicy.InterfaceStatus = true
+				data.NetworkInfo = info
+				data.NetworkDeviceKeysToSpecIdx[key0] = 0
+				data.NetworkDeviceKeysToSpecIdx[key1] = 1
+			})
+
+			When("the policy is off", func() {
+				BeforeEach(func() {
+					data.NetworkPolicy.InterfaceStatus = false
+					info.Interfaces[1].Match = network.Match{Kind: network.MatchNone}
+					info.Interfaces[1].Provider = network.Resolution{Phase: network.ResolutionPending}
+					info.Adapters = info.Adapters[:1]
+					vmCtx.MoVM.Guest.Net = vmCtx.MoVM.Guest.Net[:1]
+					delete(data.NetworkDeviceKeysToSpecIdx, key1)
+				})
+
+				It("reports only the interfaces VMware Tools reports, without the new fields", func() {
+					Expect(names()).To(Equal([]string{eth0}))
+					s := entry(eth0)
+					Expect(s.DeviceKey).To(Equal(key0))
+					Expect(s.Hardware).To(BeNil())
+					Expect(s.Conditions).To(BeNil())
+					Expect(s.UnitNumber).To(BeNil())
+					Expect(s.IP).ToNot(BeNil())
+					Expect(s.IP.MACAddr).To(Equal(mac0))
+				})
+			})
+
+			When("every interface has a matching adapter and guest report", func() {
+				It("overlays hardware and accepted guest information", func() {
+					Expect(names()).To(Equal([]string{eth0, eth1}))
+
+					s := entry(eth0)
+					Expect(s.DeviceKey).To(Equal(key0))
+					Expect(s.UnitNumber).To(HaveValue(Equal(int32(7))))
+					Expect(s.Hardware).ToNot(BeNil())
+					Expect(s.Hardware.MACAddress).To(Equal(mac0))
+					Expect(s.Hardware.Connected).To(HaveValue(BeTrue()))
+					Expect(s.Hardware.StartConnected).To(HaveValue(BeTrue()))
+					Expect(s.IP).ToNot(BeNil())
+					Expect(s.IP.Addresses).To(HaveLen(1))
+					Expect(s.IP.Addresses[0].Address).To(Equal(ip0))
+
+					for _, name := range []string{eth0, eth1} {
+						expectCond(name, vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady, metav1.ConditionTrue, "")
+						expectCond(name, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady, metav1.ConditionTrue, "")
+						expectCond(name, vmopv1.VirtualMachineNetworkInterfaceConditionReady, metav1.ConditionTrue, "")
+						expectCond(name, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid, metav1.ConditionTrue, "")
+						Expect(cond(name, vmopv1.VirtualMachineNetworkInterfaceConditionReady).ObservedGeneration).To(Equal(int64(3)))
+					}
+					Expect(entry(eth0).Conditions[0].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceConditionReady))
+
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(Equal(ip0))
+					Expect(conditions.IsTrue(vmCtx.VM, vmopv1.VirtualMachineGuestNetworkConfigSynced)).To(BeTrue())
+				})
+			})
+
+			When("a desired interface has no adapter yet", func() {
+				BeforeEach(func() {
+					info.Interfaces[1].Match = network.Match{Kind: network.MatchNone}
+					info.Interfaces[1].Provider = network.Resolution{
+						Phase:   network.ResolutionPending,
+						Message: "waiting for the network interface",
+					}
+					info.Adapters = info.Adapters[:1]
+					vmCtx.MoVM.Guest.Net = vmCtx.MoVM.Guest.Net[:1]
+				})
+
+				It("seeds an entry without observed hardware or guest fields", func() {
+					Expect(names()).To(Equal([]string{eth0, eth1}))
+
+					s := entry(eth1)
+					Expect(s.DeviceKey).To(BeZero())
+					Expect(s.UnitNumber).To(BeNil())
+					Expect(s.Hardware).To(BeNil())
+					Expect(s.IP).To(BeNil())
+					Expect(s.DNS).To(BeNil())
+
+					expectCond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceProviderPendingReason)
+					Expect(cond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady).Message).
+						To(Equal("waiting for the network interface"))
+					expectCond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceDeviceNotPresentReason)
+					expectCond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionReady,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceProviderPendingReason)
+					expectCond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+						metav1.ConditionUnknown, vmopv1.VirtualMachineNetworkInterfaceDeviceNotPresentReason)
+
+					// The independent interface is unaffected.
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionReady, metav1.ConditionTrue, "")
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(Equal(ip0))
+				})
+			})
+
+			When("VMware Tools is not running", func() {
+				BeforeEach(func() {
+					vmCtx.MoVM.Guest.ToolsRunningStatus = string(vimtypes.VirtualMachineToolsRunningStatusGuestToolsNotRunning)
+				})
+
+				It("reports hardware readiness and withholds guest information", func() {
+					Expect(names()).To(Equal([]string{eth0, eth1}))
+					for i, name := range []string{eth0, eth1} {
+						s := entry(name)
+						Expect(s.DeviceKey).To(Equal(info.Adapters[i].Key))
+						Expect(s.Hardware).ToNot(BeNil())
+						Expect(s.Hardware.MACAddress).To(Equal(info.Adapters[i].MAC))
+						Expect(s.IP).To(BeNil())
+						Expect(s.DNS).To(BeNil())
+						expectCond(name, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady, metav1.ConditionTrue, "")
+						expectCond(name, vmopv1.VirtualMachineNetworkInterfaceConditionReady, metav1.ConditionTrue, "")
+						expectCond(name, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+							metav1.ConditionUnknown, vmopv1.VirtualMachineNetworkInterfaceToolsUnavailableReason)
+					}
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(BeEmpty())
+					Expect(conditions.IsFalse(vmCtx.VM, vmopv1.VirtualMachineGuestNetworkConfigSynced)).To(BeTrue())
+				})
+			})
+
+			When("the VM is powered off", func() {
+				BeforeEach(func() {
+					vmCtx.MoVM.Runtime.PowerState = vimtypes.VirtualMachinePowerStatePoweredOff
+				})
+
+				It("omits the runtime connection state and withholds guest information", func() {
+					s := entry(eth0)
+					Expect(s.Hardware).ToNot(BeNil())
+					Expect(s.Hardware.Connected).To(BeNil())
+					Expect(s.Hardware.StartConnected).To(HaveValue(BeTrue()))
+					Expect(s.IP).To(BeNil())
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionReady, metav1.ConditionTrue, "")
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+						metav1.ConditionUnknown, vmopv1.VirtualMachineNetworkInterfaceVMNotRunningReason)
+				})
+			})
+
+			When("a guest report reuses the device key with a different MAC address", func() {
+				BeforeEach(func() {
+					vmCtx.MoVM.Guest.Net[0] = guestNIC(key0, "00:50:56:ff:ff:ff", ip0)
+				})
+
+				It("rejects the report and withdraws the primary IP it carried", func() {
+					s := entry(eth0)
+					Expect(s.DeviceKey).To(Equal(key0))
+					Expect(s.Hardware.MACAddress).To(Equal(mac0))
+					Expect(s.IP).To(BeNil())
+					Expect(s.DNS).To(BeNil())
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceMACMismatchReason)
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionReady, metav1.ConditionTrue, "")
+
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(BeEmpty())
+					c := conditions.Get(vmCtx.VM, vmopv1.VirtualMachineGuestNetworkConfigSynced)
+					Expect(c).ToNot(BeNil())
+					Expect(c.Status).To(Equal(metav1.ConditionFalse))
+					Expect(c.Message).To(ContainSubstring("not corroborated"))
+				})
+			})
+
+			When("a guest report differs from the adapter MAC address only in case", func() {
+				BeforeEach(func() {
+					vmCtx.MoVM.Guest.Net[0] = guestNIC(key0, strings.ToUpper(mac0), ip0)
+				})
+
+				It("accepts the report", func() {
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid, metav1.ConditionTrue, "")
+					Expect(entry(eth0).IP).ToNot(BeNil())
+				})
+			})
+
+			When("VMware Tools reports two records for one device key", func() {
+				BeforeEach(func() {
+					vmCtx.MoVM.Guest.Net = append(vmCtx.MoVM.Guest.Net, guestNIC(key0, mac0, "192.168.30.2"))
+				})
+
+				It("rejects both records", func() {
+					Expect(entry(eth0).IP).To(BeNil())
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+						metav1.ConditionUnknown, vmlifecycle.NetworkInterfaceGuestReportAmbiguousReason)
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(BeEmpty())
+				})
+			})
+
+			When("VMware Tools still reports an adapter that was removed", func() {
+				BeforeEach(func() {
+					vmCtx.MoVM.Guest.Net = append(vmCtx.MoVM.Guest.Net, guestNIC(key2, mac2, "192.168.30.2"))
+					vmCtx.MoVM.Guest.IpAddress = "192.168.30.2"
+				})
+
+				It("drops the guest record instead of creating an entry", func() {
+					Expect(names()).To(Equal([]string{eth0, eth1}))
+					for _, s := range vmCtx.VM.Status.Network.Interfaces {
+						Expect(s.DeviceKey).ToNot(Equal(key2))
+					}
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(BeEmpty())
+				})
+			})
+
+			When("the cloud-init local IP hint is on an interface whose report is rejected", func() {
+				BeforeEach(func() {
+					vmCtx.VM.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+						CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+					}
+					vmCtx.MoVM.Config.ExtraConfig = append(vmCtx.MoVM.Config.ExtraConfig,
+						&vimtypes.OptionValue{
+							Key:   constants.CloudInitGuestInfoLocalIPv4Key,
+							Value: ip1,
+						})
+					vmCtx.MoVM.Guest.Net[1] = guestNIC(key1, "00:50:56:ff:ff:ff", ip1)
+				})
+
+				It("publishes the corroborated global guest IP instead", func() {
+					expectCond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceMACMismatchReason)
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(Equal(ip0))
+				})
+			})
+
+			When("the attachment of a matched adapter is being replaced", func() {
+				BeforeEach(func() {
+					info.Interfaces[0].AttachmentChange = network.AttachmentChangeReplacement
+					vmCtx.MoVM.Guest.IpStack = []vimtypes.GuestStackInfo{{}}
+				})
+
+				It("keeps the old adapter visible and withholds its guest information", func() {
+					s := entry(eth0)
+					Expect(s.DeviceKey).To(Equal(key0))
+					Expect(s.Hardware).ToNot(BeNil())
+					Expect(s.IP).To(BeNil())
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceAttachmentPendingReason)
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionReady,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceAttachmentPendingReason)
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid,
+						metav1.ConditionUnknown, vmopv1.VirtualMachineNetworkInterfaceAwaitingGuestReportReason)
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(BeEmpty())
+					Expect(vmCtx.VM.Status.Network.IPStacks).To(BeEmpty())
+				})
+			})
+
+			When("the provider pins a MAC address the adapter does not have", func() {
+				BeforeEach(func() {
+					info.Interfaces[0].Provider.Target = &network.Attachment{
+						MAC: network.MACPolicy{Pinned: "00:50:56:ff:ff:ff"},
+					}
+				})
+
+				It("reports the hardware as not ready, as the network readiness does", func() {
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady,
+						metav1.ConditionFalse, network.ReadinessReasonMACMismatch)
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionReady,
+						metav1.ConditionFalse, network.ReadinessReasonMACMismatch)
+					// The guest report still agrees with the observed adapter.
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid, metav1.ConditionTrue, "")
+				})
+			})
+
+			When("an adapter is observed disconnected", func() {
+				BeforeEach(func() {
+					info.Adapters[0].Connect.Connected = false
+				})
+
+				It("keeps its accepted report but not as a primary IP source", func() {
+					s := entry(eth0)
+					Expect(s.Hardware.Connected).To(HaveValue(BeFalse()))
+					Expect(s.IP).ToNot(BeNil())
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(BeEmpty())
+				})
+			})
+
+			When("an adapter is not claimed by any desired interface", func() {
+				BeforeEach(func() {
+					// The unclaimed adapter is listed first to show that the
+					// unnamed entries follow the desired ones in key order.
+					info.Adapters = append([]network.ObservedAdapter{adapter(key2, 9, mac2)}, info.Adapters...)
+					vmCtx.MoVM.Guest.Net = append(vmCtx.MoVM.Guest.Net, guestNIC(key2, mac2, "192.168.30.2"))
+					vmCtx.MoVM.Guest.IpAddress = "192.168.30.2"
+				})
+
+				It("appends an unnamed entry without desired-interface conditions", func() {
+					Expect(names()).To(Equal([]string{eth0, eth1, ""}))
+					s := vmCtx.VM.Status.Network.Interfaces[2]
+					Expect(s.DeviceKey).To(Equal(key2))
+					Expect(s.UnitNumber).To(HaveValue(Equal(int32(9))))
+					Expect(s.Hardware).ToNot(BeNil())
+					Expect(s.Hardware.MACAddress).To(Equal(mac2))
+					Expect(s.Conditions).To(BeEmpty())
+					Expect(s.IP).ToNot(BeNil())
+
+					// An address reported only on an adapter that no desired
+					// interface claims is not a primary IP.
+					Expect(vmCtx.VM.Status.Network.PrimaryIP4).To(BeEmpty())
+				})
+			})
+
+			When("a numbered interface has no adapter at its unit number", func() {
+				BeforeEach(func() {
+					vmCtx.VM.Spec.Network.Interfaces[1].UnitNumber = ptr.To(int32(9))
+					info.Interfaces[1].Spec.UnitNumber = ptr.To(int32(9))
+					info.Interfaces[1].Match = network.Match{Kind: network.MatchNone}
+				})
+
+				It("reports no hardware for it and lists the other adapter unnamed", func() {
+					Expect(names()).To(Equal([]string{eth0, eth1, ""}))
+
+					s := entry(eth1)
+					Expect(s.DeviceKey).To(BeZero())
+					Expect(s.UnitNumber).To(BeNil())
+					Expect(s.Hardware).To(BeNil())
+					Expect(s.IP).To(BeNil())
+					expectCond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady,
+						metav1.ConditionFalse, vmopv1.VirtualMachineNetworkInterfaceDeviceNotPresentReason)
+
+					u := vmCtx.VM.Status.Network.Interfaces[2]
+					Expect(u.DeviceKey).To(Equal(key1))
+					Expect(u.UnitNumber).To(HaveValue(Equal(int32(8))))
+				})
+			})
+
+			When("status is reconciled again", func() {
+				BeforeEach(func() {
+					info.Interfaces[1].Provider = network.Resolution{Phase: network.ResolutionPending}
+				})
+
+				It("keeps transition times until a condition changes", func() {
+					past := metav1.NewTime(time.Now().Add(-time.Hour).UTC().Truncate(time.Second))
+					for i := range vmCtx.VM.Status.Network.Interfaces {
+						for j := range vmCtx.VM.Status.Network.Interfaces[i].Conditions {
+							vmCtx.VM.Status.Network.Interfaces[i].Conditions[j].LastTransitionTime = past
+						}
+					}
+
+					By("a second pass with the same observation and a new generation")
+					vmCtx.VM.Generation = 4
+					Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+					for _, name := range []string{eth0, eth1} {
+						for _, c := range entry(name).Conditions {
+							Expect(c.LastTransitionTime).To(Equal(past), "%s %s", name, c.Type)
+							Expect(c.ObservedGeneration).To(Equal(int64(4)), "%s %s", name, c.Type)
+						}
+					}
+
+					By("a third pass after the provider becomes ready")
+					info.Interfaces[1].Provider = network.Resolution{Phase: network.ResolutionReady}
+					Expect(vmlifecycle.ReconcileStatus(vmCtx, ctx.Client, vcVM, data)).To(Succeed())
+					Expect(cond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady).LastTransitionTime).ToNot(Equal(past))
+					Expect(cond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionReady).LastTransitionTime).ToNot(Equal(past))
+					Expect(cond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady).LastTransitionTime).To(Equal(past))
+					Expect(cond(eth1, vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid).LastTransitionTime).To(Equal(past))
+					for _, c := range entry(eth0).Conditions {
+						Expect(c.LastTransitionTime).To(Equal(past), "%s %s", eth0, c.Type)
+					}
+				})
+			})
+
+			When("the network was not observed", func() {
+				BeforeEach(func() {
+					data.NetworkInfo = nil
+				})
+
+				It("still seeds an entry for every desired interface", func() {
+					Expect(names()).To(Equal([]string{eth0, eth1}))
+					expectCond(eth0, vmopv1.VirtualMachineNetworkInterfaceConditionReady,
+						metav1.ConditionUnknown, vmlifecycle.NetworkInterfaceObservationUnavailableReason)
+					Expect(entry(eth0).Hardware).To(BeNil())
 				})
 			})
 		})

@@ -468,7 +468,7 @@ type Policy struct {
 // capability is enabled. NICsOutOfGOSCHash is wired.
 func PolicyFromContext(ctx context.Context) Policy {
 	on := pkgcfg.FromContext(ctx).Features.VMNetworkHotPlug
-	return Policy{
+	p := Policy{
 		LiveChanges:       false,
 		EditAttachments:   false,
 		InterfaceStatus:   false,
@@ -476,6 +476,21 @@ func PolicyFromContext(ctx context.Context) Policy {
 		NICsOutOfGOSCHash: on,
 		ChangeVersion:     false,
 	}
+	if fn, ok := ctx.Value(policyOverrideContextKey).(func(*Policy)); ok && fn != nil {
+		fn(&p)
+	}
+	return p
+}
+
+// WithPolicyOverride returns a new context in which PolicyFromContext applies
+// fn to the Policy it derives, after the capability has been read. It is a
+// test seam that exercises a Policy field before the last task of its delivery
+// group wires that field to the capability. Production code must not use it.
+func WithPolicyOverride(
+	parent context.Context,
+	fn func(*Policy)) context.Context {
+
+	return context.WithValue(parent, policyOverrideContextKey, fn)
 }
 
 // ObservationIdentity ties an observation snapshot to the inputs it was
@@ -812,7 +827,10 @@ const (
 
 type contextKey uint8
 
-const stateContextKey contextKey = 0
+const (
+	stateContextKey          contextKey = 0
+	policyOverrideContextKey contextKey = 1
+)
 
 // WithContext returns a new context with the provided reconcile state.
 func WithContext(

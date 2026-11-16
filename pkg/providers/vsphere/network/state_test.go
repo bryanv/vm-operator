@@ -81,6 +81,21 @@ var _ = Describe("ReconcileState", Label(testlabels.API), func() {
 				NICsOutOfGOSCHash: true,
 			}))
 		})
+
+		It("applies a policy override after reading the capability", func() {
+			ctx := pkgcfg.UpdateContext(
+				pkgcfg.NewContextWithDefaultConfig(),
+				func(config *pkgcfg.Config) {
+					config.Features.VMNetworkHotPlug = true
+				})
+			ctx = network.WithPolicyOverride(ctx, func(p *network.Policy) {
+				p.InterfaceStatus = true
+			})
+			Expect(network.PolicyFromContext(ctx)).To(Equal(network.Policy{
+				InterfaceStatus:   true,
+				NICsOutOfGOSCHash: true,
+			}))
+		})
 	})
 
 	Context("InterfaceState records", func() {

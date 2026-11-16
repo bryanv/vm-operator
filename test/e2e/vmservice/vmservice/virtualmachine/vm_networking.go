@@ -842,6 +842,92 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 			g.Expect(resources).To(Equal(firstResources))
 		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VirtualMachine %s still has the provider resource of its removed network interface", vmName)
 	})
+
+	// Spec 017 T024: with network hot plug, every desired interface has a
+	// status entry as soon as it is desired. A pending interface's entry has
+	// no observed device key or hardware and reports HardwareReady=False,
+	// while the ready interface reports its observed hardware without
+	// depending on VMware Tools.
+	Context("Spec-first network interface status", func() {
+		It("Should report a status entry for a pending network interface immediately", Label("experimental"), func() {
+			skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
+			skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.NetworkHotPlugCapabilityName)
+
+			const pendingInterfaceName = "eth-pending"
+			missingNetworkName := fmt.Sprintf("%s-missing-%s", specName, capiutil.RandomString(4))
+
+			vmToCreate := &vmopv1a2.VirtualMachine{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: input.WCPNamespaceName,
+					Name:      vmName,
+				},
+				Spec: vmopv1a2.VirtualMachineSpec{
+					ImageName:    linuxVMIName,
+					ClassName:    clusterResources.VMClassName,
+					StorageClass: clusterResources.StorageClassName,
+					PowerState:   vmopv1a2.VirtualMachinePowerStateOn,
+				},
+			}
+			vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vmToCreate, false)
+			vmoperator.WaitForVirtualMachineToExist(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+			vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, vmopv1.VirtualMachinePowerStateOn)
+
+			key := ctrlclient.ObjectKey{Name: vmName, Namespace: input.WCPNamespaceName}
+
+			var firstInterfaceName string
+			By("Add a network interface whose network does not exist")
+			Eventually(func(g Gomega) {
+				g.Expect(vmoperator.PatchVirtualMachine(ctx, svClusterClient, input.WCPNamespaceName, vmName, func(vm *vmopv1.VirtualMachine) error {
+					if vm.Spec.Network == nil || len(vm.Spec.Network.Interfaces) != 1 || vm.Spec.Network.Interfaces[0].Network == nil {
+						return fmt.Errorf("expected one network interface with a network, got %+v", vm.Spec.Network)
+					}
+					firstInterfaceName = vm.Spec.Network.Interfaces[0].Name
+					pending := *vm.Spec.Network.Interfaces[0].DeepCopy()
+					pending.Name = pendingInterfaceName
+					// The same provider type as the first interface, so its
+					// provider resource is created, but it never becomes ready.
+					pending.Network.Name = missingNetworkName
+					pending.MACAddr = ""
+					pending.UnitNumber = nil
+					vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, pending)
+					return nil
+				}, ctrlclient.MergeFromWithOptimisticLock{})).To(Succeed())
+			}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out adding the pending network interface to VirtualMachine %s", vmName)
+
+			By("Both interfaces have status entries, and the pending one has no hardware")
+			Eventually(func(g Gomega) {
+				vm := &vmopv1.VirtualMachine{}
+				g.Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+				g.Expect(vm.Status.Network).ToNot(BeNil())
+
+				ifaces := vm.Status.Network.Interfaces
+				g.Expect(len(ifaces)).To(BeNumerically(">=", 2))
+				g.Expect(ifaces[0].Name).To(Equal(firstInterfaceName))
+				g.Expect(ifaces[1].Name).To(Equal(pendingInterfaceName))
+
+				ready := ifaces[0]
+				g.Expect(ready.DeviceKey).ToNot(BeZero())
+				g.Expect(ready.Hardware).ToNot(BeNil())
+				g.Expect(ready.Hardware.MACAddress).ToNot(BeEmpty())
+				c := meta.FindStatusCondition(ready.Conditions, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady)
+				g.Expect(c).ToNot(BeNil())
+				g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+
+				pending := ifaces[1]
+				g.Expect(pending.DeviceKey).To(BeZero())
+				g.Expect(pending.UnitNumber).To(BeNil())
+				g.Expect(pending.Hardware).To(BeNil())
+				g.Expect(pending.IP).To(BeNil())
+				c = meta.FindStatusCondition(pending.Conditions, vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady)
+				g.Expect(c).ToNot(BeNil())
+				g.Expect(c.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(c.Reason).To(Equal(vmopv1.VirtualMachineNetworkInterfaceDeviceNotPresentReason))
+				c = meta.FindStatusCondition(pending.Conditions, vmopv1.VirtualMachineNetworkInterfaceConditionReady)
+				g.Expect(c).ToNot(BeNil())
+				g.Expect(c.Status).To(Equal(metav1.ConditionFalse))
+			}, config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed(), "VirtualMachine %s does not report a status entry for its pending network interface", vmName)
+		})
+	})
 }
 
 // ownedNetworkProviderResources returns the UIDs of the network provider

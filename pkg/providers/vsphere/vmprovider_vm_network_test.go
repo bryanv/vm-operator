@@ -1598,6 +1598,58 @@ func vmNetworkTests() {
 						Expect(err).ToNot(HaveOccurred())
 						Expect(devList.SelectByType(&vimtypes.VirtualEthernetCard{})).To(HaveLen(2))
 					})
+
+					// Spec 017 T024: with spec-first interface status, the
+					// pending interface has a status entry as soon as it is
+					// desired, before its provider resource is ready or its
+					// adapter exists, while the ready interface reports its
+					// observed hardware independently of VMware Tools.
+					Context("Spec 017 T024: with spec-first interface status", func() {
+						BeforeEach(func() {
+							parentCtx = network.WithPolicyOverride(parentCtx, func(p *network.Policy) {
+								p.InterfaceStatus = true
+							})
+						})
+
+						It("reports the pending interface's status entry immediately", func() {
+							createPoweredOnVM()
+
+							addPendingInterface()
+							err := createOrUpdateVM(ctx, vmProvider, vm)
+							Expect(pkgerr.IsRequeueError(err)).To(BeTrue(), "err: %v", err)
+
+							Expect(vm.Status.Network).ToNot(BeNil())
+							ifaces := vm.Status.Network.Interfaces
+							Expect(ifaces).To(HaveLen(2))
+							Expect(ifaces[0].Name).To(Equal(interfaceName0))
+							Expect(ifaces[1].Name).To(Equal(interfaceName1))
+
+							ready := ifaces[0]
+							Expect(ready.DeviceKey).ToNot(BeZero())
+							Expect(ready.Hardware).ToNot(BeNil())
+							Expect(ready.Hardware.MACAddress).ToNot(BeEmpty())
+							readyConds := conditions.Conditions(ready.Conditions)
+							Expect(readyConds.IsTrue(vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady)).To(BeTrue())
+							Expect(readyConds.IsTrue(vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady)).To(BeTrue())
+							Expect(readyConds.IsTrue(vmopv1.VirtualMachineNetworkInterfaceConditionReady)).To(BeTrue())
+
+							pending := ifaces[1]
+							Expect(pending.DeviceKey).To(BeZero())
+							Expect(pending.UnitNumber).To(BeNil())
+							Expect(pending.Hardware).To(BeNil())
+							Expect(pending.IP).To(BeNil())
+							pendingConds := conditions.Conditions(pending.Conditions)
+							Expect(pendingConds.IsFalse(vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady)).To(BeTrue())
+							Expect(pendingConds.GetReason(vmopv1.VirtualMachineNetworkInterfaceConditionProviderReady)).
+								To(Equal(vmopv1.VirtualMachineNetworkInterfaceProviderPendingReason))
+							Expect(pendingConds.IsFalse(vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady)).To(BeTrue())
+							Expect(pendingConds.GetReason(vmopv1.VirtualMachineNetworkInterfaceConditionHardwareReady)).
+								To(Equal(vmopv1.VirtualMachineNetworkInterfaceDeviceNotPresentReason))
+							Expect(pendingConds.IsFalse(vmopv1.VirtualMachineNetworkInterfaceConditionReady)).To(BeTrue())
+							Expect(pendingConds.Get(vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid)).ToNot(BeNil())
+							Expect(pendingConds.IsUnknown(vmopv1.VirtualMachineNetworkInterfaceConditionGuestInfoValid)).To(BeTrue())
+						})
+					})
 				},
 				Entry("VDS", builder.NetworkEnvVDS),
 				Entry("NSX-T", builder.NetworkEnvNSXT),

@@ -5,7 +5,11 @@
 package network
 
 import (
+	"cmp"
 	"context"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/vmware/govmomi/object"
@@ -14,7 +18,9 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	pkgcond "github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
+	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 )
 
 // ReconcileState is the per-pass network reconciliation state. It is
@@ -33,13 +39,393 @@ type ReconcileState struct {
 	// Plan is the network plan built from Observed, if any.
 	Plan *Plan
 
-	// Submitted is true when a reconfigure task submitted on this pass
-	// carried network device changes from Plan.
+	// Submitted is true when the device changes of Plan were handed to this
+	// pass's reconfigure. The observed hardware no longer describes the VM
+	// once they are, so the network cannot be ready until the next pass
+	// observes the result.
 	Submitted bool
 
 	// RequeueAfter is the deferred retry interval to apply at the end of the
 	// pass. Zero means no network retry is needed.
 	RequeueAfter time.Duration
+}
+
+// PendingRequeueAfter is the bounded retry interval for a network wait that
+// has no dependable wake-up, such as a provider resource that is not ready
+// yet or a provider read that failed. It matches the default
+// CreateVMRequeueDelay and PoweredOnVMHasIPRequeueDelay.
+const PendingRequeueAfter = 10 * time.Second
+
+// Reasons that Readiness reports in addition to the reasons of planned
+// actions.
+const (
+	// ReadinessReasonNotEvaluated is used when the network has not been
+	// observed and planned on this pass, for example because the state or
+	// its plan is missing.
+	ReadinessReasonNotEvaluated = "NetworkNotEvaluated"
+
+	// ReadinessReasonObservationStale is used when the observation or the
+	// plan no longer describes the current VM inputs.
+	ReadinessReasonObservationStale = "ObservationStale"
+
+	// ReadinessReasonObservationIncomplete is used when a read needed to
+	// observe the network failed.
+	ReadinessReasonObservationIncomplete = "ObservationIncomplete"
+
+	// ReadinessReasonHardwarePending is used when network device changes
+	// were submitted on this pass, or when a desired interface's hardware
+	// is not in its desired state yet.
+	ReadinessReasonHardwarePending = vmopv1.VirtualMachineNetworkInterfaceHardwarePendingReason
+
+	// ReadinessReasonMACAddressPending is used when the adapter of a desired
+	// interface does not report a MAC address yet.
+	ReadinessReasonMACAddressPending = "MACAddressPending"
+
+	// ReadinessReasonMACMismatch is used when the adapter of a desired
+	// interface does not have the MAC address its provider pins.
+	ReadinessReasonMACMismatch = vmopv1.VirtualMachineNetworkInterfaceMACMismatchReason
+
+	// ReadyConditionNotReadyReason is the VirtualMachineNetworkReady
+	// condition reason when the network is not ready for several reasons,
+	// or when the create path's prerequisites failed.
+	ReadyConditionNotReadyReason = "NotReady"
+)
+
+// PendingInterface describes one reason the network is not ready.
+type PendingInterface struct {
+	// Name is the name of the desired interface. It is empty for an adapter
+	// that no desired interface owns and for a reason that concerns the
+	// whole network.
+	Name string
+
+	// Adapter is the device key of the adapter that no desired interface
+	// owns. It is zero otherwise.
+	Adapter int32
+
+	// Reason is a stable reason.
+	Reason string
+
+	// Message is a human-readable message.
+	Message string
+}
+
+// String returns the pending reason in the form used by condition messages.
+func (p PendingInterface) String() string {
+	var who string
+	switch {
+	case p.Name != "":
+		who = p.Name
+	case p.Adapter != 0:
+		who = fmt.Sprintf("adapter %d", p.Adapter)
+	}
+
+	s := p.Reason
+	if p.Message != "" {
+		s += " (" + p.Message + ")"
+	}
+	if who != "" {
+		s = who + ": " + s
+	}
+	return s
+}
+
+// Readiness is the derived network readiness of one pass. It is computed by
+// ReconcileState.Readiness from the current observation, plan, and task
+// submission state, and is never stored.
+type Readiness struct {
+	// Known is true when a complete observation and a plan built from it
+	// both describe the current VM inputs, and no network device changes
+	// were submitted on this pass.
+	Known bool
+
+	// ProviderReady is true when every desired interface's provider
+	// resource is Ready.
+	ProviderReady bool
+
+	// HardwareConverged is true when every desired interface claims an
+	// adapter that needs no change, every adapter is claimed, and the plan
+	// holds no other change, including a deferred one.
+	HardwareConverged bool
+
+	// MACsResolved is true when every claimed adapter reports a MAC address
+	// and agrees with the MAC address its provider pins.
+	MACsResolved bool
+
+	// Pending holds the reasons the network is not ready: first the reasons
+	// that concern the whole network, then the desired interfaces' reasons
+	// sorted by interface name, then the reasons of adapters that no desired
+	// interface owns, sorted by device key.
+	Pending []PendingInterface
+}
+
+// Ready returns true when the network is ready. Bootstrap and the
+// powered-off to powered-on transition both require it, in addition to their
+// own lifecycle prerequisites.
+func (r Readiness) Ready() bool {
+	return r.Known && r.ProviderReady && r.HardwareConverged && r.MACsResolved
+}
+
+// PendingNames returns the names of the desired interfaces that are not
+// ready, sorted.
+func (r Readiness) PendingNames() []string {
+	var names []string
+	for _, p := range r.Pending {
+		if p.Name != "" && !slices.Contains(names, p.Name) {
+			names = append(names, p.Name)
+		}
+	}
+	return names
+}
+
+// Readiness derives the network readiness of the current pass. It performs no
+// I/O and does not mutate the state. It is safe to call on a nil state, in
+// which case the network is not ready: an absent state is never treated as an
+// empty network.
+//
+// The network is ready when all of these hold:
+//
+//   - The state holds an observation and a plan built from it, both describe
+//     the current VM and vSphere VM, the observation is complete, and no
+//     network device changes were submitted on this pass.
+//   - Every desired interface's provider resource is Ready.
+//   - Every desired interface claims an adapter, its planned action is a
+//     NoOp, and its attachment is not being replaced. A NoOp alone is not
+//     enough, because a pending replacement keeps its old adapter untouched.
+//   - Every observed adapter is claimed. An adapter that a required removal
+//     targets is still present until an observation shows otherwise, even
+//     while it is disconnected.
+//   - Every claimed adapter reports a MAC address, and that address agrees
+//     with the MAC address the interface's provider pins.
+func (s *ReconcileState) Readiness(vmCtx pkgctx.VirtualMachineContext) Readiness {
+	if s == nil || s.Observed == nil || s.Plan == nil {
+		return Readiness{
+			Pending: []PendingInterface{{
+				Reason:  ReadinessReasonNotEvaluated,
+				Message: "the network has not been observed and planned on this pass",
+			}},
+		}
+	}
+
+	info, plan := s.Observed, s.Plan
+	r := Readiness{
+		ProviderReady:     true,
+		HardwareConverged: true,
+		MACsResolved:      true,
+	}
+
+	switch {
+	case plan.Identity != info.Identity ||
+		vmCtx.VM == nil ||
+		info.Identity != observationIdentity(vmCtx.VM, vmCtx.MoVM):
+		r.Pending = append(r.Pending, PendingInterface{
+			Reason:  ReadinessReasonObservationStale,
+			Message: "the network observation does not describe the current VM",
+		})
+	case !info.Complete:
+		r.Pending = append(r.Pending, PendingInterface{
+			Reason:  ReadinessReasonObservationIncomplete,
+			Message: "the network observation is incomplete",
+		})
+	case s.Submitted:
+		r.Pending = append(r.Pending, PendingInterface{
+			Reason:  ReadinessReasonHardwarePending,
+			Message: "network device changes were submitted and are not observed yet",
+		})
+	default:
+		r.Known = true
+	}
+
+	adapters := make(map[int32]ObservedAdapter, len(info.Adapters))
+	for _, a := range info.Adapters {
+		adapters[a.Key] = a
+	}
+
+	var named []PendingInterface
+	for _, iface := range info.Interfaces {
+		if p, ok := interfaceReadiness(&r, iface, plan, adapters); !ok {
+			named = append(named, p)
+		}
+	}
+
+	var unowned []PendingInterface
+	for _, a := range info.Adapters {
+		if info.Disposition[a.Key] == AdapterDispositionClaimed {
+			continue
+		}
+		r.HardwareConverged = false
+		p := PendingInterface{
+			Adapter: a.Key,
+			Reason:  PlanReasonRemovalPending,
+			Message: fmt.Sprintf("adapter %d is not claimed by any network interface", a.Key),
+		}
+		if action, ok := plan.adapterAction(a.Key); ok {
+			p.Reason, p.Message = action.Reason, action.Message
+		}
+		unowned = append(unowned, p)
+	}
+
+	slices.SortStableFunc(named, func(a, b PendingInterface) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	slices.SortStableFunc(unowned, func(a, b PendingInterface) int {
+		return cmp.Compare(a.Adapter, b.Adapter)
+	})
+	r.Pending = append(append(r.Pending, named...), unowned...)
+
+	return r
+}
+
+// interfaceReadiness evaluates one desired interface, clears the predicates
+// of r that it fails, and returns the reason it is not ready. It returns
+// false when the interface is not ready.
+func interfaceReadiness(
+	r *Readiness,
+	iface InterfaceState,
+	plan *Plan,
+	adapters map[int32]ObservedAdapter) (PendingInterface, bool) {
+
+	name := iface.Spec.Name
+	action, hasAction := plan.InterfaceAction(name)
+
+	pending := func(reason, message string) PendingInterface {
+		if hasAction && action.Reason != "" {
+			reason = action.Reason
+		}
+		if hasAction && action.Message != "" {
+			message = action.Message
+		}
+		return PendingInterface{Name: name, Reason: reason, Message: message}
+	}
+
+	switch iface.Provider.Phase {
+	case ResolutionReady:
+	case ResolutionPending:
+		r.ProviderReady = false
+		return pending(PlanReasonProviderPending, iface.Provider.Message), false
+	case ResolutionFailed:
+		r.ProviderReady = false
+		return pending(PlanReasonProviderFailed, iface.Provider.Message), false
+	case ResolutionUnknown:
+		r.ProviderReady = false
+		return pending(PlanReasonProviderUnknown, iface.Provider.Message), false
+	default:
+		r.ProviderReady = false
+		return pending(PlanReasonProviderUnknown, iface.Provider.Message), false
+	}
+
+	if !hasAction || action.Kind != ActionNoOp ||
+		!IsClaim(iface.Match.Kind) ||
+		iface.AttachmentChange == AttachmentChangeReplacement {
+
+		r.HardwareConverged = false
+		return pending(ReadinessReasonHardwarePending, fmt.Sprintf(
+			"the hardware of network interface %q is not in its desired state", name)), false
+	}
+
+	a, ok := adapters[iface.Match.AdapterKey]
+	if !ok {
+		r.HardwareConverged = false
+		return PendingInterface{
+			Name:    name,
+			Reason:  PlanReasonDeviceNotPresent,
+			Message: fmt.Sprintf("adapter %d is not present", iface.Match.AdapterKey),
+		}, false
+	}
+
+	if a.MAC == "" {
+		r.MACsResolved = false
+		return PendingInterface{
+			Name:    name,
+			Reason:  ReadinessReasonMACAddressPending,
+			Message: fmt.Sprintf("adapter %d does not report a MAC address yet", a.Key),
+		}, false
+	}
+
+	if t := iface.Provider.Target; t != nil && t.MAC.Pinned != "" &&
+		!strings.EqualFold(t.MAC.Pinned, a.MAC) {
+
+		r.MACsResolved = false
+		return PendingInterface{
+			Name:   name,
+			Reason: ReadinessReasonMACMismatch,
+			Message: fmt.Sprintf("adapter %d has MAC address %s instead of %s",
+				a.Key, a.MAC, t.MAC.Pinned),
+		}, false
+	}
+
+	return PendingInterface{}, true
+}
+
+// SetReadyCondition sets the VM's VirtualMachineNetworkReady condition. The
+// create path, which waits for the provider prerequisites before creating
+// the VM, and the update path, which reports the derived Readiness, both use
+// it so the condition has one owner:
+//
+//   - A non-nil err marks the condition False with the NotReady reason.
+//   - Otherwise a VM without network interfaces, i.e. a nil or disabled
+//     spec.network or one without interfaces, has no condition, as it
+//     historically has not.
+//   - Otherwise no pending reasons mark the condition True.
+//   - Otherwise the condition is False. Its reason is the pending reason
+//     when they all share one, or NotReady, and its message lists every
+//     pending reason in the order Readiness reports them.
+func SetReadyCondition(
+	vm *vmopv1.VirtualMachine,
+	hasInterfaces bool,
+	pending []PendingInterface,
+	err error) {
+
+	switch {
+	case err != nil:
+		pkgcond.MarkError(vm, vmopv1.VirtualMachineConditionNetworkReady,
+			ReadyConditionNotReadyReason, err)
+	case !hasInterfaces:
+		pkgcond.Delete(vm, vmopv1.VirtualMachineConditionNetworkReady)
+	case len(pending) == 0:
+		pkgcond.MarkTrue(vm, vmopv1.VirtualMachineConditionNetworkReady)
+	default:
+		reason := pending[0].Reason
+		messages := make([]string, 0, len(pending))
+		for _, p := range pending {
+			if p.Reason != reason {
+				reason = ReadyConditionNotReadyReason
+			}
+			messages = append(messages, p.String())
+		}
+		pkgcond.MarkFalse(vm, vmopv1.VirtualMachineConditionNetworkReady,
+			reason, "%s", strings.Join(messages, "; "))
+	}
+}
+
+// PendingRetryAfter returns the bounded retry interval a pass with this
+// observation and plan should end with, or zero. A retry is needed only for a
+// wait that may end without a dependable wake-up: a provider resource that is
+// not ready yet, a provider outcome or backing that could not be read, or an
+// incomplete observation. A change deferred until the VM is powered off and a
+// terminal provider failure do not need one, because the change in the VM's
+// spec or in the provider resource that ends them triggers a reconcile.
+func PendingRetryAfter(info *Info, plan *Plan) time.Duration {
+	if info == nil {
+		return 0
+	}
+	if !info.Complete {
+		return PendingRequeueAfter
+	}
+	for _, iface := range info.Interfaces {
+		switch iface.Provider.Phase {
+		case ResolutionPending, ResolutionUnknown:
+			return PendingRequeueAfter
+		case ResolutionReady, ResolutionFailed:
+		}
+	}
+	if plan != nil {
+		for _, a := range plan.Actions {
+			if a.Kind == ActionDeferred && a.Reason == PlanReasonBackingUnavailable {
+				return PendingRequeueAfter
+			}
+		}
+	}
+	return 0
 }
 
 // Policy holds the capability-dependent choices for one pass. It is the only

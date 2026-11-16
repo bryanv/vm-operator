@@ -1294,10 +1294,17 @@ var _ = Describe("Prepare named network", Label(testlabels.VCSim), func() {
 			Expect(oracleErr).ToNot(HaveOccurred())
 			Expect(devices).To(HaveLen(1))
 
-			Expect(r.Target.Backing.ID).To(Equal(devices[0].NetworkID))
 			backing := network.ResolutionBackingForTest(r)
 			Expect(backing).ToNot(BeNil())
 			Expect(backing.Reference()).To(Equal(devices[0].Backing.Reference()))
+
+			// Spec 017 T020: a named distributed portgroup's target is its
+			// portgroup key, which is what its adapter's distributed port
+			// backing records, so the adapter matches its interface.
+			Expect(r.Target.Backing).To(Equal(network.BackingID{
+				Kind: network.BackingKindDVPortgroup,
+				ID:   devices[0].Backing.Reference().Value,
+			}))
 		})
 	})
 

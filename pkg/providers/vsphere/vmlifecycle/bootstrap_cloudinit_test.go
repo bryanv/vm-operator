@@ -96,15 +96,18 @@ var _ = Describe("CloudInit Bootstrap", func() {
 			)
 		})
 
-		Context("Pending network changes because VM is powered on", func() {
+		// Spec 017 T020: BootStrapCloudInit no longer skips a powered-on VM
+		// with pending network changes. The caller bootstraps only once the
+		// network is ready, so a running VM's guestinfo is not rewritten
+		// while a network change is deferred; see the session tests.
+		Context("VM is powered on", func() {
 			BeforeEach(func() {
-				bsArgs.UpdatedEthCards = true
 				vmCtx.MoVM.Runtime.PowerState = vimtypes.VirtualMachinePowerStatePoweredOn
 			})
 
-			It("returns no error", func() {
+			It("returns the guestinfo ConfigSpec", func() {
 				Expect(err).ToNot(HaveOccurred())
-				Expect(configSpec).To(BeNil())
+				Expect(configSpec).ToNot(BeNil())
 				Expect(custSpec).To(BeNil())
 			})
 		})

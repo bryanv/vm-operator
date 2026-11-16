@@ -103,6 +103,15 @@ func BootStrapCloudInitInstanceID(
 	return iid
 }
 
+// BootStrapCloudInit returns the ConfigSpec that writes the VM's Cloud-Init
+// guestinfo, i.e. its metadata, including the netplan built from
+// bsArgs.NetBootstraps, and its user data.
+//
+// It does not consider pending network changes. The caller bootstraps only
+// once the network is ready, i.e. every desired interface has its adapter and
+// no hardware change is outstanding, including one deferred until the VM is
+// powered off. A running VM's guestinfo is therefore never rewritten to
+// describe an adapter that does not exist yet.
 func BootStrapCloudInit(
 	vmCtx pkgctx.VirtualMachineContext,
 	config *vimtypes.VirtualMachineConfigInfo,
@@ -111,16 +120,6 @@ func BootStrapCloudInit(
 
 	logger := pkglog.FromContextOrDefault(vmCtx)
 	logger.V(4).Info("Reconciling Cloud-Init bootstrap state")
-
-	if bsArgs.UpdatedEthCards {
-		// We're not yet doing hot-plug of ethernet devices for a powered on VM. Therefore, if this
-		// VM is on and there were network device related changes, don't apply a new cloud-config
-		// since the VM does not have the expected ethernet devices.
-		if vmCtx.MoVM.Runtime.PowerState == vimtypes.VirtualMachinePowerStatePoweredOn {
-			vmCtx.Logger.V(4).Info("Skipping Cloud-Init bootstrap with pending network changes because VM is powered on")
-			return nil, nil, nil
-		}
-	}
 
 	netPlan, err := network.NetPlanCustomization(bsArgs.NetBootstraps, bsArgs.VLANs)
 	if err != nil {

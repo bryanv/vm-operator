@@ -1496,3 +1496,85 @@ var _ = Describe("VPCInterfaceBootstrap",
 		})
 	},
 )
+
+var _ = Describe("BootstrapsFromInfo", Label(testlabels.API), func() {
+	var (
+		ctx  context.Context
+		vm   *vmopv1.VirtualMachine
+		info *network.Info
+	)
+
+	BeforeEach(func() {
+		ctx = pkgcfg.NewContextWithDefaultConfig()
+		vm = &vmopv1.VirtualMachine{
+			Spec: vmopv1.VirtualMachineSpec{
+				Network: &vmopv1.VirtualMachineNetworkSpec{
+					Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{Name: "eth0"},
+						{Name: "eth1", GuestDeviceName: "ens1"},
+					},
+				},
+			},
+		}
+		info = &network.Info{
+			Enabled:  true,
+			Complete: true,
+			Interfaces: []network.InterfaceState{
+				{
+					Spec:     vm.Spec.Network.Interfaces[0],
+					Provider: network.Resolution{Phase: network.ResolutionReady},
+					Match:    network.Match{Kind: network.MatchPositional, AdapterKey: 4001},
+				},
+				{
+					Spec: vm.Spec.Network.Interfaces[1],
+					Provider: network.Resolution{
+						Phase: network.ResolutionReady,
+						// The bootstrap MAC address is the observed one, never
+						// the provider's.
+						Target: &network.Attachment{MAC: network.MACPolicy{Pinned: "00:50:56:00:00:99"}},
+					},
+					Match: network.Match{Kind: network.MatchIdentity, AdapterKey: 4000},
+				},
+			},
+			Adapters: []network.ObservedAdapter{
+				{Key: 4000, MAC: "00:50:56:00:00:01"},
+				{Key: 4001, MAC: "00:50:56:00:00:02"},
+			},
+		}
+	})
+
+	It("builds one bootstrap per interface in spec order with the observed MAC addresses", func() {
+		bootstraps, err := network.BootstrapsFromInfo(ctx, vm, info)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(bootstraps).To(HaveLen(2))
+		Expect(bootstraps[0].Name).To(Equal("eth0"))
+		Expect(bootstraps[0].MacAddress).To(Equal("00:50:56:00:00:02"))
+		Expect(bootstraps[1].Name).To(Equal("eth1"))
+		Expect(bootstraps[1].GuestDeviceName).To(Equal("ens1"))
+		Expect(bootstraps[1].MacAddress).To(Equal("00:50:56:00:00:01"))
+	})
+
+	It("fails for an interface without an adapter", func() {
+		info.Interfaces[1].Match = network.Match{Kind: network.MatchNone}
+		_, err := network.BootstrapsFromInfo(ctx, vm, info)
+		Expect(err).To(MatchError(ContainSubstring(`network interface "eth1" has no adapter`)))
+	})
+
+	It("fails for an adapter without a MAC address", func() {
+		info.Adapters[0].MAC = ""
+		_, err := network.BootstrapsFromInfo(ctx, vm, info)
+		Expect(err).To(MatchError(ContainSubstring("has no MAC address")))
+	})
+
+	It("fails without an observation", func() {
+		_, err := network.BootstrapsFromInfo(ctx, vm, nil)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("returns no bootstraps for a disabled network", func() {
+		vm.Spec.Network.Disabled = true
+		bootstraps, err := network.BootstrapsFromInfo(ctx, vm, &network.Info{Complete: true})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(bootstraps).To(BeEmpty())
+	})
+})

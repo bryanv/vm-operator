@@ -182,6 +182,17 @@ func (p *Plan) InterfaceAction(name string) (Action, bool) {
 	return Action{}, false
 }
 
+// adapterAction returns the action planned for the adapter with the given
+// key that no desired interface owns.
+func (p *Plan) adapterAction(key int32) (Action, bool) {
+	for _, a := range p.Actions {
+		if a.Interface == "" && a.Adapter == key {
+			return a, true
+		}
+	}
+	return Action{}, false
+}
+
 // PlanInput holds everything BuildPlan needs besides the observation.
 type PlanInput struct {
 	// Policy holds the capability-dependent choices for the pass.

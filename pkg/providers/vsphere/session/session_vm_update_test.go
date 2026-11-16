@@ -22,6 +22,8 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
+	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
+
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	"github.com/vmware-tanzu/vm-operator/api/v1alpha6/common"
 	vspherepolv1 "github.com/vmware-tanzu/vm-operator/external/vsphere-policy/api/v1alpha1"
@@ -30,6 +32,7 @@ import (
 	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	ctxop "github.com/vmware-tanzu/vm-operator/pkg/context/operation"
+	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/clustermodules"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
@@ -288,262 +291,6 @@ var _ = Describe("Update ConfigSpec", func() {
 
 			session.UpdateConfigSpecChangeBlockTracking(ctx, config, configSpec, vmSpec)
 			Expect(configSpec.ChangeTrackingEnabled).To(BeNil())
-		})
-	})
-
-	XContext("Ethernet Card Changes", func() {
-		var expectedList object.VirtualDeviceList
-		var currentList object.VirtualDeviceList
-		var deviceChanges []vimtypes.BaseVirtualDeviceConfigSpec
-		var dvpg1 *vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo
-		var dvpg2 *vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo
-		var results network.NetworkInterfaceResults
-		var err error
-
-		BeforeEach(func() {
-			dvpg1 = &vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo{
-				Port: vimtypes.DistributedVirtualSwitchPortConnection{
-					PortgroupKey: "key1",
-					SwitchUuid:   "uuid1",
-				},
-			}
-
-			dvpg2 = &vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo{
-				Port: vimtypes.DistributedVirtualSwitchPortConnection{
-					PortgroupKey: "key2",
-					SwitchUuid:   "uuid2",
-				},
-			}
-		})
-
-		JustBeforeEach(func() {
-			for i := range expectedList {
-				results.Devices = append(results.Devices,
-					network.Device{
-						EthCard: expectedList[i],
-					})
-			}
-			deviceChanges, err = session.UpdateEthCardDeviceChanges(ctx, &results, currentList)
-		})
-
-		AfterEach(func() {
-			currentList = nil
-			expectedList = nil
-			results = network.NetworkInterfaceResults{}
-		})
-
-		Context("No devices", func() {
-			It("returns empty list", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(BeEmpty())
-				Expect(results.UpdatedEthCards).To(BeFalse())
-			})
-		})
-
-		Context("No device change when nothing changes", func() {
-			var card1 vimtypes.BaseVirtualDevice
-			var key1 int32 = 100
-			var card2 vimtypes.BaseVirtualDevice
-			var key2 int32 = 200
-
-			BeforeEach(func() {
-				card1, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card1.GetVirtualDevice().Key = key1
-				expectedList = append(expectedList, card1)
-
-				card2, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card2.GetVirtualDevice().Key = key2
-				currentList = append(currentList, card2)
-			})
-
-			It("returns no device changes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(BeEmpty())
-				Expect(results.UpdatedEthCards).To(BeFalse())
-			})
-		})
-
-		Context("Add device", func() {
-			var card1 vimtypes.BaseVirtualDevice
-			var key1 int32 = 100
-
-			BeforeEach(func() {
-				card1, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card1.GetVirtualDevice().Key = key1
-				expectedList = append(expectedList, card1)
-			})
-
-			It("returns add device change", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(HaveLen(1))
-				Expect(results.UpdatedEthCards).To(BeTrue())
-
-				configSpec := deviceChanges[0].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card1.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
-			})
-		})
-
-		Context("Add and remove device when backing change", func() {
-			var card1 vimtypes.BaseVirtualDevice
-			var card2 vimtypes.BaseVirtualDevice
-
-			BeforeEach(func() {
-				card1, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				expectedList = append(expectedList, card1)
-
-				card2, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg2)
-				Expect(err).ToNot(HaveOccurred())
-				currentList = append(currentList, card2)
-			})
-
-			It("returns remove and add device changes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(HaveLen(2))
-				Expect(results.UpdatedEthCards).To(BeTrue())
-
-				configSpec := deviceChanges[0].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card2.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationRemove))
-
-				configSpec = deviceChanges[1].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card1.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
-			})
-		})
-
-		Context("Add and remove device when MAC address is different", func() {
-			var card1 vimtypes.BaseVirtualDevice
-			var key1 int32 = 100
-			var card2 vimtypes.BaseVirtualDevice
-			var key2 int32 = 200
-
-			BeforeEach(func() {
-				card1, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card1.GetVirtualDevice().Key = key1
-				card1.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().AddressType = string(vimtypes.VirtualEthernetCardMacTypeManual)
-				card1.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().MacAddress = "mac1"
-				expectedList = append(expectedList, card1)
-
-				card2, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card2.GetVirtualDevice().Key = key2
-				card2.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().AddressType = string(vimtypes.VirtualEthernetCardMacTypeManual)
-				card2.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().MacAddress = "mac2"
-				currentList = append(currentList, card2)
-			})
-
-			It("returns remove and add device changes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(HaveLen(2))
-				Expect(results.UpdatedEthCards).To(BeTrue())
-
-				configSpec := deviceChanges[0].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card2.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationRemove))
-
-				configSpec = deviceChanges[1].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card1.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
-			})
-		})
-
-		XContext("Add and remove device when card type is different", func() {
-			var card1 vimtypes.BaseVirtualDevice
-			var key1 int32 = 100
-			var card2 vimtypes.BaseVirtualDevice
-			var key2 int32 = 200
-
-			BeforeEach(func() {
-				card1, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card1.GetVirtualDevice().Key = key1
-				expectedList = append(expectedList, card1)
-
-				card2, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet2", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card2.GetVirtualDevice().Key = key2
-				currentList = append(currentList, card2)
-			})
-
-			It("returns remove and add device changes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(HaveLen(2))
-
-				configSpec := deviceChanges[0].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card2.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationRemove))
-
-				configSpec = deviceChanges[1].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card1.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
-			})
-		})
-
-		Context("Add and remove device when ExternalID is different", func() {
-			var card1 vimtypes.BaseVirtualDevice
-			var key1 int32 = 100
-			var card2 vimtypes.BaseVirtualDevice
-			var key2 int32 = 200
-
-			BeforeEach(func() {
-				card1, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card1.GetVirtualDevice().Key = key1
-				card1.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().ExternalId = "ext1"
-				expectedList = append(expectedList, card1)
-
-				card2, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card2.GetVirtualDevice().Key = key2
-				card2.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().ExternalId = "ext2"
-				currentList = append(currentList, card2)
-			})
-
-			It("returns remove and add device changes", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(HaveLen(2))
-				Expect(results.UpdatedEthCards).To(BeTrue())
-
-				configSpec := deviceChanges[0].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card2.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationRemove))
-
-				configSpec = deviceChanges[1].GetVirtualDeviceConfigSpec()
-				Expect(configSpec.Device.GetVirtualDevice().Key).To(Equal(card1.GetVirtualDevice().Key))
-				Expect(configSpec.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
-			})
-		})
-
-		Context("Keeps existing device with same backing", func() {
-			var card1 vimtypes.BaseVirtualDevice
-			var key1 int32 = 100
-			var card2 vimtypes.BaseVirtualDevice
-			var key2 int32 = 200
-
-			BeforeEach(func() {
-				card1, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card1.GetVirtualDevice().Key = key1
-				Expect(results.UpdatedEthCards).To(BeFalse())
-				expectedList = append(expectedList, card1)
-
-				card2, err = object.EthernetCardTypes().CreateEthernetCard("vmxnet3", dvpg1)
-				Expect(err).ToNot(HaveOccurred())
-				card2.GetVirtualDevice().Key = key2
-				currentList = append(currentList, card2)
-			})
-
-			It("returns empty list", func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(deviceChanges).To(BeEmpty())
-				Expect(results.UpdatedEthCards).To(BeFalse())
-			})
 		})
 	})
 
@@ -2449,11 +2196,12 @@ var _ = Describe("UpdateVirtualMachine", func() {
 			}
 		}
 
-		// The update path (getConfigSpecForPoweredOffVM) always applies NIC
-		// changes, while the resize path (resizeVMWhenPoweredStateOff) applies
-		// them only with MutableNetworks. The resize path is used when the VM
-		// is off, stays off, and VMResizeCPUMemory is enabled.
-		DescribeTable("powered-off update and resize paths apply NIC changes differently",
+		// The update path (getConfigSpecForPoweredOffVM) and, since spec 017
+		// T020, the resize path (resizeVMWhenPoweredStateOff) both apply the
+		// planned NIC changes. Before T020 the resize path applied them only
+		// with MutableNetworks. The resize path is used when the VM is off,
+		// stays off, and VMResizeCPUMemory is enabled.
+		DescribeTable("powered-off update and resize paths apply NIC changes",
 			func(resizeCPUMemory, mutableNetworks, expectNICAdded bool) {
 				setPowerState(vimtypes.VirtualMachinePowerStatePoweredOff)
 				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
@@ -2488,12 +2236,13 @@ var _ = Describe("UpdateVirtualMachine", func() {
 			},
 			Entry("update path applies NIC changes without MutableNetworks", false, false, true),
 			Entry("update path applies NIC changes with MutableNetworks", false, true, true),
-			// TODAY: provider-design.md "Step 10: config" feeds the planner to
-			// all three dispatch sites regardless of VMResizeCPUMemory, so T020
-			// is expected to flip this entry (the resize path will apply NIC
-			// changes). Like the pending power-off test, it is intentionally
-			// expected to change.
-			Entry("TODAY: resize path does not apply NIC changes without MutableNetworks", true, false, false),
+			// Spec 017 T020: provider-design.md "Step 10: config" feeds the
+			// planner to all three dispatch sites regardless of
+			// VMResizeCPUMemory, and plan.md says both powered-off paths take
+			// the same planner output, so the resize path now applies NIC
+			// changes without MutableNetworks too. Before T020 it did not;
+			// this entry was intentionally expected to flip.
+			Entry("Spec 017 T020: resize path applies NIC changes without MutableNetworks", true, false, true),
 			Entry("resize path applies NIC changes with MutableNetworks", true, true, true),
 		)
 
@@ -2644,6 +2393,288 @@ var _ = Describe("UpdateVirtualMachine", func() {
 					Entry("without MutableNetworks", false),
 					Entry("with MutableNetworks", true),
 				)
+			})
+		})
+
+		// Spec 017 T020: config-phase network orchestration. Each pass gets a
+		// fresh network state, as updateVirtualMachine allocates one, so the
+		// test can inspect the plan, the submission, and the readiness.
+		Context("Spec 017 T020 network orchestration", func() {
+			var st *network.ReconcileState
+
+			newPass := func() {
+				st = &network.ReconcileState{}
+				vmCtx.Context = network.WithContext(vmCtx.Context, st)
+			}
+
+			addCards := func(networkNames ...string) {
+				GinkgoHelper()
+				var deviceChanges []vimtypes.BaseVirtualDeviceConfigSpec
+				for i, networkName := range networkNames {
+					netRef, err := ctx.Finder.Network(ctx, networkName)
+					Expect(err).ToNot(HaveOccurred())
+					backing, err := netRef.EthernetCardBackingInfo(ctx)
+					Expect(err).ToNot(HaveOccurred())
+					card, err := object.EthernetCardTypes().CreateEthernetCard("vmxnet3", backing)
+					Expect(err).ToNot(HaveOccurred())
+					card.GetVirtualDevice().Key = int32(-100 - i)
+					card.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().AddressType =
+						string(vimtypes.VirtualEthernetCardMacTypeGenerated)
+					deviceChanges = append(deviceChanges, &vimtypes.VirtualDeviceConfigSpec{
+						Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+						Device:    card,
+					})
+				}
+				t, err := vcVM.Reconfigure(ctx, vimtypes.VirtualMachineConfigSpec{DeviceChange: deviceChanges})
+				Expect(err).ToNot(HaveOccurred())
+				Expect(t.Wait(ctx)).To(Succeed())
+				Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+			}
+
+			backingKind := func(dev vimtypes.BaseVirtualDevice) string {
+				switch dev.GetVirtualDevice().Backing.(type) {
+				case *vimtypes.VirtualEthernetCardNetworkBackingInfo:
+					return "Network"
+				case *vimtypes.VirtualEthernetCardDistributedVirtualPortBackingInfo:
+					return "DVPortgroup"
+				}
+				return ""
+			}
+
+			networkReady := func() *metav1.Condition {
+				return conditions.Get(vm, vmopv1.VirtualMachineConditionNetworkReady)
+			}
+
+			// updateUntilSteady runs passes until one submits no task.
+			updateUntilSteady := func() error {
+				GinkgoHelper()
+				var err error
+				for range 5 {
+					newPass()
+					err = sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)
+					Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+					if !errors.Is(err, session.ErrReconfigure) &&
+						!errors.Is(err, vmlifecycle.ErrBootstrapCustomize) &&
+						!errors.Is(err, vmlifecycle.ErrBootstrapReconfigure) {
+						return err
+					}
+				}
+				return err
+			}
+
+			DescribeTable("removes an unclaimed adapter through the planner on both powered-off paths",
+				func(resizeCPUMemory bool) {
+					setPowerState(vimtypes.VirtualMachinePowerStatePoweredOff)
+					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						config.Features.VMResizeCPUMemory = resizeCPUMemory
+						config.Features.MutableNetworks = false
+					})
+					vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+					resizeArgs = &session.VMResizeArgs{
+						ResourcePolicy: &vmopv1.VirtualMachineSetResourcePolicy{},
+					}
+					addCards(vmNetwork, dvpgNetwork)
+					cards := refreshEthCards()
+					Expect(cards).To(HaveLen(2))
+					var dvpgKey int32
+					for _, c := range cards {
+						if backingKind(c) == "DVPortgroup" {
+							dvpgKey = c.GetVirtualDevice().Key
+						}
+					}
+					Expect(dvpgKey).ToNot(BeZero())
+
+					vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						namedInterface("eth0", vmNetwork),
+					}
+
+					newPass()
+					err := sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)
+					Expect(err).To(MatchError(session.ErrReconfigure))
+
+					Expect(st.Plan).ToNot(BeNil())
+					Expect(st.Plan.Actions).To(ConsistOf(
+						And(HaveField("Interface", "eth0"), HaveField("Kind", network.ActionNoOp)),
+						And(HaveField("Adapter", dvpgKey), HaveField("Kind", network.ActionRemove)),
+					))
+					Expect(st.Submitted).To(BeTrue())
+					Expect(st.Readiness(vmCtx).Ready()).To(BeFalse())
+					Expect(networkReady().Reason).To(Equal(network.ReadyConditionNotReadyReason))
+					Expect(networkReady().Message).To(ContainSubstring(network.ReadinessReasonHardwarePending))
+					Expect(networkReady().Message).To(ContainSubstring(network.PlanReasonRemovalPending))
+
+					Expect(updateUntilSteady()).To(Succeed())
+					cards = refreshEthCards()
+					Expect(cards).To(HaveLen(1))
+					Expect(backingKind(cards[0])).To(Equal("Network"))
+					Expect(st.Readiness(vmCtx).Ready()).To(BeTrue())
+					Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionNetworkReady)).To(BeTrue())
+				},
+				Entry("update path", false),
+				Entry("resize path", true),
+			)
+
+			When("an interface's provider resource is pending", func() {
+				var dvpgMoID string
+
+				JustBeforeEach(func() {
+					pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+						config.NetworkProviderType = pkgcfg.NetworkProviderTypeVDS
+					})
+					netRef, err := ctx.Finder.Network(ctx, dvpgNetwork)
+					Expect(err).ToNot(HaveOccurred())
+					dvpgMoID = netRef.Reference().Value
+
+					vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{
+							Name: "eth0",
+							Network: &common.PartialObjectRef{
+								TypeMeta: metav1.TypeMeta{
+									APIVersion: netopv1alpha1.SchemeGroupVersion.String(),
+									Kind:       "Network",
+								},
+								Name: "pending-net",
+							},
+						},
+					}
+				})
+
+				simulateReady := func() {
+					GinkgoHelper()
+					netIf := &netopv1alpha1.NetworkInterface{}
+					Expect(ctx.Client.Get(ctx, ctrlclient.ObjectKey{
+						Namespace: vm.Namespace,
+						Name:      network.NetOPCRName(vm.Name, "pending-net", "eth0", false),
+					}, netIf)).To(Succeed())
+					netIf.Status.NetworkID = dvpgMoID
+					netIf.Status.ExternalID = "pending-net-eth0"
+					netIf.Status.Conditions = []netopv1alpha1.NetworkInterfaceCondition{{
+						Type:   netopv1alpha1.NetworkInterfaceReady,
+						Status: corev1.ConditionTrue,
+					}}
+					Expect(ctx.Client.Status().Update(ctx, netIf)).To(Succeed())
+				}
+
+				It("applies an independent change, reports the interface, and requeues", func() {
+					setPowerState(vimtypes.VirtualMachinePowerStatePoweredOff)
+					vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
+					Expect(refreshEthCards()).To(BeEmpty())
+					Expect(ptr.DerefWithDefault(vmCtx.MoVM.Config.ChangeTrackingEnabled, false)).To(BeFalse())
+					vm.Spec.Advanced = &vmopv1.VirtualMachineAdvancedSpec{
+						ChangeBlockTracking: ptr.To(true),
+					}
+
+					By("the independent change is applied while the interface is pending", func() {
+						newPass()
+						err := sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)
+						Expect(err).To(MatchError(session.ErrReconfigure))
+						Expect(pkgerr.IsRequeueError(err)).To(BeFalse())
+						Expect(st.Submitted).To(BeFalse())
+						Expect(st.Plan.Actions).To(ConsistOf(And(
+							HaveField("Interface", "eth0"),
+							HaveField("Kind", network.ActionDeferred),
+							HaveField("Reason", network.PlanReasonProviderPending),
+						)))
+						Expect(st.RequeueAfter).To(Equal(network.PendingRequeueAfter))
+
+						Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+						Expect(vmCtx.MoVM.Config.ChangeTrackingEnabled).To(HaveValue(BeTrue()))
+					})
+
+					By("a pass without changes does not bootstrap and reports the interface", func() {
+						newPass()
+						Expect(sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)).To(Succeed())
+						Expect(st.Readiness(vmCtx).Ready()).To(BeFalse())
+						Expect(st.Readiness(vmCtx).PendingNames()).To(Equal([]string{"eth0"}))
+						Expect(st.RequeueAfter).To(Equal(network.PendingRequeueAfter))
+						c := networkReady()
+						Expect(c).ToNot(BeNil())
+						Expect(c.Status).To(Equal(metav1.ConditionFalse))
+						Expect(c.Reason).To(Equal(network.PlanReasonProviderPending))
+						Expect(c.Message).To(HavePrefix("eth0: ProviderPending"))
+						Expect(refreshEthCards()).To(BeEmpty())
+					})
+
+					By("the interface is added once its provider resource is ready", func() {
+						simulateReady()
+
+						newPass()
+						err := sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)
+						Expect(err).To(MatchError(session.ErrReconfigure))
+						Expect(st.Submitted).To(BeTrue())
+						Expect(st.Plan.Actions).To(ConsistOf(And(
+							HaveField("Interface", "eth0"),
+							HaveField("Kind", network.ActionAdd),
+						)))
+						Expect(st.Readiness(vmCtx).Ready()).To(BeFalse())
+						Expect(networkReady().Message).To(ContainSubstring(network.ReadinessReasonHardwarePending))
+
+						Expect(updateUntilSteady()).To(Succeed())
+						Expect(refreshEthCards()).To(HaveLen(1))
+						Expect(st.Readiness(vmCtx).Ready()).To(BeTrue())
+						Expect(st.RequeueAfter).To(BeZero())
+						Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionNetworkReady)).To(BeTrue())
+					})
+				})
+			})
+
+			// A running Cloud-Init VM's guestinfo is not rewritten while a
+			// network change is deferred until the VM is powered off: the
+			// network is not ready, so bootstrap does not run at all, and other
+			// Cloud-Init input changes made meanwhile are held back with it.
+			It("does not rewrite a running Cloud-Init VM's guestinfo while a network change is deferred", func() {
+				setPowerState(vimtypes.VirtualMachinePowerStatePoweredOff)
+				addCards(vmNetwork)
+				setPowerState(vimtypes.VirtualMachinePowerStatePoweredOn)
+
+				vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
+				vm.Spec.Bootstrap = &vmopv1.VirtualMachineBootstrapSpec{
+					CloudInit: &vmopv1.VirtualMachineBootstrapCloudInitSpec{},
+				}
+				vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					namedInterface("eth0", vmNetwork),
+				}
+
+				readMetadata := func() string {
+					GinkgoHelper()
+					raw, _ := object.OptionValueList(vmCtx.MoVM.Config.ExtraConfig).
+						GetString(constants.CloudInitGuestInfoMetadata)
+					return raw
+				}
+
+				Expect(updateUntilSteady()).To(Succeed())
+				metadata := readMetadata()
+				Expect(metadata).ToNot(BeEmpty())
+				Expect(st.Readiness(vmCtx).Ready()).To(BeTrue())
+
+				By("adding an interface and changing the host name", func() {
+					vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces,
+						namedInterface("eth1", dvpgNetwork))
+					vm.Spec.Network.HostName = "a-new-host-name"
+				})
+
+				for range 2 {
+					newPass()
+					Expect(sess.UpdateVirtualMachine(vmCtx, vcVM, getUpdateArgs, getResizeArgs)).To(Succeed())
+					Expect(vcVM.Properties(ctx, vcVM.Reference(), vmProps, &vmCtx.MoVM)).To(Succeed())
+
+					Expect(st.Plan.Actions).To(ContainElement(And(
+						HaveField("Interface", "eth1"),
+						HaveField("Kind", network.ActionDeferred),
+						HaveField("Proposed", network.ActionAdd),
+						HaveField("Reason", network.PlanReasonPowerOffRequired),
+					)))
+					Expect(st.Submitted).To(BeFalse())
+					Expect(st.RequeueAfter).To(BeZero())
+					Expect(readMetadata()).To(Equal(metadata))
+					Expect(refreshEthCards()).To(HaveLen(1))
+
+					c := networkReady()
+					Expect(c).ToNot(BeNil())
+					Expect(c.Status).To(Equal(metav1.ConditionFalse))
+					Expect(c.Reason).To(Equal(network.PlanReasonPowerOffRequired))
+					Expect(c.Message).To(HavePrefix("eth1: PowerOffRequired"))
+				}
 			})
 		})
 	})

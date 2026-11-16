@@ -460,6 +460,17 @@ func (c collector) namedResolution(
 				fmt.Errorf("unable to find named network %q: %w", networkName, err))
 		}
 		r.backing = backing
+
+		// A named distributed portgroup is attached through a distributed
+		// port backing that records the portgroup's key, not the network
+		// name, so compare it by that key. The portgroup's key is its
+		// managed object ID, as the provider network IDs also assume.
+		if ref := backing.Reference(); ref.Type == "DistributedVirtualPortgroup" {
+			r.Target.Backing = BackingID{
+				Kind: BackingKindDVPortgroup,
+				ID:   ref.Value,
+			}
+		}
 	}
 
 	return r

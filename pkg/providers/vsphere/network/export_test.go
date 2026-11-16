@@ -6,9 +6,12 @@ package network
 
 import (
 	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/vim25/mo"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 )
 
 // ResolutionObjectForTest returns the raw provider resource retained on r.
@@ -62,4 +65,9 @@ func SetAdapterRecordInterfaceForTest(
 	saved := adapterRecordInterface
 	adapterRecordInterface = fn
 	return func() { adapterRecordInterface = saved }
+}
+
+// ObservationIdentityForTest returns the observation identity of vm and moVM.
+func ObservationIdentityForTest(vm *vmopv1.VirtualMachine, moVM mo.VirtualMachine) ObservationIdentity {
+	return observationIdentity(vm, moVM)
 }

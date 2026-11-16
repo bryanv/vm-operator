@@ -441,14 +441,63 @@ func bootstrapFromVPC(
 	return initial
 }
 
+// BootstrapsFromInfo builds the complete, ordered bootstrap projection of a
+// network observation: one Bootstrap per desired interface, in spec order,
+// derived from the interface's provider resource and spec, with the MAC
+// address of the adapter that the interface's match claims. The MAC address
+// therefore always comes from the observed hardware, including a MAC address
+// vSphere generated, and never from a proposed device change.
+//
+// Callers must invoke it only when ReconcileState.Readiness reports the
+// network as ready for this observation, which guarantees that every desired
+// interface claims an adapter that reports its MAC address. It returns an
+// error otherwise. It returns no bootstraps for a nil or disabled network.
+func BootstrapsFromInfo(
+	ctx context.Context,
+	vm *vmopv1.VirtualMachine,
+	info *Info) ([]Bootstrap, error) {
+
+	if info == nil {
+		return nil, fmt.Errorf("network observation is missing")
+	}
+
+	adapters := make(map[int32]ObservedAdapter, len(info.Adapters))
+	for _, a := range info.Adapters {
+		adapters[a.Key] = a
+	}
+
+	// BuildBootstraps still takes its inputs as Devices. This adapter keeps
+	// that representation inside this package.
+	devices := make([]Device, 0, len(info.Interfaces))
+	for _, iface := range info.Interfaces {
+		name := iface.Spec.Name
+		if !IsClaim(iface.Match.Kind) {
+			return nil, fmt.Errorf("network interface %q has no adapter", name)
+		}
+		a, ok := adapters[iface.Match.AdapterKey]
+		if !ok || a.MAC == "" {
+			return nil, fmt.Errorf("adapter %d of network interface %q has no MAC address",
+				iface.Match.AdapterKey, name)
+		}
+		devices = append(devices, Device{
+			ProviderType:  iface.Provider.Ref.Type,
+			InterfaceObj:  iface.Provider.obj,
+			MacAddress:    a.MAC,
+			InterfaceName: name,
+			EthCardKey:    a.Key,
+		})
+	}
+
+	return BuildBootstraps(ctx, vm, devices)
+}
+
 // BuildBootstraps computes the Bootstrap for each of the VM's network
 // interface Devices, zipping devices[i] with vm.Spec.Network.Interfaces[i].
-// This is safe because CreateAndWaitForNetworkInterfaces builds devices in
-// that exact order and length, and nothing reorders or filters it afterward.
+// Callers must provide devices in that exact order and length.
 //
-// Callers must invoke this only after every MAC-address backfill (e.g. from
-// fixupMacAddresses/fixupMacAddressMutableNetworks) has finished updating
-// devices, since Bootstrap.MacAddress is derived from Device.MacAddress here.
+// Bootstrap.MacAddress is derived from Device.MacAddress, so callers must set
+// it to the MAC address of the interface's actual adapter. BootstrapsFromInfo
+// does so from an observation.
 func BuildBootstraps(
 	ctx context.Context,
 	vm *vmopv1.VirtualMachine,

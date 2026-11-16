@@ -67,8 +67,6 @@ func ReconcileNetworkInterfaces(
 					Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
 				})
 			}
-
-			results.UpdatedEthCards = true
 		}
 	}
 

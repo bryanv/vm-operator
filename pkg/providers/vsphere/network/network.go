@@ -45,8 +45,7 @@ import (
 )
 
 type NetworkInterfaceResults struct { //nolint:revive
-	Devices         []Device
-	UpdatedEthCards bool
+	Devices []Device
 
 	// OrphanedNetworkInterfaces are the network interface CRs that VM Operator
 	// created and owns for the VM, but that are no longer referenced by the

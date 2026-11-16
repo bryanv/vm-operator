@@ -994,6 +994,9 @@ func errOrReconcileErr(reconcileErr, err error) error {
 //  10. Reconcile config
 //  11. Reconcile power state
 //  12. Reconcile snapshot create
+//
+// A pending network wait is returned as a bounded RequeueError only at the
+// end of the pass.
 func (vs *vSphereVMProvider) updateVirtualMachine(
 	vmCtx pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
@@ -1159,7 +1162,28 @@ func (vs *vSphereVMProvider) updateVirtualMachine(
 		}
 	}
 
+	//
+	// End of pass
+	//
+	//     A network wait without a dependable wake-up, such as a pending
+	//     provider resource, is retried after a bounded delay. This is
+	//     returned only here, so it never prevents power state or any other
+	//     step of the pass.
+	//
+	if reconcileErr == nil {
+		return networkRequeueErr(vmCtx)
+	}
+
 	return reconcileErr
+}
+
+// networkRequeueErr returns the bounded RequeueError that the pass's network
+// state asks for, or nil.
+func networkRequeueErr(vmCtx pkgctx.VirtualMachineContext) error {
+	if st, ok := network.FromContext(vmCtx); ok && st.RequeueAfter > 0 {
+		return pkgerr.RequeueError{After: st.RequeueAfter}
+	}
+	return nil
 }
 
 // reconcileLocation validates that the VM is within its expected namespace
@@ -1720,6 +1744,18 @@ func (vs *vSphereVMProvider) reconcilePowerState(
 			}
 		}
 
+		// Only a transition from powered off is gated on the network. Resume
+		// from suspended is not: a suspended VM is never reconfigured, so its
+		// network could never become ready, and resume runs no bootstrap.
+		if !networkAllowsPowerOn(vmCtx, currentPowerState) {
+
+			// Return without an error so the later steps of the pass, such
+			// as snapshot create, still run. VirtualMachinePowerStateSynced
+			// stays False because spec and status differ, and
+			// VirtualMachineNetworkReady explains why.
+			return nil
+		}
+
 		setPowerState = true
 
 	case vmopv1.VirtualMachinePowerStateOff:
@@ -1760,6 +1796,35 @@ func (vs *vSphereVMProvider) reconcilePowerState(
 	}
 
 	return nil
+}
+
+// networkAllowsPowerOn returns true when the VM may be powered on from its
+// current power state as far as networking is concerned. Only a transition
+// from powered off is gated: it requires the pass's derived network readiness.
+// A missing network state, which only a programming error produces, blocks
+// the power-on: it is never treated as an empty network.
+func networkAllowsPowerOn(
+	vmCtx pkgctx.VirtualMachineContext,
+	currentPowerState vmopv1.VirtualMachinePowerState) bool {
+
+	if currentPowerState != vmopv1.VirtualMachinePowerStateOff {
+		return true
+	}
+
+	st, ok := network.FromContext(vmCtx)
+	if !ok {
+		vmCtx.Logger.Error(nil, "Network state is missing before power on")
+		return false
+	}
+
+	readiness := st.Readiness(vmCtx)
+	if !readiness.Ready() {
+		vmCtx.Logger.Info("Waiting for networking before power on",
+			"pending", readiness.PendingNames())
+		return false
+	}
+
+	return true
 }
 
 // SetPowerStateSyncedCondition sets the VirtualMachinePowerStateSynced
@@ -2678,21 +2743,17 @@ func (vs *vSphereVMProvider) vmCreateDoNetworking(
 		vs.k8sClient,
 		vcClient.VimClient(),
 		vcClient.Finder())
+
+	// Either no network interfaces or marked as disabled. Historically, we
+	// have removed the network ready condition to indicate there is no
+	// networking. The update path writes the same condition through the same
+	// helper.
+	network.SetReadyCondition(vmCtx.VM, len(devices) > 0, nil, err)
 	if err != nil {
-		pkgcond.MarkError(vmCtx.VM, vmopv1.VirtualMachineConditionNetworkReady,
-			"NotReady", err)
 		return err
 	}
 
-	if len(devices) > 0 {
-		createArgs.NetworkDevices = devices
-		pkgcond.MarkTrue(vmCtx.VM, vmopv1.VirtualMachineConditionNetworkReady)
-	} else {
-		// Either no network interfaces or marked as disabled. Historically, we have
-		// removed the network ready condition to indicate there is no networking.
-		pkgcond.Delete(vmCtx.VM, vmopv1.VirtualMachineConditionNetworkReady)
-	}
-
+	createArgs.NetworkDevices = devices
 	return nil
 }
 

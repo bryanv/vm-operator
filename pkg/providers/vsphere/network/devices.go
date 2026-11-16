@@ -24,7 +24,9 @@ import (
 )
 
 // CreateVirtualEthernetCard creates a new VirtualEthernetCard based on the Device
-// and the InterfaceSpec.
+// and the InterfaceSpec. It resolves the Device's Ethernet card backing and
+// builds the card with BuildAdd, so the create path and the update path's
+// planner build an added card the same way.
 func CreateVirtualEthernetCard(
 	ctx context.Context,
 	dev Device,
@@ -36,26 +38,18 @@ func CreateVirtualEthernetCard(
 			dev.NetworkID, dev.Backing.Reference().Value, err)
 	}
 
-	var cardType string
-	// TODO: Honor interfaceSpec.Type if set.
-	switch interfaceSpec.Type { //nolint:gocritic
-	default:
-		cardType = "vmxnet3"
-	}
-
-	ethDev, err := object.EthernetCardTypes().CreateEthernetCard(cardType, backing)
+	// The MAC address is passed through as given rather than normalized, so
+	// the card carries exactly the provider's value, as it always has.
+	ethDev, err := BuildAdd(AddInput{
+		Interface: interfaceSpec.Name,
+		Target: &Attachment{
+			ExternalID: externalIDIntent(dev.ExternalID),
+			MAC:        MACPolicy{Pinned: dev.MacAddress},
+		},
+		Backing: backing,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("unable to create Ethernet card for backing %s: %w",
-			dev.Backing.Reference().Value, err)
-	}
-
-	ethCard := ethDev.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-	ethCard.ExternalId = dev.ExternalID
-	if dev.MacAddress != "" {
-		ethCard.MacAddress = dev.MacAddress
-		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeManual)
-	} else {
-		ethCard.AddressType = string(vimtypes.VirtualEthernetCardMacTypeGenerated)
+		return nil, err
 	}
 
 	// TODO: interfaceSpec.VNUMANodeID, VMXNet3. We need to sort out how to deal

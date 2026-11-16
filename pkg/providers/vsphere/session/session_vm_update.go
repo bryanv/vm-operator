@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -67,7 +66,6 @@ type VMUpdateArgs struct {
 	ExtraConfig    map[string]string
 	BootstrapData  vmlifecycle.BootstrapData
 	ConfigSpec     vimtypes.VirtualMachineConfigSpec
-	NetworkResults *network.NetworkInterfaceResults
 }
 
 // VMResizeArgs contains the arguments needed to resize a VM on VC.
@@ -78,7 +76,6 @@ type VMResizeArgs struct {
 
 	BootstrapData  vmlifecycle.BootstrapData
 	ResourcePolicy *vmopv1.VirtualMachineSetResourcePolicy
-	NetworkResults *network.NetworkInterfaceResults
 }
 
 func (s *Session) UpdateVirtualMachine(
@@ -98,17 +95,22 @@ func (s *Session) UpdateVirtualMachine(
 		vmCtx.Context = pkgctx.WithFinder(vmCtx.Context, s.Client.Finder())
 	}
 
+	vmCtx, st := networkState(vmCtx)
+
 	switch {
 	case powerState == vimtypes.VirtualMachinePowerStateSuspended:
 		vmCtx.Logger.Info("Reconciling config for suspended vm")
+		setEmptyNetworkPlan(st)
 		updateErr = reconcileSuspendedVM(vmCtx, s.K8sClient, vcVM)
 
 	case pkgctx.HasVMRunningTask(vmCtx, false):
 		vmCtx.Logger.Info("Reconciling config for VM with running task")
+		setEmptyNetworkPlan(st)
 		updateErr = reconcileVMWithTask(vmCtx, s.K8sClient, vcVM)
 
 	case isVMPaused(vmCtx):
 		vmCtx.Logger.Info("Reconciling config for paused vm")
+		setEmptyNetworkPlan(st)
 		updateErr = reconcilePausedVM(vmCtx, s.K8sClient, vcVM)
 
 	case powerState == vimtypes.VirtualMachinePowerStatePoweredOn:
@@ -292,10 +294,14 @@ func (s *Session) reconcilePoweredOffOrPoweredOnVM(
 		conditions.Delete(vmCtx.VM, vmopv1.GuestIDReconfiguredCondition)
 	}
 
-	networkResults, err := s.reconcileNetworkInterfaces(vmCtx)
-	if err != nil {
-		return err
-	}
+	var st *network.ReconcileState
+	vmCtx, st = networkState(vmCtx)
+
+	// Pending and failed interfaces are data on the plan, never an error, so
+	// independent changes and power-off still proceed. Only genuine I/O
+	// failures are returned, after the rest of the pass.
+	networkErr := s.reconcileNetwork(vmCtx, st)
+	defer setNetworkReadyCondition(vmCtx, st)
 
 	switch vmCtx.MoVM.Runtime.PowerState {
 	case vimtypes.VirtualMachinePowerStatePoweredOn:
@@ -303,36 +309,33 @@ func (s *Session) reconcilePoweredOffOrPoweredOnVM(
 		if err := s.poweredOnReconfigure(
 			vmCtx,
 			vcVM,
-			vmCtx.MoVM.Config,
-			networkResults); err != nil {
+			vmCtx.MoVM.Config); err != nil {
 
-			return err
+			return joinNetworkErr(vmCtx, err, networkErr)
 		}
 
 	case vimtypes.VirtualMachinePowerStatePoweredOff:
 
 		if useResizeArgs {
 
-			resizeArgs.NetworkResults = &networkResults
 			if err := s.resizeVMWhenPoweredStateOff(
 				vmCtx,
 				vcVM,
 				vmCtx.MoVM,
 				resizeArgs); err != nil {
 
-				return err
+				return joinNetworkErr(vmCtx, err, networkErr)
 			}
 
 		} else {
 
-			updateArgs.NetworkResults = &networkResults
 			if err := s.poweredOffReconfigure(
 				vmCtx,
 				vcVM,
 				vmCtx.MoVM.Config,
 				updateArgs); err != nil {
 
-				return err
+				return joinNetworkErr(vmCtx, err, networkErr)
 			}
 		}
 	case vimtypes.VirtualMachinePowerStateSuspended:
@@ -344,14 +347,13 @@ func (s *Session) reconcilePoweredOffOrPoweredOnVM(
 	// virtualcontrollers are not ready, while configuring virtualcontrollers
 	// happens in doReconfigure.
 	if err := s.reconcileVolumes(vmCtx); err != nil {
-		return err
+		return joinNetworkErr(vmCtx, err, networkErr)
 	}
 
-	return s.reconcileNetworkAndGuestCustomizationState(
+	return joinNetworkErr(
 		vmCtx,
-		vcVM,
-		bootstrapData,
-		networkResults)
+		s.finishNetwork(vmCtx, vcVM, st, bootstrapData),
+		networkErr)
 }
 
 // handleRestoredVPCInterfaces handles network device reconciliation after a VM is
@@ -363,8 +365,7 @@ func (s *Session) reconcilePoweredOffOrPoweredOnVM(
 // a part of hot plug.
 func (s *Session) handleRestoredVPCInterfaces(
 	vmCtx pkgctx.VirtualMachineContext,
-	vcVM *object.VirtualMachine,
-	networkResults network.NetworkInterfaceResults) error {
+	vcVM *object.VirtualMachine) error {
 
 	interfaces, ok := vmCtx.VM.Annotations[network.VPCInterfaceRestoredAnnotation]
 	if !ok {
@@ -376,10 +377,24 @@ func (s *Session) handleRestoredVPCInterfaces(
 	currentEthCards := object.VirtualDeviceList(vmCtx.MoVM.Config.Hardware.Device).
 		SelectByType((*vimtypes.VirtualEthernetCard)(nil))
 
-	deviceChanges, err := network.VPCPostRestoreBackingFixup(
+	var (
+		info     *network.Info
+		backings map[string]vimtypes.BaseVirtualDeviceBackingInfo
+	)
+	if st, ok := network.FromContext(vmCtx); ok {
+		info = st.Observed
+	}
+	if info != nil {
+		// A failure to resolve one interface's backing skips only that
+		// interface here; reconcileNetwork reports it.
+		backings, _ = network.EthernetCardBackings(vmCtx, vmCtx.VM, info)
+	}
+
+	deviceChanges, err := network.VPCPostRestoreDeviceChanges(
 		vmCtx,
 		currentEthCards,
-		networkResults.Devices)
+		info,
+		backings)
 	if err != nil {
 		return err
 	}
@@ -397,6 +412,11 @@ func (s *Session) handleRestoredVPCInterfaces(
 		DeviceChange: deviceChanges,
 	}
 
+	// The task makes the observed hardware stale.
+	if st, ok := network.FromContext(vmCtx); ok {
+		st.Submitted = true
+	}
+
 	if _, err := res.NewVMFromObject(vcVM).Reconfigure(vmCtx, &configSpec); err != nil {
 		return fmt.Errorf("failed to reconfigure restored network devices: %w", err)
 	}
@@ -408,8 +428,7 @@ func (s *Session) handleRestoredVPCInterfaces(
 func (s *Session) poweredOnReconfigure(
 	vmCtx pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
-	config *vimtypes.VirtualMachineConfigInfo,
-	networkResults network.NetworkInterfaceResults) error {
+	config *vimtypes.VirtualMachineConfigInfo) error {
 
 	configSpec := &vimtypes.VirtualMachineConfigSpec{}
 
@@ -418,7 +437,7 @@ func (s *Session) poweredOnReconfigure(
 			"failed to get network provider type while doing powered on reconfig: %w",
 			err)
 	} else if networkType == pkgcfg.NetworkProviderTypeVPC {
-		if err := s.handleRestoredVPCInterfaces(vmCtx, vcVM, networkResults); err != nil {
+		if err := s.handleRestoredVPCInterfaces(vmCtx, vcVM); err != nil {
 			return err
 		}
 	}
@@ -443,6 +462,10 @@ func (s *Session) poweredOnReconfigure(
 	if err := virtualmachine.UpdateConfigSpecCdromDeviceConnection(vmCtx, s.Client.RestClient(), s.K8sClient, config, configSpec); err != nil {
 		return fmt.Errorf("update CD-ROM device connection error: %w", err)
 	}
+
+	// Without Policy.LiveChanges, the planner defers every hardware change
+	// while the VM is powered on, so this adds nothing yet.
+	addNetworkChanges(vmCtx, configSpec)
 
 	reconfigErr := doReconfigure(
 		logr.NewContext(
@@ -543,14 +566,6 @@ func verifyConfigInfo(vmCtx pkgctx.VirtualMachineContext) error {
 			vmCtx.MoVM.Runtime.ConnectionState)
 	}
 	return nil
-}
-
-func UpdateEthCardDeviceChanges(
-	ctx context.Context,
-	results *network.NetworkInterfaceResults,
-	currentEthCards object.VirtualDeviceList) ([]vimtypes.BaseVirtualDeviceConfigSpec, error) {
-
-	return network.ReconcileNetworkInterfaces(ctx, results, currentEthCards)
 }
 
 // UpdateConfigSpecExtraConfig updates the ExtraConfig of the given ConfigSpec.
@@ -721,7 +736,6 @@ func (s *Session) getConfigSpecForPoweredOffVM(
 
 	virtualDevices := object.VirtualDeviceList(config.Hardware.Device)
 	currentDisks := virtualDevices.SelectByType((*vimtypes.VirtualDisk)(nil))
-	currentEthCards := virtualDevices.SelectByType((*vimtypes.VirtualEthernetCard)(nil))
 
 	diskDeviceChanges, err := updateVirtualDiskDeviceChanges(vmCtx, currentDisks)
 	if err != nil {
@@ -729,11 +743,7 @@ func (s *Session) getConfigSpecForPoweredOffVM(
 	}
 	configSpec.DeviceChange = append(configSpec.DeviceChange, diskDeviceChanges...)
 
-	ethCardDeviceChanges, err := UpdateEthCardDeviceChanges(vmCtx, updateArgs.NetworkResults, currentEthCards)
-	if err != nil {
-		return nil, false, err
-	}
-	configSpec.DeviceChange = append(configSpec.DeviceChange, ethCardDeviceChanges...)
+	addNetworkChanges(vmCtx, configSpec)
 
 	cdromDeviceChanges, err := virtualmachine.UpdateCdromDeviceChangesLegacy(vmCtx, s.Client.RestClient(), s.K8sClient, virtualDevices)
 	if err != nil {
@@ -742,60 +752,6 @@ func (s *Session) getConfigSpecForPoweredOffVM(
 	configSpec.DeviceChange = append(configSpec.DeviceChange, cdromDeviceChanges...)
 
 	return configSpec, needsResize, nil
-}
-
-func (s *Session) reconcileNetworkInterfaces(
-	vmCtx pkgctx.VirtualMachineContext) (network.NetworkInterfaceResults, error) {
-
-	vmCtx.Logger.V(4).Info("Reconciling network interfaces")
-
-	networkSpec := vmCtx.VM.Spec.Network
-	if networkSpec == nil || networkSpec.Disabled {
-		return network.NetworkInterfaceResults{}, nil
-	}
-
-	devices, err := network.CreateAndWaitForNetworkInterfaces(
-		vmCtx,
-		s.K8sClient,
-		s.Client.VimClient(),
-		s.Finder,
-		&s.ClusterMoRef,
-		networkSpec)
-	if err != nil {
-		return network.NetworkInterfaceResults{},
-			fmt.Errorf("failed to reconcile network interfaces: %w", err)
-	}
-
-	for i, dev := range devices {
-		interfaceSpec := vmCtx.VM.Spec.Network.Interfaces[i]
-
-		ethCard, err := network.CreateVirtualEthernetCard(vmCtx, dev, interfaceSpec)
-		if err != nil {
-			return network.NetworkInterfaceResults{},
-				fmt.Errorf("failed to create Ethernet card: %w", err)
-		}
-
-		devices[i].EthCard = ethCard
-	}
-
-	results := network.NetworkInterfaceResults{Devices: devices}
-
-	if pkgcfg.FromContext(vmCtx).Features.MutableNetworks {
-		// TODO: Until we are reconfiguring (hot-plug) a powered on VM for network device
-		// changes, don't list orphan interfaces because they need to hang around until
-		// the device is actually removed from the VM.
-		if vmCtx.MoVM.Runtime.PowerState == vimtypes.VirtualMachinePowerStatePoweredOff {
-			orphaned, external, err := network.ListAllOrphanedNetworkInterfaces(vmCtx, s.K8sClient, devices)
-			if err != nil {
-				return network.NetworkInterfaceResults{},
-					fmt.Errorf("failed to list orphaned network interfaces: %w", err)
-			}
-			results.OrphanedNetworkInterfaces = orphaned
-			results.OrphanedExternalNetworkInterfaces = external
-		}
-	}
-
-	return results, nil
 }
 
 func (s *Session) reconcileVolumes(vmCtx pkgctx.VirtualMachineContext) error {
@@ -883,95 +839,6 @@ func (s *Session) reconcileVolumes(vmCtx pkgctx.VirtualMachineContext) error {
 	return nil
 }
 
-func (s *Session) fixupMacAddresses(
-	vmCtx pkgctx.VirtualMachineContext,
-	vcVM *object.VirtualMachine,
-	networkResults *network.NetworkInterfaceResults) error {
-
-	if pkgcfg.FromContext(vmCtx).Features.MutableNetworks {
-		return s.fixupMacAddressMutableNetworks(vmCtx, vcVM, networkResults)
-	}
-
-	missingMAC := false
-	for i := range networkResults.Devices {
-		if networkResults.Devices[i].MacAddress == "" {
-			missingMAC = true
-			break
-		}
-	}
-	if !missingMAC {
-		// Expected path in NSX-T/VPC since it always provides the MAC address.
-		return nil
-	}
-
-	networkDevices, err := res.NewVMFromObject(vcVM).GetNetworkDevices(vmCtx)
-	if err != nil {
-		return err
-	}
-
-	// Just zip these together until we can do interface identification.
-	for i := range min(len(networkDevices), len(networkResults.Devices)) {
-		dev := &networkResults.Devices[i]
-
-		if dev.MacAddress == "" {
-			ethCard := networkDevices[i].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-			dev.MacAddress = ethCard.MacAddress
-		}
-	}
-
-	return nil
-}
-
-func (s *Session) fixupMacAddressMutableNetworks(
-	ctx context.Context,
-	vcVM *object.VirtualMachine,
-	networkResults *network.NetworkInterfaceResults) error {
-
-	if !networkResults.UpdatedEthCards {
-		// Even if there were no network changes, for VDS we still may have fix up the MAC address
-		// because VC can assign it since NetOP does not specify in the interface CR Status.
-		missingMAC := false
-		for idx := range networkResults.Devices {
-			if networkResults.Devices[idx].MacAddress == "" {
-				missingMAC = true
-				break
-			}
-		}
-		if !missingMAC {
-			return nil
-		}
-	}
-
-	networkDevices, err := res.NewVMFromObject(vcVM).GetNetworkDevices(ctx)
-	if err != nil {
-		return err
-	}
-
-	for idx, dev := range networkResults.Devices {
-		if dev.EthCardKey != 0 {
-			matchingIdx := slices.IndexFunc(networkDevices,
-				func(d vimtypes.BaseVirtualDevice) bool { return d.GetVirtualDevice().Key == dev.EthCardKey })
-			if matchingIdx >= 0 {
-				matchDev := networkDevices[matchingIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-				networkResults.Devices[idx].MacAddress = matchDev.MacAddress
-				networkDevices = slices.Delete(networkDevices, matchingIdx, matchingIdx+1)
-			}
-			continue
-		}
-
-		matchingIdx := network.FindMatchingEthCard(networkDevices, dev.EthCard.(vimtypes.BaseVirtualEthernetCard))
-		if matchingIdx >= 0 {
-			matchDev := networkDevices[matchingIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-			networkResults.Devices[idx].EthCardKey = matchDev.Key
-			networkResults.Devices[idx].MacAddress = matchDev.MacAddress
-
-			networkDevices = slices.Delete(networkDevices, matchingIdx, matchingIdx+1)
-		}
-	}
-
-	return nil
-}
-
 func (s *Session) resizeVMWhenPoweredStateOff(
 	vmCtx pkgctx.VirtualMachineContext,
 	vcVM *object.VirtualMachine,
@@ -1006,15 +873,9 @@ func (s *Session) resizeVMWhenPoweredStateOff(
 		vmopv1util.OverwriteSpecComputeConfig(*vmCtx.VM, *moVM.Config, false, &configSpec)
 	}
 
-	if pkgcfg.FromContext(vmCtx).Features.MutableNetworks {
-		virtualDevices := object.VirtualDeviceList(moVM.Config.Hardware.Device)
-		currentEthCards := virtualDevices.SelectByType((*vimtypes.VirtualEthernetCard)(nil))
-		ethCardDeviceChanges, err := UpdateEthCardDeviceChanges(vmCtx, resizeArgs.NetworkResults, currentEthCards)
-		if err != nil {
-			return err
-		}
-		configSpec.DeviceChange = append(configSpec.DeviceChange, ethCardDeviceChanges...)
-	}
+	// The resize path applies the same planned network changes as the update
+	// path, regardless of MutableNetworks.
+	addNetworkChanges(vmCtx, &configSpec)
 
 	// The boot disk must be extended before the disk is registered as a PVC,
 	// which also happens in doReconfigure. Otherwise a VM that is deployed
@@ -1161,71 +1022,6 @@ func (s *Session) reconcileClusterModule(
 
 	metav1.SetMetaDataAnnotation(&vmCtx.VM.ObjectMeta, pkgconst.ClusterModuleUUIDAnnotationKey, moduleUUID)
 	return nil
-}
-
-func (s *Session) reconcileNetworkAndGuestCustomizationState(
-	vmCtx pkgctx.VirtualMachineContext,
-	vcVM *object.VirtualMachine,
-	bootstrapData vmlifecycle.BootstrapData,
-	networkResults network.NetworkInterfaceResults) error {
-
-	for i := range networkResults.OrphanedNetworkInterfaces {
-		if err := s.K8sClient.Delete(
-			vmCtx,
-			networkResults.OrphanedNetworkInterfaces[i],
-		); ctrlclient.IgnoreNotFound(err) != nil {
-			vmCtx.Logger.Error(err, "failed to delete orphaned network interface")
-		}
-	}
-
-	// External network interfaces are not managed by VM Operator so they are
-	// released instead of deleted.
-	var releaseErrs []error
-	for _, obj := range networkResults.OrphanedExternalNetworkInterfaces {
-		if err := network.ReleaseExternalNetworkInterface(vmCtx, s.K8sClient, obj); err != nil {
-			releaseErrs = append(releaseErrs, err)
-		}
-	}
-	if err := errors.Join(releaseErrs...); err != nil {
-		return err
-	}
-
-	if err := s.fixupMacAddresses(
-		vmCtx,
-		vcVM,
-		&networkResults); err != nil {
-
-		return err
-	}
-
-	bootstraps, err := network.BuildBootstraps(vmCtx, vmCtx.VM, networkResults.Devices)
-	if err != nil {
-		return err
-	}
-
-	// Get the information required to bootstrap/customize the VM. This is
-	// retrieved outside of the customize/DoBootstrap call path in order to use
-	// the information to update the VM object's status with the resolved,
-	// intended network configuration.
-	bootstrapArgs, err := vmlifecycle.GetBootstrapArgs(
-		vmCtx,
-		s.K8sClient,
-		bootstraps,
-		networkResults.UpdatedEthCards,
-		bootstrapData)
-	if err != nil {
-		return err
-	}
-
-	// Update the Kubernetes VM object's status with the resolved, intended
-	// network configuration.
-	vmlifecycle.UpdateNetworkStatusConfig(vmCtx.VM, bootstrapArgs)
-
-	return vmlifecycle.DoBootstrap(
-		vmCtx,
-		vcVM,
-		vmCtx.MoVM.Config,
-		bootstrapArgs)
 }
 
 // Source of truth is EC and Annotation.

@@ -129,6 +129,19 @@ func listExternalNetworkInterfaces(
 	return external, nil
 }
 
+// OrphanedNetworkInterfaces returns the VM-owned provider resources of a
+// network observation that no desired interface references, the same set
+// ListOrphanedNetworkInterfaces returns. It returns nil when info is nil or
+// its listing failed.
+//
+// TODO(T021): Replace with RetireProviderResources.
+func OrphanedNetworkInterfaces(info *Info) []ctrlclient.Object {
+	if info == nil {
+		return nil
+	}
+	return orphanedObjects(info)
+}
+
 // qualifiedInterfaceKey returns a unique key for a network interface CR by
 // combining its provider type and name. This ensures that CRs with the same
 // name from different network providers are treated as distinct items.

@@ -155,6 +155,53 @@ func getDVPGsForCCR(
 	return uuidToDPVG, nil
 }
 
+// VPCPostRestoreDeviceChanges returns the VPCPostRestoreBackingFixup device
+// changes for the Ready interfaces of a network observation. Each interface
+// contributes its provider's pinned MAC address and external ID, and the
+// Ethernet card backing resolved for it in cardBackings; an interface without
+// a resolved backing is skipped.
+//
+// TODO(T026): Fold VPC restore into the planner and remove this.
+func VPCPostRestoreDeviceChanges(
+	vmCtx pkgctx.VirtualMachineContext,
+	currentEthCards []vimtypes.BaseVirtualDevice,
+	info *Info,
+	cardBackings map[string]vimtypes.BaseVirtualDeviceBackingInfo) ([]vimtypes.BaseVirtualDeviceConfigSpec, error) {
+
+	if info == nil {
+		return nil, nil
+	}
+
+	// VPCPostRestoreBackingFixup still takes its inputs as Devices. This
+	// adapter keeps that representation inside this package.
+	devices := make([]Device, 0, len(info.Interfaces))
+	for _, iface := range info.Interfaces {
+		r := iface.Provider
+		backing := cardBackings[iface.Spec.Name]
+		if r.Phase != ResolutionReady || r.Target == nil || backing == nil {
+			continue
+		}
+
+		var externalID string
+		if r.Target.ExternalID.Op == IntentSet {
+			externalID = r.Target.ExternalID.Value
+		}
+
+		devices = append(devices, Device{
+			ProviderType:  r.Ref.Type,
+			InterfaceObj:  r.obj,
+			MacAddress:    r.Target.MAC.Pinned,
+			ExternalID:    externalID,
+			InterfaceName: iface.Spec.Name,
+			EthCard: &vimtypes.VirtualEthernetCard{
+				VirtualDevice: vimtypes.VirtualDevice{Backing: backing},
+			},
+		})
+	}
+
+	return VPCPostRestoreBackingFixup(vmCtx, currentEthCards, devices)
+}
+
 func VPCPostRestoreBackingFixup(
 	vmCtx pkgctx.VirtualMachineContext,
 	currentEthCards []vimtypes.BaseVirtualDevice,

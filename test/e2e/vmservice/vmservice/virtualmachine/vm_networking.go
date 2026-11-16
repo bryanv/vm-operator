@@ -17,6 +17,7 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
 	capiutil "sigs.k8s.io/cluster-api/util"
@@ -635,5 +636,100 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 			g.Expect(keyByName).To(HaveKey("eth1"))
 			g.Expect(keyByName[vm.Spec.Network.Interfaces[0].Name]).ToNot(Equal(keyByName["eth1"]))
 		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "VM status interfaces named after their EthernetCards")
+	})
+
+	// Spec 017 T020 (G2): an interface whose provider resource cannot become
+	// ready is data, not a reconcile failure. A running VM stays running and
+	// can still be powered off, VirtualMachineNetworkReady names the
+	// interface, and only the transition from powered off to powered on is
+	// blocked until the interface is ready or removed.
+	It("Should power off but not power on a VM with a pending network interface", Label("experimental"), func() {
+		skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
+
+		const pendingInterfaceName = "eth-pending"
+		missingNetworkName := fmt.Sprintf("%s-missing-%s", specName, capiutil.RandomString(4))
+
+		vmToCreate := &vmopv1a2.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: input.WCPNamespaceName,
+				Name:      vmName,
+			},
+			Spec: vmopv1a2.VirtualMachineSpec{
+				ImageName:    linuxVMIName,
+				ClassName:    clusterResources.VMClassName,
+				StorageClass: clusterResources.StorageClassName,
+				PowerState:   vmopv1a2.VirtualMachinePowerStateOn,
+			},
+		}
+		vmoperator.CreateVirtualMachine(ctx, config, clusterProxy, vmToCreate, false)
+		vmoperator.WaitForVirtualMachineToExist(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+		vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, vmopv1.VirtualMachinePowerStateOn)
+
+		key := ctrlclient.ObjectKey{Name: vmName, Namespace: input.WCPNamespaceName}
+
+		By("Add a network interface whose network does not exist")
+		Eventually(func(g Gomega) {
+			g.Expect(vmoperator.PatchVirtualMachine(ctx, svClusterClient, input.WCPNamespaceName, vmName, func(vm *vmopv1.VirtualMachine) error {
+				if vm.Spec.Network == nil || len(vm.Spec.Network.Interfaces) != 1 || vm.Spec.Network.Interfaces[0].Network == nil {
+					return fmt.Errorf("expected one network interface with a network, got %+v", vm.Spec.Network)
+				}
+				pending := *vm.Spec.Network.Interfaces[0].DeepCopy()
+				pending.Name = pendingInterfaceName
+				// The same provider type as the first interface, so its
+				// provider resource is created, but it never becomes ready.
+				pending.Network.Name = missingNetworkName
+				pending.MACAddr = ""
+				pending.UnitNumber = nil
+				vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, pending)
+				return nil
+			}, ctrlclient.MergeFromWithOptimisticLock{})).To(Succeed())
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out adding the pending network interface to VirtualMachine %s", vmName)
+
+		By("The VM stays running and reports the pending interface")
+		Eventually(func(g Gomega) {
+			vm := &vmopv1.VirtualMachine{}
+			g.Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+			g.Expect(vm.Status.PowerState).To(Equal(vmopv1.VirtualMachinePowerStateOn))
+			c := meta.FindStatusCondition(vm.Status.Conditions, vmopv1.VirtualMachineConditionNetworkReady)
+			g.Expect(c).ToNot(BeNil())
+			g.Expect(c.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(c.Message).To(ContainSubstring(pendingInterfaceName))
+		}, config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed(), "VirtualMachine %s does not report its pending network interface", vmName)
+
+		By("Power off the VM while the interface is pending")
+		vmoperator.PowerOffVirtualMachineAndWait(ctx, config, svClusterClient, input.WCPNamespaceName, vmName)
+
+		By("Power on stays blocked while the interface is pending")
+		vmoperator.UpdateVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, vmopv1.VirtualMachinePowerStateOn)
+		Consistently(func(g Gomega) {
+			vm := &vmopv1.VirtualMachine{}
+			g.Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+			g.Expect(vm.Status.PowerState).To(Equal(vmopv1.VirtualMachinePowerStateOff))
+			c := meta.FindStatusCondition(vm.Status.Conditions, vmopv1.VirtualMachineConditionNetworkReady)
+			g.Expect(c).ToNot(BeNil())
+			g.Expect(c.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(c.Message).To(ContainSubstring(pendingInterfaceName))
+		}, config.GetIntervals("default", "consistent-virtual-machine-condition")...).Should(Succeed(), "VirtualMachine %s powered on with a pending network interface", vmName)
+
+		By("Remove the pending interface")
+		Eventually(func(g Gomega) {
+			g.Expect(vmoperator.PatchVirtualMachine(ctx, svClusterClient, input.WCPNamespaceName, vmName, func(vm *vmopv1.VirtualMachine) error {
+				if vm.Spec.Network == nil || len(vm.Spec.Network.Interfaces) != 2 {
+					return fmt.Errorf("expected two network interfaces, got %+v", vm.Spec.Network)
+				}
+				vm.Spec.Network.Interfaces = vm.Spec.Network.Interfaces[:1]
+				return nil
+			}, ctrlclient.MergeFromWithOptimisticLock{})).To(Succeed())
+		}, config.GetIntervals("default", "wait-virtual-machine-resize")...).Should(Succeed(), "Timed out removing the pending network interface from VirtualMachine %s", vmName)
+
+		By("The VM powers on once its network is ready")
+		vmoperator.WaitForVirtualMachinePowerState(ctx, config, svClusterClient, input.WCPNamespaceName, vmName, vmopv1.VirtualMachinePowerStateOn)
+		Eventually(func(g Gomega) {
+			vm := &vmopv1.VirtualMachine{}
+			g.Expect(svClusterClient.Get(ctx, key, vm)).To(Succeed())
+			c := meta.FindStatusCondition(vm.Status.Conditions, vmopv1.VirtualMachineConditionNetworkReady)
+			g.Expect(c).ToNot(BeNil())
+			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+		}, config.GetIntervals("default", "wait-virtual-machine-condition-update")...).Should(Succeed(), "VirtualMachine %s network is not ready", vmName)
 	})
 }

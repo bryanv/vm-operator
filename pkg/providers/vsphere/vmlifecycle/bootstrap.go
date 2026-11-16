@@ -64,7 +64,6 @@ type BootstrapArgs struct {
 
 	TemplateRenderFn TemplateRenderFunc
 	NetBootstraps    []network.Bootstrap
-	UpdatedEthCards  bool
 	DomainName       string
 	HostName         string
 	DNSServers       []string
@@ -354,7 +353,6 @@ func GetBootstrapArgs(
 	ctx pkgctx.VirtualMachineContext,
 	k8sClient ctrlclient.Client,
 	bootstraps []network.Bootstrap,
-	updatedEthCards bool,
 	bootstrapData BootstrapData) (BootstrapArgs, error) {
 
 	var bootstrap vmopv1.VirtualMachineBootstrapSpec
@@ -366,10 +364,9 @@ func GetBootstrapArgs(
 	isGOSC := bootstrap.LinuxPrep != nil || bootstrap.Sysprep != nil
 
 	bsa := BootstrapArgs{
-		BootstrapData:   bootstrapData,
-		NetBootstraps:   bootstraps,
-		UpdatedEthCards: updatedEthCards,
-		HostName:        ctx.VM.Name,
+		BootstrapData: bootstrapData,
+		NetBootstraps: bootstraps,
+		HostName:      ctx.VM.Name,
 	}
 
 	if networkSpec := ctx.VM.Spec.Network; networkSpec != nil {

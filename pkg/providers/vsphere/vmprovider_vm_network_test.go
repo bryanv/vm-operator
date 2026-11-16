@@ -35,6 +35,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/conditions"
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
+	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/util"
@@ -895,11 +896,14 @@ func vmNetworkTests() {
 							)
 						})
 
+						// Spec 017 T020 (G2): the pending np1 interface no longer
+						// blocks the power-off. The pass ends with a bounded
+						// requeue while the interface is pending.
 						By("power off: np1 NIC not yet ready", func() {
 							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
 							err := createOrUpdateVM(ctx, vmProvider, vm)
-							Expect(err).To(HaveOccurred())
-							Expect(err).To(MatchError(network.ErrNetworkInterfaceNotReady))
+							Expect(pkgerr.IsRequeueError(err)).To(BeTrue(), "err: %v", err)
+							Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
 						})
 
 						By("simulate np1 interface ready", func() {
@@ -1103,12 +1107,15 @@ func vmNetworkTests() {
 							vm.Spec.Network.Interfaces[1].Network.Name = networkName1
 						})
 
+						// Spec 017 T020 (G2): the pending interface no longer
+						// blocks the power-off. The pass ends with a bounded
+						// requeue while the interface is pending.
 						By("power off VM", func() {
 							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
 							err = createOrUpdateVM(ctx, vmProvider, vm)
-							Expect(err).To(HaveOccurred())
-							Expect(err).To(MatchError(network.ErrNetworkInterfaceNotReady))
-							Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+							Expect(pkgerr.IsRequeueError(err)).To(BeTrue(), "err: %v", err)
+							Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+							Expect(conditions.IsFalse(vm, vmopv1.VirtualMachineConditionNetworkReady)).To(BeTrue())
 						})
 
 						By("simulate successful network provider reconcile on added interface", func() {
@@ -1319,12 +1326,15 @@ func vmNetworkTests() {
 							vm.Spec.Network.Interfaces[1].Network.Name = networkName2
 						})
 
+						// Spec 017 T020 (G2): the pending interface no longer
+						// blocks the power-off. The pass ends with a bounded
+						// requeue while the interface is pending.
 						By("power off VM", func() {
 							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
 							err = createOrUpdateVM(ctx, vmProvider, vm)
-							Expect(err).To(HaveOccurred())
-							Expect(err).To(MatchError(network.ErrNetworkInterfaceNotReady))
-							Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+							Expect(pkgerr.IsRequeueError(err)).To(BeTrue(), "err: %v", err)
+							Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+							Expect(conditions.IsFalse(vm, vmopv1.VirtualMachineConditionNetworkReady)).To(BeTrue())
 						})
 
 						By("simulate successful network provider reconcile on updated interface", func() {
@@ -1396,12 +1406,15 @@ func vmNetworkTests() {
 							vm.Spec.Network.Interfaces[0].Network.Name = networkName2
 						})
 
+						// Spec 017 T020: power-on stays blocked by the explicit
+						// network gate; the pass ends with a bounded requeue
+						// instead of a NoRequeueError.
 						By("try to power on VM", func() {
 							vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
 							err = createOrUpdateVM(ctx, vmProvider, vm)
-							Expect(err).To(HaveOccurred())
-							Expect(err).To(MatchError(network.ErrNetworkInterfaceNotReady))
+							Expect(pkgerr.IsRequeueError(err)).To(BeTrue(), "err: %v", err)
 							Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+							Expect(conditions.IsFalse(vm, vmopv1.VirtualMachineConditionNetworkReady)).To(BeTrue())
 						})
 
 						By("simulate successful network provider reconcile on updated interface", func() {
@@ -1511,22 +1524,24 @@ func vmNetworkTests() {
 							})
 					}
 
-					// TODAY: a pending interface returns a NoRequeueError from
-					// the config step, so updateVirtualMachine returns before
-					// reconcilePowerState and the requested power-off does not
-					// happen. T020 (G2 fix) is expected to flip this test: the
-					// VM powers off and the pending interface is not a
-					// NoRequeueError. This is the one characterization test
-					// that is intentionally expected to change.
-					It("TODAY: pending interface blocks power-off", func() {
+					// Spec 017 T020 (G2): before T020 a pending interface
+					// returned a NoRequeueError from the config step, so
+					// updateVirtualMachine returned before reconcilePowerState
+					// and the requested power-off did not happen. Now the
+					// pending interface is data: the VM powers off and the
+					// pass ends with a bounded RequeueError, not a
+					// NoRequeueError. This characterization test was
+					// intentionally expected to flip.
+					It("Spec 017 T020 (G2): pending interface does not block power-off", func() {
 						vcVM := createPoweredOnVM()
 
 						addPendingInterface()
 						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
 
 						err := createOrUpdateVM(ctx, vmProvider, vm)
-						Expect(err).To(MatchError(network.ErrNetworkInterfaceNotReady))
-						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+						Expect(pkgerr.IsRequeueError(err)).To(BeTrue(), "err: %v", err)
+						Expect(pkgerr.IsNoRequeueError(err)).To(BeFalse())
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
 					})
 
 					// Power-on remains gated on a pending interface after T020,
@@ -1543,6 +1558,43 @@ func vmNetworkTests() {
 
 						_ = createOrUpdateVM(ctx, vmProvider, vm)
 						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+					})
+
+					// Spec 017 T020: the explicit power-on gate blocks only
+					// while the interface is pending, the update path reports
+					// the interface on VirtualMachineNetworkReady, and the
+					// pass ends with a bounded requeue rather than a
+					// NoRequeueError.
+					It("Spec 017 T020: reports the pending interface and powers on once it is ready", func() {
+						vcVM := createPoweredOnVM()
+
+						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOff
+						Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+
+						addPendingInterface()
+						vm.Spec.PowerState = vmopv1.VirtualMachinePowerStateOn
+
+						err := createOrUpdateVM(ctx, vmProvider, vm)
+						Expect(pkgerr.IsRequeueError(err)).To(BeTrue(), "err: %v", err)
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOff))
+
+						c := conditions.Get(vm, vmopv1.VirtualMachineConditionNetworkReady)
+						Expect(c).ToNot(BeNil())
+						Expect(c.Status).To(Equal(metav1.ConditionFalse))
+						Expect(c.Reason).To(Equal(network.PlanReasonProviderPending))
+						Expect(c.Message).To(HavePrefix(interfaceName1 + ": ProviderPending"))
+						Expect(conditions.IsFalse(vm, vmopv1.VirtualMachinePowerStateSynced)).To(BeTrue())
+
+						np.simulateInterfaceReconcile(ctx, vm, vm.Spec.Network.Interfaces[1], 1)
+
+						Expect(createOrUpdateVM(ctx, vmProvider, vm)).To(Succeed())
+						Expect(vcVM.PowerState(ctx)).To(Equal(vimtypes.VirtualMachinePowerStatePoweredOn))
+						Expect(conditions.IsTrue(vm, vmopv1.VirtualMachineConditionNetworkReady)).To(BeTrue())
+
+						devList, err := vcVM.Device(ctx)
+						Expect(err).ToNot(HaveOccurred())
+						Expect(devList.SelectByType(&vimtypes.VirtualEthernetCard{})).To(HaveLen(2))
 					})
 				},
 				Entry("VDS", builder.NetworkEnvVDS),

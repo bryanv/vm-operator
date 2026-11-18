@@ -519,7 +519,7 @@ func RetireRequeueAfter(results []RetireResult) time.Duration
 A CR in `info.Owned` is deleted only when all of these hold:
 
 - No desired interface, including Pending, Failed, and Unknown ones, references it by provider type and name. A desired interface without a provider resource name retains every candidate.
-- No adapter, whatever its disposition, carries the attachment the CR last reported, judged by provider-specific identity: the external ID, and for a NetOP CR without one, its backing plus MAC address. An adapter that only shares the backing retains the CR as `AttachmentAmbiguous`. A CR that reports no attachment is retained while any adapter is unclaimed. T028 refines reachability with operation records and handoff rules (Q8).
+- No adapter, whatever its disposition, carries the attachment the CR last reported, judged by provider-specific identity: the external ID, and for a NetOP CR without one, its backing plus MAC address. An adapter that only shares the backing retains the CR as `AttachmentAmbiguous`, unless a desired interface claims that adapter with an `Unchanged` attachment, which accounts for it. Without that exception, a NetOP CR that reports neither an external ID nor a MAC address, as on a VDS Supervisor, would be retained for as long as any adapter remains on its network. A CR that reports no attachment is retained while any adapter is unclaimed. T028 refines reachability with operation records and handoff rules (Q8).
 - `info.Complete` is true and nothing was submitted this pass.
 - Re-read just before the delete, the VirtualMachine still has the observed UID and generation, so a spec change made meanwhile (e.g. back to the old network) cancels the retirement until the pass it triggers.
 

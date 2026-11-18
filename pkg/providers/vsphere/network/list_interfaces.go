@@ -196,10 +196,15 @@ type RetireInput struct {
 //   - No adapter carries the attachment the candidate last reported, judged
 //     by provider-specific identity evidence: the external ID, and for a
 //     NetOP NetworkInterface without one, the backing together with the MAC
-//     address. An adapter that only shares the candidate's backing retains
-//     it as ambiguous. This holds whatever the adapter's disposition, so a
-//     claimed adapter whose attachment is pending replacement, and a
-//     protected or retiring adapter, retain the resource they use.
+//     address. Such identity evidence retains the candidate whatever the
+//     adapter's disposition, so a claimed adapter whose attachment is
+//     pending replacement, and a protected or retiring adapter, retain the
+//     resource they use. An adapter that only shares the candidate's backing
+//     retains it as ambiguous, unless a desired interface claims that adapter
+//     with an unchanged attachment: the adapter then uses the desired
+//     interface's resource. Without this exception, a NetOP
+//     NetworkInterface that reports neither an external ID nor a MAC address
+//     would be retained for as long as any adapter remains on its network.
 //   - A candidate that reports no attachment is retained while any adapter is
 //     not claimed by a desired interface.
 //   - Just before the delete, the VirtualMachine is read again and still has
@@ -319,7 +324,7 @@ func retainedByHardware(
 				Adapter: a.Key,
 			}, true
 		case evidenceAmbiguous:
-			if ambiguous == nil {
+			if ambiguous == nil && !claimedUnchanged(info, a.Key) {
 				ambiguous = &a
 			}
 		case evidenceUnknown:
@@ -357,6 +362,19 @@ func retainedByHardware(
 	}
 
 	return RetireResult{}, false
+}
+
+// claimedUnchanged returns true when a desired interface claims the adapter
+// with the given key and the adapter's attachment is the desired one, so the
+// adapter uses that interface's provider resource.
+func claimedUnchanged(info *Info, key int32) bool {
+	for _, iface := range info.Interfaces {
+		if IsClaim(iface.Match.Kind) && iface.Match.AdapterKey == key &&
+			iface.AttachmentChange == AttachmentChangeUnchanged {
+			return true
+		}
+	}
+	return false
 }
 
 // attachmentEvidenceKind is what an adapter shows about whether it uses a

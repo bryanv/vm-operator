@@ -432,6 +432,27 @@ var _ = Describe("RetireProviderResources", Label(testlabels.API), func() {
 			objs[1] = netOP(oldName, netopv1alpha1.NetworkInterfaceStatus{NetworkID: oldPG})
 		})
 
+		DescribeTable("ignores the shared backing of an adapter a desired interface claims unchanged",
+			func(change network.AttachmentChange, outcome network.RetireOutcome) {
+				// The desired interface's adapter is on the candidate's
+				// network, and neither reports a MAC address or an external ID,
+				// as a NetOP NetworkInterface does on a VDS Supervisor.
+				info.Adapters[0] = adapter(adapterKey, oldPG, "", "00:50:56:00:00:01")
+				info.Interfaces[0].AttachmentChange = change
+
+				Expect(retire()).To(ConsistOf(And(
+					HaveField("Ref.Name", oldName),
+					HaveField("Outcome", outcome),
+				)))
+			},
+			Entry("deletes when the attachment is unchanged",
+				network.AttachmentChangeUnchanged, network.RetireOutcomeDeleted),
+			Entry("retains as ambiguous while the attachment is pending replacement",
+				network.AttachmentChangeReplacement, network.RetireOutcomeRetained),
+			Entry("retains as ambiguous while the attachment change is unknown",
+				network.AttachmentChangeUnknown, network.RetireOutcomeRetained),
+		)
+
 		DescribeTable("compares the backing and the MAC address",
 			func(a network.ObservedAdapter, mac string, reason string, outcome network.RetireOutcome) {
 				if mac != "" {

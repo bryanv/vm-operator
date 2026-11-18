@@ -34,7 +34,7 @@ import (
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
-	pkglog "github.com/vmware-tanzu/vm-operator/pkg/log"
+	netsetutil "github.com/vmware-tanzu/vm-operator/pkg/util/kube/networksettings"
 )
 
 // Stable reasons for a Resolution whose phase is not Ready.
@@ -74,6 +74,14 @@ const (
 	// ReasonBackingResolutionFailed is used when resolving the vSphere
 	// network backing of a ready target failed.
 	ReasonBackingResolutionFailed = "BackingResolutionFailed"
+
+	// ReasonExternalInterfaceDeleting is used when the external network
+	// interface that an interface references is being deleted.
+	ReasonExternalInterfaceDeleting = "ExternalInterfaceDeleting"
+
+	// ReasonExternalInterfaceInUse is used when the external network
+	// interface that an interface references belongs to a different VM.
+	ReasonExternalInterfaceInUse = "ExternalInterfaceInUse"
 )
 
 // ObserveInput is the input to Observe.
@@ -223,7 +231,7 @@ func (c collector) collect(ctx context.Context) (*Info, []error) {
 	// List the VM-owned provider resources after any were ensured so the
 	// snapshot includes the resources created by Prepare.
 	if !named && providerErr == nil {
-		owned, err := c.listOwned(ctx)
+		owned, external, err := c.listAssociated(ctx)
 		if err != nil {
 			info.Complete = false
 			errs = append(errs,
@@ -233,6 +241,11 @@ func (c collector) collect(ctx context.Context) (*Info, []error) {
 			info.Owned = make([]ProviderRef, 0, len(owned))
 			for _, obj := range owned {
 				info.Owned = append(info.Owned, refFromObject(providerTypeOf(obj), obj))
+			}
+			info.external = external
+			info.External = make([]ProviderRef, 0, len(external))
+			for _, obj := range external {
+				info.External = append(info.External, refFromObject(providerTypeOf(obj), obj))
 			}
 		}
 	}
@@ -260,13 +273,39 @@ func (c collector) providerMode(ctx context.Context) (bool, error) {
 	}
 }
 
-func (c collector) listOwned(ctx context.Context) ([]ctrlclient.Object, error) {
-	vmCtx := pkgctx.VirtualMachineContext{
-		Context: ctx,
-		Logger:  pkglog.FromContextOrDefault(ctx),
-		VM:      c.vm,
+// listAssociated lists the provider resources labeled with the VM's name in a
+// single pass, and splits them into the VM-owned resources that VM Operator
+// created, and the external network interfaces associated with the VM. An
+// external network interface is never in the owned list, even when the VM
+// owns it, because VM Operator never deletes one. External network interfaces
+// are only listed when the BringYourOwnNetworkInterface capability is enabled.
+func (c collector) listAssociated(
+	ctx context.Context) (owned, external []ctrlclient.Object, err error) {
+
+	networkTypes, err := netsetutil.GetSupportedProviderTypes(ctx, c.client, c.vm.Namespace)
+	if err != nil {
+		return nil, nil, err
 	}
-	return ListNetworkInterfaces(vmCtx, c.client)
+
+	objs, err := listVMNetworkInterfaces(ctx, c.client, c.vm, networkTypes, false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	withExternal := pkgcfg.FromContext(ctx).Features.BringYourOwnNetworkInterface
+
+	for _, o := range objs {
+		switch {
+		case IsExternalNetworkInterface(o.obj):
+			if withExternal {
+				external = append(external, o.obj)
+			}
+		case isOwnedBy(c.vm, o.obj):
+			owned = append(owned, o.obj)
+		}
+	}
+
+	return owned, external, nil
 }
 
 func (c collector) providerResolution(
@@ -277,6 +316,10 @@ func (c collector) providerResolution(
 	if err != nil {
 		return failed(ProviderRef{Namespace: c.vm.Namespace},
 			ReasonInvalidInterfaceSpec, err)
+	}
+
+	if spec.ExternalRef != nil {
+		return c.externalResolution(ctx, group, spec)
 	}
 
 	switch group {
@@ -415,6 +458,93 @@ func (c collector) vpcResolution(
 
 	r := decodeVPC(ctx, subnetPort)
 	return c.resolveBacking(ctx, r, false, true)
+}
+
+// externalResolution resolves an interface whose ExternalRef references a
+// pre-created network interface CR in the VM namespace. VM Operator never
+// creates, owns, or deletes that CR. Prepare only associates it with the VM
+// by setting the VM association labels and annotations; Observe only reads
+// it. Both report a CR that belongs to another VM as a terminal failure.
+func (c collector) externalResolution(
+	ctx context.Context,
+	group string,
+	spec vmopv1.VirtualMachineNetworkInterfaceSpec) Resolution {
+
+	ref := ProviderRef{
+		Namespace: c.vm.Namespace,
+		Name:      spec.ExternalRef.Name,
+	}
+
+	obj, err := newExternalNetworkInterfaceObject(group)
+	if err != nil {
+		return failed(ref, ReasonInvalidInterfaceSpec, err)
+	}
+	ref.Type = providerTypeOf(obj)
+	kind := externalKind(obj)
+
+	if !pkgcfg.FromContext(ctx).Features.BringYourOwnNetworkInterface {
+		return failed(ref, ReasonInvalidInterfaceSpec,
+			errors.New("external network interfaces are not enabled"))
+	}
+
+	found, err := c.getFirst(ctx, obj, ref.Name)
+	if err != nil {
+		return readFailed(ref, kind, err)
+	}
+	if !found {
+		return notFound(ref, kind)
+	}
+	ref.UID = obj.GetUID()
+
+	if !obj.GetDeletionTimestamp().IsZero() {
+		// Keep the object so its last reported attachment remains matching
+		// evidence, but never associate a CR that is being deleted.
+		return Resolution{
+			Phase:   ResolutionPending,
+			Reason:  ReasonExternalInterfaceDeleting,
+			Message: fmt.Sprintf("%s %s/%s is being deleted", kind, ref.Namespace, ref.Name),
+			Ref:     ref,
+			obj:     obj,
+		}
+	}
+
+	if err := externalNetworkInterfaceInUse(c.vm, obj); err != nil {
+		return failed(ref, ReasonExternalInterfaceInUse, err)
+	}
+
+	if c.ensure {
+		if err := associateExternalNetworkInterface(ctx, c.vm, c.client, obj, spec.Name); err != nil {
+			if errors.Is(err, ErrExternalNetworkInterfaceInUse) {
+				return failed(ref, ReasonExternalInterfaceInUse, err)
+			}
+			return unknown(ref, ReasonEnsureFailed, err)
+		}
+	}
+
+	switch o := obj.(type) {
+	case *netopv1alpha1.NetworkInterface:
+		return c.resolveBacking(ctx, decodeNetOP(ctx, o, spec), true, false)
+	case *ncpv1alpha1.VirtualNetworkInterface:
+		return c.resolveBacking(ctx, decodeNCP(ctx, o), false, true)
+	case *vpcv1alpha1.SubnetPort:
+		return c.resolveBacking(ctx, decodeVPC(ctx, o), false, true)
+	}
+
+	return failed(ref, ReasonInvalidInterfaceSpec,
+		fmt.Errorf("unsupported network interface CR type: %T", obj))
+}
+
+// externalKind returns the Kind of a network interface CR.
+func externalKind(obj ctrlclient.Object) string {
+	switch obj.(type) {
+	case *netopv1alpha1.NetworkInterface:
+		return "NetworkInterface"
+	case *ncpv1alpha1.VirtualNetworkInterface:
+		return "VirtualNetworkInterface"
+	case *vpcv1alpha1.SubnetPort:
+		return "SubnetPort"
+	}
+	return fmt.Sprintf("%T", obj)
 }
 
 func (c collector) namedResolution(

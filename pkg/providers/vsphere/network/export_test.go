@@ -46,6 +46,12 @@ func SetInfoOwnedObjectsForTest(i *Info, objs []ctrlclient.Object) {
 	i.owned = objs
 }
 
+// SetInfoExternalObjectsForTest sets the raw associated external network
+// interfaces on i.
+func SetInfoExternalObjectsForTest(i *Info, objs []ctrlclient.Object) {
+	i.external = objs
+}
+
 // SetResolutionObjectForTest sets the raw provider resource retained on r.
 func SetResolutionObjectForTest(r *Resolution, obj ctrlclient.Object) {
 	r.obj = obj

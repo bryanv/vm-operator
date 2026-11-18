@@ -1330,3 +1330,247 @@ var _ = Describe("Prepare named network", Label(testlabels.VCSim), func() {
 		})
 	})
 })
+
+// providerTestExternalRef returns an ExternalRef to the network interface CR
+// of the provider type with the given name.
+func providerTestExternalRef(providerType pkgcfg.NetworkProviderType, name string) *common.LocalObjectRef {
+	ref := &common.LocalObjectRef{Name: name}
+	switch providerType {
+	case pkgcfg.NetworkProviderTypeVDS:
+		ref.APIVersion = netopv1alpha1.SchemeGroupVersion.String()
+		ref.Kind = "NetworkInterface"
+	case pkgcfg.NetworkProviderTypeNSXT:
+		ref.APIVersion = ncpv1alpha1.SchemeGroupVersion.String()
+		ref.Kind = "VirtualNetworkInterface"
+	case pkgcfg.NetworkProviderTypeVPC:
+		ref.APIVersion = vpcv1alpha1.SchemeGroupVersion.String()
+		ref.Kind = "SubnetPort"
+	case pkgcfg.NetworkProviderTypeNamed:
+		// Named networks have no CR.
+	}
+	return ref
+}
+
+var _ = Describe("External network interfaces", Label(testlabels.API), func() {
+
+	const (
+		externalName = "byo-netif"
+		orphanName   = "byo-netif-old"
+	)
+
+	DescribeTableSubtree("are resolved by reference",
+		func(providerType pkgcfg.NetworkProviderType) {
+			var (
+				ctx         context.Context
+				vm          *vmopv1.VirtualMachine
+				initObjects []ctrlclient.Object
+				writes      []string
+				client      ctrlclient.Client
+			)
+
+			// external returns an external CR associated with vm.
+			external := func(name, interfaceName string, owned bool) ctrlclient.Object {
+				obj := providerTestCR(providerType, name)
+				obj.SetLabels(map[string]string{
+					pkgconst.NetworkInterfaceVMNameLabel: vm.Name,
+					network.VMInterfaceNameLabel:         interfaceName,
+				})
+				obj.SetAnnotations(map[string]string{
+					pkgconst.ExternalNetworkInterfaceAnnotation: "true",
+				})
+				if owned {
+					obj.SetOwnerReferences([]metav1.OwnerReference{{
+						APIVersion: vmopv1.GroupVersion.String(),
+						Kind:       "VirtualMachine",
+						Name:       vm.Name,
+						UID:        vm.UID,
+					}})
+				}
+				return obj
+			}
+
+			observe := func() *network.Info {
+				GinkgoHelper()
+				client = builder.NewFakeClientWithInterceptors(noWriteFuncs(&writes), initObjects...)
+				info := network.Observe(ctx, network.ObserveInput{
+					Client: client,
+					VM:     vm,
+					MoVM:   providerTestMoVM(),
+				})
+				Expect(info).ToNot(BeNil())
+				Expect(writes).To(BeEmpty())
+				return info
+			}
+
+			prepare := func() (*network.Info, error) {
+				GinkgoHelper()
+				client = builder.NewFakeClientWithInterceptors(interceptor.Funcs{}, initObjects...)
+				info, err := network.Prepare(ctx, network.PrepareInput{
+					Client: client,
+					VM:     vm,
+					MoVM:   providerTestMoVM(),
+				})
+				Expect(info).ToNot(BeNil())
+				return info, err
+			}
+
+			BeforeEach(func() {
+				ctx = pkgcfg.UpdateContext(providerTestContext(providerType), func(config *pkgcfg.Config) {
+					config.Features.BringYourOwnNetworkInterface = true
+				})
+				vm = providerTestVM()
+				vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:        "eth0",
+						ExternalRef: providerTestExternalRef(providerType, externalName),
+					},
+				}
+				initObjects = nil
+				writes = nil
+			})
+
+			It("reports a missing external CR as Pending", func() {
+				info := observe()
+				Expect(info.Complete).To(BeTrue())
+				r := info.Interfaces[0].Provider
+				Expect(r.Phase).To(Equal(network.ResolutionPending))
+				Expect(r.Reason).To(Equal(network.ReasonProviderResourceNotFound))
+				Expect(r.Ref).To(Equal(network.ProviderRef{
+					Type:      providerType,
+					Namespace: providerTestNS,
+					Name:      externalName,
+				}))
+			})
+
+			It("reads the external CR without associating it", func() {
+				initObjects = append(initObjects, providerTestCR(providerType, externalName))
+
+				info := observe()
+				r := info.Interfaces[0].Provider
+				Expect(r.Phase).To(Equal(network.ResolutionPending))
+				Expect(r.Reason).To(Equal(network.ReasonProviderNotReady))
+				Expect(r.Ref.Type).To(Equal(providerType))
+				Expect(r.Ref.Name).To(Equal(externalName))
+				Expect(r.Ref.UID).ToNot(BeEmpty())
+				Expect(network.ResolutionObjectForTest(r)).ToNot(BeNil())
+				Expect(info.Owned).To(BeEmpty())
+				Expect(info.External).To(BeEmpty())
+			})
+
+			It("associates the external CR with the VM when preparing, without owning it", func() {
+				initObjects = append(initObjects, providerTestCR(providerType, externalName))
+
+				info, err := prepare()
+				Expect(err).ToNot(HaveOccurred())
+				r := info.Interfaces[0].Provider
+				Expect(r.Phase).To(Equal(network.ResolutionPending))
+				Expect(r.Reason).To(Equal(network.ReasonProviderNotReady))
+
+				obj := providerTestCR(providerType, externalName)
+				Expect(client.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), obj)).To(Succeed())
+				Expect(obj.GetOwnerReferences()).To(BeEmpty())
+				Expect(obj.GetLabels()).To(HaveKeyWithValue(pkgconst.NetworkInterfaceVMNameLabel, vm.Name))
+				Expect(obj.GetLabels()).To(HaveKeyWithValue(network.VMInterfaceNameLabel, "eth0"))
+				Expect(network.IsExternalNetworkInterface(obj)).To(BeTrue())
+
+				By("listing the associated CR as external, not as owned", func() {
+					Expect(info.Owned).To(BeEmpty())
+					Expect(info.External).To(ConsistOf(HaveField("Name", externalName)))
+				})
+			})
+
+			DescribeTable("reports an external CR that belongs to another VM as Failed",
+				func(prepared bool, mutate func(obj ctrlclient.Object)) {
+					obj := providerTestCR(providerType, externalName)
+					mutate(obj)
+					initObjects = append(initObjects, obj)
+
+					var info *network.Info
+					if prepared {
+						info, _ = prepare()
+						stored := providerTestCR(providerType, externalName)
+						Expect(client.Get(ctx, ctrlclient.ObjectKeyFromObject(stored), stored)).To(Succeed())
+						Expect(network.IsExternalNetworkInterface(stored)).To(BeFalse())
+					} else {
+						info = observe()
+					}
+					r := info.Interfaces[0].Provider
+					Expect(r.Phase).To(Equal(network.ResolutionFailed))
+					Expect(r.Reason).To(Equal(network.ReasonExternalInterfaceInUse))
+					Expect(r.Err).To(MatchError(network.ErrExternalNetworkInterfaceInUse))
+					Expect(r.Ref.Name).To(Equal(externalName))
+					Expect(r.Ref.Type).To(Equal(providerType))
+				},
+				Entry("labeled for another VM, observed", false, func(obj ctrlclient.Object) {
+					obj.SetLabels(map[string]string{pkgconst.NetworkInterfaceVMNameLabel: "other-vm"})
+				}),
+				Entry("labeled for another VM, prepared", true, func(obj ctrlclient.Object) {
+					obj.SetLabels(map[string]string{pkgconst.NetworkInterfaceVMNameLabel: "other-vm"})
+				}),
+				Entry("owned by another VM, prepared", true, func(obj ctrlclient.Object) {
+					obj.SetOwnerReferences([]metav1.OwnerReference{{
+						APIVersion: vmopv1.GroupVersion.String(),
+						Kind:       "VirtualMachine",
+						Name:       "other-vm",
+						UID:        "other-vm-uid",
+					}})
+				}),
+			)
+
+			It("does not associate an external CR that is being deleted", func() {
+				obj := providerTestCR(providerType, externalName)
+				obj.SetFinalizers([]string{"test/finalizer"})
+				now := metav1.Now()
+				obj.SetDeletionTimestamp(&now)
+				initObjects = append(initObjects, obj)
+
+				info, err := prepare()
+				Expect(err).ToNot(HaveOccurred())
+				r := info.Interfaces[0].Provider
+				Expect(r.Phase).To(Equal(network.ResolutionPending))
+				Expect(r.Reason).To(Equal(network.ReasonExternalInterfaceDeleting))
+				Expect(r.Ref.Name).To(Equal(externalName))
+
+				stored := providerTestCR(providerType, externalName)
+				Expect(client.Get(ctx, ctrlclient.ObjectKeyFromObject(stored), stored)).To(Succeed())
+				Expect(network.IsExternalNetworkInterface(stored)).To(BeFalse())
+			})
+
+			It("reports an external reference as Failed when the capability is disabled", func() {
+				ctx = providerTestContext(providerType)
+				initObjects = append(initObjects, providerTestCR(providerType, externalName))
+
+				info := observe()
+				r := info.Interfaces[0].Provider
+				Expect(r.Phase).To(Equal(network.ResolutionFailed))
+				Expect(r.Reason).To(Equal(network.ReasonInvalidInterfaceSpec))
+				Expect(r.Ref.Name).To(Equal(externalName))
+			})
+
+			It("lists the associated external CRs separately from the owned CRs", func() {
+				initObjects = append(initObjects,
+					external(externalName, "eth0", false),
+					// Owned by the VM, such as after the interface switched
+					// from managed to external, but still never owned.
+					external(orphanName, "eth1", true))
+
+				info := observe()
+				Expect(info.Owned).To(BeEmpty())
+				Expect(info.External).To(ConsistOf(
+					HaveField("Name", externalName),
+					HaveField("Name", orphanName)))
+
+				By("ignoring the external CRs when the capability is disabled", func() {
+					ctx = providerTestContext(providerType)
+					vm.Spec.Network.Interfaces = nil
+					info := observe()
+					Expect(info.Owned).To(BeEmpty())
+					Expect(info.External).To(BeEmpty())
+				})
+			})
+		},
+		Entry("VDS", pkgcfg.NetworkProviderTypeVDS),
+		Entry("NSX-T", pkgcfg.NetworkProviderTypeNSXT),
+		Entry("VPC", pkgcfg.NetworkProviderTypeVPC),
+	)
+})

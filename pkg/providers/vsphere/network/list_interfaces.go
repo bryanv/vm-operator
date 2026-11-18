@@ -65,6 +65,11 @@ const (
 	// already gone.
 	RetireOutcomeDeleted RetireOutcome = "Deleted"
 
+	// RetireOutcomeReleased means the external network interface was
+	// released: its VM association metadata was removed, or it was already
+	// gone. VM Operator never deletes an external network interface.
+	RetireOutcomeReleased RetireOutcome = "Released"
+
 	// RetireOutcomeRetained means the provider resource was deliberately kept
 	// on this pass. A later pass that observes a change re-evaluates it.
 	RetireOutcomeRetained RetireOutcome = "Retained"
@@ -80,6 +85,10 @@ const (
 	// RetireReasonDeleted is used when the provider resource was deleted or
 	// was already gone.
 	RetireReasonDeleted = "Deleted"
+
+	// RetireReasonReleased is used when the external network interface was
+	// released or was already gone.
+	RetireReasonReleased = "Released"
 
 	// RetireReasonObservationIncomplete is used when a read needed to observe
 	// the network failed, so no resource is known to be unused.
@@ -120,10 +129,15 @@ const (
 	// RetireReasonDeleteFailed is used when the delete failed, including when
 	// its preconditions did not hold.
 	RetireReasonDeleteFailed = "DeleteFailed"
+
+	// RetireReasonReleaseFailed is used when releasing an external network
+	// interface failed, including when it changed since it was observed.
+	RetireReasonReleaseFailed = "ReleaseFailed"
 )
 
-// RetireResult is the outcome of retiring one VM-owned provider resource
-// that no desired interface references.
+// RetireResult is the outcome of retiring one VM-owned provider resource or
+// associated external network interface that no desired interface
+// references.
 type RetireResult struct {
 	// Ref identifies the provider resource.
 	Ref ProviderRef
@@ -147,7 +161,8 @@ type RetireResult struct {
 
 // RetireInput holds the inputs of RetireProviderResources.
 type RetireInput struct {
-	// Client reads the VirtualMachine again and deletes provider resources.
+	// Client reads the VirtualMachine again, deletes provider resources, and
+	// releases external network interfaces.
 	Client ctrlclient.Client
 
 	// VM is the VirtualMachine the observation was made for.
@@ -163,7 +178,8 @@ type RetireInput struct {
 	Submitted bool
 }
 
-// RetireProviderResources deletes the VM-owned provider resources that no
+// RetireProviderResources deletes the VM-owned provider resources, and
+// releases the external network interfaces associated with the VM, that no
 // desired interface references and that no adapter may still use, and
 // returns one result per such resource, in listing order. It never returns
 // an error: a failure is a Failed result, which RetireRequeueAfter turns into
@@ -194,6 +210,12 @@ type RetireInput struct {
 // The delete is conditioned on the observed UID and resource version, so a
 // newer object that reused the name is never deleted. A NotFound delete is a
 // success.
+//
+// An external network interface is subject to the same rules, but it is
+// released instead of deleted: the VM association labels and annotations are
+// removed with an optimistic lock on the observed resource version, so the
+// release never strips the association of another VM that has since claimed
+// it. A NotFound release is a success.
 func RetireProviderResources(
 	ctx context.Context,
 	in RetireInput) []RetireResult {
@@ -264,8 +286,9 @@ func RetireRequeueAfter(results []RetireResult) time.Duration {
 	return 0
 }
 
-// retirementCandidates returns the VM-owned provider resources that no
-// desired interface references by provider type and name.
+// retirementCandidates returns the VM-owned provider resources and the
+// associated external network interfaces that no desired interface
+// references by provider type and name.
 func retirementCandidates(info *Info) []ctrlclient.Object {
 	return orphanedObjects(info)
 }
@@ -415,7 +438,8 @@ func attachmentEvidence(
 	return evidenceUnknown
 }
 
-// retire re-checks the VirtualMachine and deletes one candidate.
+// retire re-checks the VirtualMachine and deletes one candidate, or releases
+// it when it is an external network interface.
 func retire(
 	ctx context.Context,
 	in RetireInput,
@@ -444,8 +468,9 @@ func retire(
 	current := &vmopv1.VirtualMachine{}
 	if err := in.Client.Get(ctx, ctrlclient.ObjectKeyFromObject(in.VM), current); err != nil {
 		if apierrors.IsNotFound(err) {
-			// The VirtualMachine is gone, and garbage collection deletes the
-			// resources it owns.
+			// The VirtualMachine is gone. Garbage collection deletes the
+			// resources it owns, and the delete path releases the external
+			// network interfaces.
 			return retained(RetireReasonDesiredChanged,
 				"the VirtualMachine no longer exists")
 		}
@@ -458,6 +483,17 @@ func retire(
 
 		return retained(RetireReasonDesiredChanged,
 			"the VirtualMachine changed after the network was observed")
+	}
+
+	if IsExternalNetworkInterface(obj) {
+		if err := ReleaseExternalNetworkInterface(ctx, in.Client, obj); err != nil {
+			return failed(RetireReasonReleaseFailed, err)
+		}
+
+		result.Outcome = RetireOutcomeReleased
+		result.Reason = RetireReasonReleased
+		result.Message = fmt.Sprintf("released %s/%s", ref.Namespace, ref.Name)
+		return result
 	}
 
 	uid, rv := obj.GetUID(), obj.GetResourceVersion()

@@ -142,15 +142,21 @@ var _ = Describe("RetireProviderResources", Label(testlabels.API), func() {
 	retire := func() []network.RetireResult {
 		start()
 
-		// The observation lists the owned objects as stored, with their UID
-		// and resource version.
-		var owned []ctrlclient.Object
+		// The observation lists the owned objects and the associated
+		// external network interfaces as stored, with their UID and resource
+		// version.
+		var owned, external []ctrlclient.Object
 		for _, obj := range objs {
 			stored := obj.DeepCopyObject().(ctrlclient.Object)
 			Expect(client.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), stored)).To(Succeed())
-			owned = append(owned, stored)
+			if network.IsExternalNetworkInterface(stored) {
+				external = append(external, stored)
+			} else {
+				owned = append(owned, stored)
+			}
 		}
 		network.SetInfoOwnedObjectsForTest(info, owned)
+		network.SetInfoExternalObjectsForTest(info, external)
 
 		return network.RetireProviderResources(ctx, network.RetireInput{
 			Client:    client,
@@ -240,6 +246,145 @@ var _ = Describe("RetireProviderResources", Label(testlabels.API), func() {
 		Expect(*pre.UID).To(Equal(results[0].Ref.UID))
 		Expect(pre.ResourceVersion).ToNot(BeNil())
 		Expect(*pre.ResourceVersion).ToNot(BeEmpty())
+	})
+
+	Context("an associated external network interface", func() {
+		var patchCalls int
+
+		// externalize marks obj as an external network interface associated
+		// with the VM's interface.
+		externalize := func(obj ctrlclient.Object, interfaceName string, owned bool) ctrlclient.Object {
+			obj.SetLabels(map[string]string{
+				pkgconst.NetworkInterfaceVMNameLabel: vm.Name,
+				network.VMInterfaceNameLabel:         interfaceName,
+			})
+			obj.SetAnnotations(map[string]string{
+				pkgconst.ExternalNetworkInterfaceAnnotation: "true",
+				pkgconst.VPCAttachmentRef:                   "virtualmachine/" + vm.Name + "/" + interfaceName,
+			})
+			if !owned {
+				obj.SetOwnerReferences(nil)
+			}
+			return obj
+		}
+
+		assertReleased := func(obj ctrlclient.Object) {
+			GinkgoHelper()
+			stored := obj.DeepCopyObject().(ctrlclient.Object)
+			Expect(client.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), stored)).To(Succeed())
+			Expect(stored.GetLabels()).ToNot(HaveKey(pkgconst.NetworkInterfaceVMNameLabel))
+			Expect(stored.GetLabels()).ToNot(HaveKey(network.VMInterfaceNameLabel))
+			Expect(stored.GetAnnotations()).ToNot(HaveKey(pkgconst.ExternalNetworkInterfaceAnnotation))
+			Expect(stored.GetAnnotations()).ToNot(HaveKey(pkgconst.VPCAttachmentRef))
+		}
+
+		assertAssociated := func(obj ctrlclient.Object) {
+			GinkgoHelper()
+			stored := obj.DeepCopyObject().(ctrlclient.Object)
+			Expect(client.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), stored)).To(Succeed())
+			Expect(stored.GetLabels()).To(HaveKeyWithValue(pkgconst.NetworkInterfaceVMNameLabel, vm.Name))
+			Expect(network.IsExternalNetworkInterface(stored)).To(BeTrue())
+		}
+
+		BeforeEach(func() {
+			patchCalls = 0
+			funcs.Patch = func(
+				ctx context.Context,
+				c ctrlclient.WithWatch,
+				obj ctrlclient.Object,
+				patch ctrlclient.Patch,
+				opts ...ctrlclient.PatchOption) error {
+
+				patchCalls++
+				return c.Patch(ctx, obj, patch, opts...)
+			}
+		})
+
+		DescribeTable("releases an unreferenced one that no adapter uses, and never deletes it",
+			func(owned bool) {
+				objs[1] = externalize(objs[1], "eth1", owned)
+
+				results := retire()
+				Expect(results).To(ConsistOf(And(
+					HaveField("Ref.Name", oldName),
+					HaveField("Outcome", network.RetireOutcomeReleased),
+					HaveField("Reason", network.RetireReasonReleased),
+				)))
+				Expect(network.RetireRequeueAfter(results)).To(BeZero())
+				Expect(deleteCalls).To(BeEmpty())
+				Expect(exists(objs[1])).To(BeTrue())
+				assertReleased(objs[1])
+			},
+			Entry("not owned by the VM", false),
+			Entry("owned by the VM", true),
+		)
+
+		It("retains one whose attachment an adapter still uses", func() {
+			objs[1] = externalize(objs[1], "eth1", false)
+			info.Adapters = append(info.Adapters, adapter(otherKey, oldPG, oldExtID, "00:50:56:00:00:02"))
+			info.Disposition[otherKey] = network.AdapterDispositionRetiring
+
+			Expect(retire()).To(ConsistOf(And(
+				HaveField("Outcome", network.RetireOutcomeRetained),
+				HaveField("Reason", network.RetireReasonAttachmentInUse),
+			)))
+			Expect(patchCalls).To(BeZero())
+			assertAssociated(objs[1])
+
+			By("releasing it once the hardware no longer uses its attachment", func() {
+				info.Adapters = info.Adapters[:1]
+				delete(info.Disposition, otherKey)
+				Expect(retire()).To(ConsistOf(HaveField("Outcome", network.RetireOutcomeReleased)))
+				assertReleased(objs[1])
+			})
+		})
+
+		It("never releases one that a desired interface references, even while it is Pending", func() {
+			objs[0] = externalize(objs[0], "eth0", false)
+			info.Interfaces[0].Provider.Phase = network.ResolutionPending
+
+			Expect(retire()).To(ConsistOf(And(
+				HaveField("Ref.Name", oldName),
+				HaveField("Outcome", network.RetireOutcomeDeleted),
+			)))
+			Expect(patchCalls).To(BeZero())
+			assertAssociated(objs[0])
+		})
+
+		It("retains it when the VirtualMachine changed after the observation", func() {
+			objs[1] = externalize(objs[1], "eth1", false)
+			start()
+			vm.Generation++
+			Expect(client.Update(ctx, vm)).To(Succeed())
+
+			Expect(retire()).To(ConsistOf(And(
+				HaveField("Outcome", network.RetireOutcomeRetained),
+				HaveField("Reason", network.RetireReasonDesiredChanged),
+			)))
+			Expect(patchCalls).To(BeZero())
+			assertAssociated(objs[1])
+		})
+
+		It("records a failed release for a bounded retry", func() {
+			objs[1] = externalize(objs[1], "eth1", false)
+			funcs.Patch = func(
+				context.Context,
+				ctrlclient.WithWatch,
+				ctrlclient.Object,
+				ctrlclient.Patch,
+				...ctrlclient.PatchOption) error {
+
+				return errors.New("injected patch failure")
+			}
+
+			results := retire()
+			Expect(results).To(ConsistOf(And(
+				HaveField("Outcome", network.RetireOutcomeFailed),
+				HaveField("Reason", network.RetireReasonReleaseFailed),
+			)))
+			Expect(network.RetireRequeueAfter(results)).To(Equal(network.PendingRequeueAfter))
+			Expect(deleteCalls).To(BeEmpty())
+		})
 	})
 
 	It("returns nothing when every owned resource is desired", func() {

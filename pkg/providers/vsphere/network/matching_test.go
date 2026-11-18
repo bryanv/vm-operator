@@ -660,6 +660,51 @@ var _ = Describe("MatchInterfaces", Label(testlabels.API), func() {
 				4002: network.AdapterDispositionUnclaimed,
 			}))
 		})
+
+		Context("an unreferenced external network interface", func() {
+			external := func(name, ifaceLabel, pg string) ctrlclient.Object {
+				obj := orphanNetOP(name, ifaceLabel, pg)
+				obj.Annotations = map[string]string{pkgconst.ExternalNetworkInterfaceAnnotation: "true"}
+				return obj
+			}
+
+			withExternal := func(info *network.Info, objs ...ctrlclient.Object) *network.Info {
+				network.SetInfoExternalObjectsForTest(info, objs)
+				return info
+			}
+
+			It("retires an unclaimed adapter whose external CR belongs to a removed interface", func() {
+				info = withExternal(
+					matchInfo(
+						[]network.InterfaceState{readyIface("eth0", dvpgTarget(matchPGA))},
+						dvpgCard(4000, 7, matchPGA),
+						dvpgCard(4001, 8, matchPGB)),
+					external("byo-b", "eth1", matchPGB))
+				network.MatchInterfaces(ctx, info)
+
+				Expect(info.Disposition).To(Equal(map[int32]network.AdapterDisposition{
+					4000: network.AdapterDispositionClaimed,
+					4001: network.AdapterDispositionRetiring,
+				}))
+			})
+
+			It("claims the adapter of the same-name external CR as a pending replacement", func() {
+				eth0 := phaseIface("eth0", network.ResolutionPending)
+				eth0.Provider.Ref = newCRRef
+
+				info = withExternal(
+					matchInfo(
+						[]network.InterfaceState{eth0},
+						dvpgCard(4000, 7, matchPGB),
+						dvpgCard(4001, 8, matchPGA)),
+					external("byo-a", "eth0", matchPGA))
+				network.MatchInterfaces(ctx, info)
+
+				Expect(info.Interfaces[0].Match.Kind).To(Equal(network.MatchOrphan))
+				Expect(info.Interfaces[0].Match.AdapterKey).To(Equal(int32(4001)))
+				Expect(info.Interfaces[0].AttachmentChange).To(Equal(network.AttachmentChangeReplacement))
+			})
+		})
 	})
 
 	// Spec 017 T018: as in the legacy device reconciliation, the last reported

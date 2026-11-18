@@ -118,15 +118,8 @@ func associateExternalNetworkInterface(
 	obj ctrlclient.Object,
 	interfaceName string) error {
 
-	if vmName := obj.GetLabels()[pkgconst.NetworkInterfaceVMNameLabel]; vmName != "" && vmName != vm.Name {
-		return fmt.Errorf("external network interface %s is associated with VM %s", obj.GetName(), vmName)
-	}
-
-	// A CR owned by this VM, for example after an interface is switched from
-	// managed to external, keeps that ownership. A CR owned by a different VM
-	// is rejected since it is deleted along with that VM.
-	if owner := otherVMOwner(vm, obj); owner != "" {
-		return fmt.Errorf("external network interface %s is owned by VM %s", obj.GetName(), owner)
+	if err := externalNetworkInterfaceInUse(vm, obj); err != nil {
+		return err
 	}
 
 	subnetPort, _ := obj.(*vpcv1alpha1.SubnetPort)
@@ -134,10 +127,6 @@ func associateExternalNetworkInterface(
 	var attachmentRef string
 	if subnetPort != nil {
 		attachmentRef = vpcAttachmentRef(vm, interfaceName)
-		if ref := subnetPort.Annotations[pkgconst.VPCAttachmentRef]; ref != "" &&
-			!strings.HasPrefix(ref, vpcAttachmentRef(vm, "")) {
-			return fmt.Errorf("external SubnetPort %s is attached to %s", subnetPort.Name, ref)
-		}
 	}
 
 	labels, annotations := obj.GetLabels(), obj.GetAnnotations()
@@ -174,6 +163,39 @@ func associateExternalNetworkInterface(
 		ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
 
 		return fmt.Errorf("failed to associate external network interface %s: %w", obj.GetName(), err)
+	}
+
+	return nil
+}
+
+// ErrExternalNetworkInterfaceInUse is wrapped by the error returned when an
+// external network interface CR is associated with, owned by, or attached to
+// a different VM.
+var ErrExternalNetworkInterfaceInUse = errors.New("external network interface is in use by another VM")
+
+// externalNetworkInterfaceInUse returns an error that wraps
+// ErrExternalNetworkInterfaceInUse when the external network interface CR
+// belongs to a VM other than vm. It only reads obj.
+func externalNetworkInterfaceInUse(vm *vmopv1.VirtualMachine, obj ctrlclient.Object) error {
+	if vmName := obj.GetLabels()[pkgconst.NetworkInterfaceVMNameLabel]; vmName != "" && vmName != vm.Name {
+		return fmt.Errorf("%w: external network interface %s is associated with VM %s",
+			ErrExternalNetworkInterfaceInUse, obj.GetName(), vmName)
+	}
+
+	// A CR owned by this VM, for example after an interface is switched from
+	// managed to external, keeps that ownership. A CR owned by a different VM
+	// is rejected since it is deleted along with that VM.
+	if owner := otherVMOwner(vm, obj); owner != "" {
+		return fmt.Errorf("%w: external network interface %s is owned by VM %s",
+			ErrExternalNetworkInterfaceInUse, obj.GetName(), owner)
+	}
+
+	if subnetPort, ok := obj.(*vpcv1alpha1.SubnetPort); ok {
+		if ref := subnetPort.Annotations[pkgconst.VPCAttachmentRef]; ref != "" &&
+			!strings.HasPrefix(ref, vpcAttachmentRef(vm, "")) {
+			return fmt.Errorf("%w: external SubnetPort %s is attached to %s",
+				ErrExternalNetworkInterfaceInUse, subnetPort.Name, ref)
+		}
 	}
 
 	return nil

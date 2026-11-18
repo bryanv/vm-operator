@@ -7,6 +7,7 @@ package network
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/vmware/govmomi/object"
@@ -117,8 +118,8 @@ type matcher struct {
 	// numbered marks the interfaces that are matched only by unit number.
 	numbered []bool
 
-	// orphans are the VM-owned provider resources that no desired interface
-	// references.
+	// orphans are the VM-owned provider resources and associated external
+	// network interfaces that no desired interface references.
 	orphans []ctrlclient.Object
 
 	// retiringByRecord holds the adapters whose record names an interface
@@ -147,13 +148,14 @@ func newMatcher(ctx context.Context, info *Info) *matcher {
 	return m
 }
 
-// orphanedObjects returns the VM-owned provider resources that no desired
-// interface references. A resource is keyed by its provider type and name, so
-// resources with the same name from different network providers are distinct.
-// Every desired interface takes part, including the Pending, Failed, and
-// Unknown ones.
+// orphanedObjects returns the VM-owned provider resources and the external
+// network interfaces associated with the VM that no desired interface
+// references. A resource is keyed by its provider type and name, so resources
+// with the same name from different network providers are distinct. Every
+// desired interface takes part, including the Pending, Failed, and Unknown
+// ones.
 func orphanedObjects(info *Info) []ctrlclient.Object {
-	if len(info.owned) == 0 {
+	if len(info.owned) == 0 && len(info.external) == 0 {
 		return nil
 	}
 
@@ -165,7 +167,7 @@ func orphanedObjects(info *Info) []ctrlclient.Object {
 	}
 
 	var orphans []ctrlclient.Object
-	for _, obj := range info.owned {
+	for _, obj := range append(slices.Clip(info.owned), info.external...) {
 		key := qualifiedInterfaceKey(providerTypeOf(obj), obj.GetName())
 		if _, ok := referenced[key]; !ok {
 			orphans = append(orphans, obj)

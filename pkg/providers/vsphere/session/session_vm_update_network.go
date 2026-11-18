@@ -228,8 +228,9 @@ func (s *Session) finishNetwork(
 		bootstrapArgs)
 }
 
-// retireNetworkResources retires the VM-owned provider resources that no
-// desired interface references, with network.RetireProviderResources, and
+// retireNetworkResources retires the VM-owned provider resources, and
+// releases the associated external network interfaces, that no desired
+// interface references, with network.RetireProviderResources, and
 // stores the results on st.
 //
 // It runs at the end of every powered-on or powered-off update pass that
@@ -258,6 +259,9 @@ func (s *Session) retireNetworkResources(
 		switch r.Outcome {
 		case network.RetireOutcomeDeleted:
 			vmCtx.Logger.Info("Deleted unused network provider resource",
+				"type", r.Ref.Type, "name", r.Ref.Name, "uid", r.Ref.UID)
+		case network.RetireOutcomeReleased:
+			vmCtx.Logger.Info("Released unused external network interface",
 				"type", r.Ref.Type, "name", r.Ref.Name, "uid", r.Ref.UID)
 		case network.RetireOutcomeFailed:
 			vmCtx.Logger.Error(r.Err, "Failed to retire unused network provider resource",

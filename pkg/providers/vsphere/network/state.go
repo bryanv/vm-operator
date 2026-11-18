@@ -531,7 +531,14 @@ type Info struct {
 	Disposition map[int32]AdapterDisposition
 
 	// Owned is the list of VM-owned provider resources from the list call.
+	// It never includes an external network interface.
 	Owned []ProviderRef
+
+	// External is the list of external network interfaces associated with
+	// the VM from the list call. VM Operator never deletes these; it only
+	// releases them once no interface references them. It is empty when the
+	// BringYourOwnNetworkInterface capability is disabled.
+	External []ProviderRef
 
 	// Complete is true when every read needed to build this snapshot
 	// succeeded.
@@ -539,6 +546,9 @@ type Info struct {
 
 	// owned holds the raw provider resources listed for Owned.
 	owned []ctrlclient.Object
+
+	// external holds the raw provider resources listed for External.
+	external []ctrlclient.Object
 }
 
 // InterfaceState holds everything known about one desired interface in one

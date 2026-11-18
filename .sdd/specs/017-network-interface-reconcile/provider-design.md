@@ -525,6 +525,23 @@ A CR in `info.Owned` is deleted only when all of these hold:
 
 Deletion uses `ctrlclient.Preconditions{UID: &uid, ResourceVersion: &rv}`, so a newer object that reused the name is never deleted. `NotFound` counts as success; any other failure becomes a Failed `RetireResult` for the cleanup condition and a deferred requeue. Retained results do not requeue: the hardware, spec, or provider change that releases them triggers a reconcile.
 
+### External network interfaces (spec 016)
+
+An interface with an `externalRef` ([spec 016](../016-byo-network-interface/spec.md)) resolves through the same `Observe`/`Prepare` collector as a managed interface. The referenced CR is read by its name in the VM namespace and decoded with the same provider-specific status decoding, so matching, planning, readiness, and status treat it exactly like a managed CR. Its `ProviderRef` always carries the provider type and the referenced name. `Prepare` never creates or patches the CR beyond associating it with the VM (the VM-name and interface-name labels, the external annotation, and for VPC the attachment annotation). `Observe` only reads it.
+
+| External CR state | Resolution |
+|---|---|
+| Capability disabled | `Failed`/`InvalidInterfaceSpec` |
+| Not found | `Pending`/`ProviderResourceNotFound`, bounded retry; the reference watch also wakes the VM |
+| Being deleted | `Pending`/`ExternalInterfaceDeleting`, never associated; the CR is kept as matching evidence |
+| Labeled for, owned by, or VPC-attached to another VM | `Failed`/`ExternalInterfaceInUse` in both `Observe` and `Prepare`; the other VM's release wakes this VM through the reference watch |
+| Association patch failed | `Unknown`/`EnsureFailed` |
+| Otherwise | The provider's decoded status, as for a managed CR |
+
+The listing is a single labeled list split into `Info.Owned` (VM-owned, never external) and `Info.External` (associated external CRs, only when the capability is enabled). An external CR is never in `Owned`, even when this VM owns it after an interface switched from managed to external. Unreferenced `External` CRs join the unreferenced `Owned` CRs as orphan matching evidence, so an adapter that still carries a removed external CR's attachment is `Retiring`, and a same-name switch between CRs is a replacement.
+
+`RetireProviderResources` applies the same candidate and retention rules to an unreferenced external CR, including the VM re-read, but releases it instead of deleting it: `ReleaseExternalNetworkInterface` removes only the association metadata with an optimistic lock on the observed resource version, so it never strips another VM's newer association. The outcome is `Released`; a failure is `Failed`/`ReleaseFailed` with the bounded retry. This replaces the powered-off-only `ListAllOrphanedNetworkInterfaces` release from spec 016's original update path. Release on VM deletion is unchanged (`ReleaseAllExternalNetworkInterfaces` after the VM is gone from vCenter).
+
 ## Errors and requeue
 
 | Situation | Returned from the config phase | Effect |

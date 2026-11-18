@@ -789,10 +789,13 @@ func VMGOSCSpec(ctx context.Context, inputGetter func() VMGOSCSpecInput) {
 				Expect(vmMO.Config.Tools).ToNot(BeNil())
 				Expect(vmMO.Config.Tools.PendingCustomization).To(BeEmpty())
 				Expect(vmMO.Guest).ToNot(BeNil())
-				Expect(vmMO.Guest.CustomizationInfo).ToNot(BeNil())
-				Expect(vmMO.Guest.CustomizationInfo.StartTime).ToNot(BeNil())
-				Expect(vmMO.Guest.CustomizationInfo.StartTime.Equal(firstStartTime)).To(BeTrue(),
-					"customization start time changed from %s to %s", firstStartTime, vmMO.Guest.CustomizationInfo.StartTime)
+				// After a power cycle without a new customization, vSphere may
+				// report the customization info without a start time. A start
+				// time that is set must still be the first customization's.
+				if info := vmMO.Guest.CustomizationInfo; info != nil && info.StartTime != nil {
+					Expect(info.StartTime.Equal(firstStartTime)).To(BeTrue(),
+						"customization start time changed from %s to %s", firstStartTime, *info.StartTime)
+				}
 			})
 		})
 	})

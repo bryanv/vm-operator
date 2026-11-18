@@ -652,7 +652,7 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 	It("Should power off but not power on a VM with a pending network interface", Label("experimental"), func() {
 		skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
 
-		const pendingInterfaceName = "eth-pending"
+		const pendingInterfaceName = "ethpending"
 		missingNetworkName := fmt.Sprintf("%s-missing-%s", specName, capiutil.RandomString(4))
 
 		vmToCreate := &vmopv1a2.VirtualMachine{
@@ -853,7 +853,7 @@ func VMNetworkSpec(ctx context.Context, inputGetter func() VMNetworkSpecInput) {
 			skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.MutableNetworksCapabilityName)
 			skipper.SkipUnlessSupervisorCapabilityEnabled(config.SupervisorCapabilities, consts.NetworkHotPlugCapabilityName)
 
-			const pendingInterfaceName = "eth-pending"
+			const pendingInterfaceName = "ethpending"
 			missingNetworkName := fmt.Sprintf("%s-missing-%s", specName, capiutil.RandomString(4))
 
 			vmToCreate := &vmopv1a2.VirtualMachine{

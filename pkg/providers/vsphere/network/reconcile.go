@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	govmomifault "github.com/vmware/govmomi/fault"
 	"github.com/vmware/govmomi/object"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -317,39 +316,4 @@ func ethCardMatchesDesired(ethDev, curDev *vimtypes.VirtualEthernetCard) bool {
 	}
 
 	return false
-}
-
-// nicUnitNumberCollisionProperty is the InvalidDeviceSpec Property value
-// vSphere reports when an explicit NIC unit number collides with an occupied
-// slot (T001 Q4/E08).
-const nicUnitNumberCollisionProperty = "unitNumber"
-
-// IsNICUnitNumberCollisionFault reports whether err is the fault vSphere
-// returns when an explicit NIC unit number collides with an already-occupied
-// slot: InvalidDeviceSpec with Property "unitNumber" (T001 Q4/E08, recorded
-// against a real vCenter and matching vcsim's simulated fault type).
-//
-// Such a collision is a PERMANENT error, not a retryable one: retrying an
-// unchanged colliding payload faults identically forever. Callers should
-// surface it as pkgerr.NoRequeueError. The classification is wired into the
-// session package's doReconfigure (session_vm_update.go), the shared
-// reconfigure entry that executes the ConfigSpec carrying the ethernet device
-// changes computed here.
-//
-// Note the deliberately narrow shape: an out-of-range unit number below the
-// ethernet band may be silently renumbered by vSphere rather than faulted,
-// and above the band it faults with InvalidArgument (T001 E19) — neither is
-// a collision, and neither matches here.
-func IsNICUnitNumberCollisionFault(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	var spec *vimtypes.InvalidDeviceSpec
-	if _, ok := govmomifault.As(err, &spec); !ok {
-		return false
-	}
-
-	// vSphere reports the property exactly as "unitNumber"; compare exactly.
-	return spec.Property == nicUnitNumberCollisionProperty
 }

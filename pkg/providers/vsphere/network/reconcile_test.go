@@ -6,13 +6,11 @@ package network_test
 
 import (
 	"context"
-	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/vmware/govmomi/object"
-	"github.com/vmware/govmomi/task"
 	vimtypes "github.com/vmware/govmomi/vim25/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -568,60 +566,6 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 			addDC := dcs[1].GetVirtualDeviceConfigSpec()
 			Expect(addDC.Operation).To(Equal(vimtypes.VirtualDeviceConfigSpecOperationAdd))
 			Expect(addDC.Device.GetVirtualDevice().UnitNumber).To(BeNil())
-		})
-
-		Describe("IsNICUnitNumberCollisionFault", func() {
-
-			It("classifies an InvalidDeviceSpec fault carrying the unitNumber property", func() {
-				// A BaseMethodFault is not itself an error: the fault always
-				// arrives wrapped, minimally in task.Error's
-				// LocalizedMethodFault as returned by a faulted task.
-				collision := &vimtypes.InvalidDeviceSpec{}
-				collision.Property = "unitNumber" // promoted field of InvalidVmConfig
-				Expect(network.IsNICUnitNumberCollisionFault(task.Error{
-					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{Fault: collision},
-				})).To(BeTrue())
-			})
-
-			It("classifies the fault the way govmomi surfaces task errors", func() {
-				// Mirror govmomi's own fault_test.go shape: task.Error carrying
-				// a LocalizedMethodFault, as returned by a faulted ReconfigVM_Task.
-				collision := &vimtypes.InvalidDeviceSpec{}
-				collision.Property = "unitNumber" // promoted field of InvalidVmConfig
-				taskErr := task.Error{
-					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{
-						LocalizedMessage: "A specified parameter was not correct: unitNumber",
-						Fault:            collision,
-					},
-				}
-				Expect(network.IsNICUnitNumberCollisionFault(taskErr)).To(BeTrue())
-
-				// And wrapped by intermediate layers with %w.
-				wrapped := fmt.Errorf("failed to reconfigure vm: %w", taskErr)
-				Expect(network.IsNICUnitNumberCollisionFault(wrapped)).To(BeTrue())
-			})
-
-			It("does not classify a different InvalidDeviceSpec property", func() {
-				other := &vimtypes.InvalidDeviceSpec{}
-				other.Property = "slotInfo"
-				Expect(network.IsNICUnitNumberCollisionFault(task.Error{
-					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{Fault: other},
-				})).To(BeFalse())
-			})
-
-			It("does not classify an out-of-range InvalidArgument fault (T001 E19)", func() {
-				invalidArg := &vimtypes.InvalidArgument{}
-				invalidArg.InvalidProperty = "unitNumber"
-				Expect(network.IsNICUnitNumberCollisionFault(task.Error{
-					LocalizedMethodFault: &vimtypes.LocalizedMethodFault{Fault: invalidArg},
-				})).To(BeFalse())
-			})
-
-			It("does not classify nil or non-fault errors", func() {
-				Expect(network.IsNICUnitNumberCollisionFault(nil)).To(BeFalse())
-				Expect(network.IsNICUnitNumberCollisionFault(
-					fmt.Errorf("some transport error"))).To(BeFalse())
-			})
 		})
 
 		It("numbered miss does NOT fall through to a backing match or orphaned-CR edit", func() {

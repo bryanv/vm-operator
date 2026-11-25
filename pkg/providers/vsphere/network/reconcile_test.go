@@ -381,6 +381,106 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 		})
 	})
 
+	Describe("AssignEthCardMacAddresses", func() {
+
+		var unitNumbersEnabled bool
+
+		BeforeEach(func() {
+			unitNumbersEnabled = true
+		})
+
+		run := func(results *network.NetworkInterfaceResults, devs object.VirtualDeviceList) {
+			ctx := pkgcfg.WithConfig(pkgcfg.Config{
+				Features: pkgcfg.FeatureStates{VMNetworkUnitNumbers: unitNumbersEnabled},
+			})
+			network.AssignEthCardMacAddresses(ctx, results, devs)
+		}
+
+		It("does not let an earlier un-numbered result take a numbered result's device", func() {
+			// Both results are new Adds on the same network. In spec order the
+			// un-numbered eth0 comes first and would backing-match eth1's
+			// device at unit 9 if claims were made in a single pass.
+			results := &network.NetworkInterfaceResults{
+				Devices: []network.Device{
+					result("eth0", ethCard(0, nil, generated, "", "", netBacking(netA)), nil),
+					result("eth1", ethCard(0, ptr.To(int32(9)), generated, "", "", netBacking(netA)), ptr.To(int32(9))),
+				},
+			}
+			devs := object.VirtualDeviceList{
+				ethCard(4009, ptr.To(int32(9)), generated, "aa:bb:cc:dd:ee:09", "", netBacking(netA)),
+				ethCard(4007, ptr.To(int32(7)), generated, "aa:bb:cc:dd:ee:07", "", netBacking(netA)),
+			}
+
+			run(results, devs)
+
+			Expect(results.Devices[1].EthCardKey).To(Equal(int32(4009)))
+			Expect(results.Devices[1].MacAddress).To(Equal("aa:bb:cc:dd:ee:09"))
+			Expect(results.Devices[0].EthCardKey).To(Equal(int32(4007)))
+			Expect(results.Devices[0].MacAddress).To(Equal("aa:bb:cc:dd:ee:07"))
+		})
+
+		It("does not let an earlier un-numbered result take a device another result knows by key", func() {
+			results := &network.NetworkInterfaceResults{
+				Devices: []network.Device{
+					result("eth0", ethCard(0, nil, generated, "", "", netBacking(netA)), nil),
+					{
+						InterfaceName: "eth1",
+						EthCard:       ethCard(0, nil, generated, "", "", netBacking(netA)),
+						EthCardKey:    4007,
+					},
+				},
+			}
+			devs := object.VirtualDeviceList{
+				ethCard(4007, ptr.To(int32(7)), generated, "aa:bb:cc:dd:ee:07", "", netBacking(netA)),
+				ethCard(4008, ptr.To(int32(8)), generated, "aa:bb:cc:dd:ee:08", "", netBacking(netA)),
+			}
+
+			run(results, devs)
+
+			Expect(results.Devices[1].MacAddress).To(Equal("aa:bb:cc:dd:ee:07"))
+			Expect(results.Devices[0].EthCardKey).To(Equal(int32(4008)))
+			Expect(results.Devices[0].MacAddress).To(Equal("aa:bb:cc:dd:ee:08"))
+		})
+
+		It("leaves a numbered result unmatched when no device is at its unit number", func() {
+			results := &network.NetworkInterfaceResults{
+				Devices: []network.Device{
+					result("eth0", ethCard(0, ptr.To(int32(9)), generated, "", "", netBacking(netA)), ptr.To(int32(9))),
+				},
+			}
+			devs := object.VirtualDeviceList{
+				ethCard(4007, ptr.To(int32(7)), generated, "aa:bb:cc:dd:ee:07", "", netBacking(netA)),
+			}
+
+			run(results, devs)
+
+			Expect(results.Devices[0].EthCardKey).To(BeZero())
+			Expect(results.Devices[0].MacAddress).To(BeEmpty())
+		})
+
+		When("VMNetworkUnitNumbers is disabled", func() {
+			BeforeEach(func() {
+				unitNumbersEnabled = false
+			})
+
+			It("matches by backing and ignores unit numbers", func() {
+				results := &network.NetworkInterfaceResults{
+					Devices: []network.Device{
+						result("eth0", ethCard(0, nil, generated, "", "", netBacking(netA)), ptr.To(int32(9))),
+					},
+				}
+				devs := object.VirtualDeviceList{
+					ethCard(4007, ptr.To(int32(7)), generated, "aa:bb:cc:dd:ee:07", "", netBacking(netA)),
+				}
+
+				run(results, devs)
+
+				Expect(results.Devices[0].EthCardKey).To(Equal(int32(4007)))
+				Expect(results.Devices[0].MacAddress).To(Equal("aa:bb:cc:dd:ee:07"))
+			})
+		})
+	})
+
 	Describe("two-pass claim and compare-then-replace", func() {
 
 		var (

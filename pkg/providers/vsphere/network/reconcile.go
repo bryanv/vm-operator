@@ -208,6 +208,76 @@ func ReconcileNetworkInterfaces(
 	return append(append(replaceRemoves, removeDeviceChanges...), deviceChanges...), nil
 }
 
+// AssignEthCardMacAddresses fills in each result's MacAddress, and its
+// EthCardKey when not already known, from the VM's ethernet devices as read
+// back after the Reconfigure that applied ReconcileNetworkInterfaces' device
+// changes.
+//
+// Devices are claimed in three passes, from most to least specific, so that a
+// less specific match cannot take a device a later result owns:
+//
+//  1. Results that already know their device key, by key.
+//  2. Numbered results (VMNetworkUnitNumbers enabled), by exact unit number
+//     only. This is how a replaced or newly-added device is re-identified.
+//  3. The remaining results, by MAC/ExternalID/backing.
+//
+// A single greedy pass in spec order would let an un-numbered result claim,
+// by backing, the device a later numbered result declares as its identity,
+// leaving the numbered result without a MAC.
+func AssignEthCardMacAddresses(
+	ctx context.Context,
+	results *NetworkInterfaceResults,
+	networkDevices object.VirtualDeviceList,
+) {
+	unitNumbersEnabled := pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers
+	handled := make([]bool, len(results.Devices))
+
+	claim := func(idx, matchingIdx int) {
+		matchDev := networkDevices[matchingIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+		results.Devices[idx].EthCardKey = matchDev.Key
+		results.Devices[idx].MacAddress = matchDev.MacAddress
+		networkDevices = slices.Delete(networkDevices, matchingIdx, matchingIdx+1)
+	}
+
+	// Pass 1: results that already know their device key.
+	for idx, dev := range results.Devices {
+		if dev.EthCardKey == 0 {
+			continue
+		}
+		handled[idx] = true
+		matchingIdx := slices.IndexFunc(networkDevices,
+			func(d vimtypes.BaseVirtualDevice) bool { return d.GetVirtualDevice().Key == dev.EthCardKey })
+		if matchingIdx >= 0 {
+			claim(idx, matchingIdx)
+		}
+	}
+
+	// Pass 2: numbered results, by exact unit number only.
+	if unitNumbersEnabled {
+		for idx, dev := range results.Devices {
+			if handled[idx] || dev.UnitNumber == nil {
+				continue
+			}
+			handled[idx] = true
+			matchingIdx := FindMatchingEthCard(networkDevices, dev.EthCard.(vimtypes.BaseVirtualEthernetCard), dev.UnitNumber)
+			if matchingIdx >= 0 {
+				claim(idx, matchingIdx)
+			}
+		}
+	}
+
+	// Pass 3: the remaining results, by MAC/ExternalID/backing.
+	for idx, dev := range results.Devices {
+		if handled[idx] {
+			continue
+		}
+		matchingIdx := FindMatchingEthCard(networkDevices, dev.EthCard.(vimtypes.BaseVirtualEthernetCard), nil)
+		if matchingIdx >= 0 {
+			claim(idx, matchingIdx)
+		}
+	}
+}
+
 // findExistingEthCardForOrphanedCR tries to an orphaned interface and if it has
 // a matching current ethernet card, so the existing device can be edited as to
 // keep the device type (ie, E1000) the same.

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -948,36 +947,7 @@ func (s *Session) fixupMacAddressMutableNetworks(
 		return err
 	}
 
-	for idx, dev := range networkResults.Devices {
-		if dev.EthCardKey != 0 {
-			matchingIdx := slices.IndexFunc(networkDevices,
-				func(d vimtypes.BaseVirtualDevice) bool { return d.GetVirtualDevice().Key == dev.EthCardKey })
-			if matchingIdx >= 0 {
-				matchDev := networkDevices[matchingIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-				networkResults.Devices[idx].MacAddress = matchDev.MacAddress
-				networkDevices = slices.Delete(networkDevices, matchingIdx, matchingIdx+1)
-			}
-			continue
-		}
-
-		// Pass the result's unit number so the fixup re-identifies devices
-		// with the same exact-slot-only semantics as the reconcile pass. For
-		// a replaced device (EthCardKey zero, UpdatedEthCards set), this is how
-		// the NEWLY-added device — not the removed one — is located by its
-		// unit number, and its MAC learned.
-		var unitNumber *int32
-		if pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
-			unitNumber = dev.UnitNumber
-		}
-		matchingIdx := network.FindMatchingEthCard(networkDevices, dev.EthCard.(vimtypes.BaseVirtualEthernetCard), unitNumber)
-		if matchingIdx >= 0 {
-			matchDev := networkDevices[matchingIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-			networkResults.Devices[idx].EthCardKey = matchDev.Key
-			networkResults.Devices[idx].MacAddress = matchDev.MacAddress
-
-			networkDevices = slices.Delete(networkDevices, matchingIdx, matchingIdx+1)
-		}
-	}
+	network.AssignEthCardMacAddresses(ctx, networkResults, networkDevices)
 
 	return nil
 }

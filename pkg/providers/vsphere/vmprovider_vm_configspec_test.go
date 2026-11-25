@@ -806,6 +806,32 @@ func vmConfigSpecTests() {
 			})
 		})
 
+		When("the class device is SR-IOV and the spec declares a unit number", func() {
+			BeforeEach(func() {
+				withClassEthCard(nil)
+				configSpec.DeviceChange[0].GetVirtualDeviceConfigSpec().Device = &vimtypes.VirtualSriovEthernetCard{
+					VirtualEthernetCard: ethCard,
+				}
+
+				enableUnitNumbers = true
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: dvpgName},
+						UnitNumber: ptr.To(int32(9)),
+					},
+				}
+			})
+
+			It("the spec unit number is not stamped on the SR-IOV device", func() {
+				setInterfacesAndCreate()
+
+				ethDevs := ethDevicesByMAC()
+				Expect(ethDevs).To(HaveKey(classMAC))
+				Expect(ethDevs[classMAC].GetVirtualDevice().UnitNumber).ToNot(Equal(ptr.To(int32(9))))
+			})
+		})
+
 		When("the spec has no unit number and the class device has one", func() {
 			BeforeEach(func() {
 				withClassEthCard(ptr.To(int32(8)))

@@ -3320,6 +3320,12 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 			interfaceSpec := vmCtx.VM.Spec.Network.Interfaces[devIdx]
 
 			if interfaceSpec.Type == "" {
+				if _, ok := spec.Device.(*vimtypes.VirtualSriovEthernetCard); ok {
+					// SR-IOV stop-gap, until full SR-IOV support lands: SR-IOV
+					// cards sit outside the ethernet unit-number band, so do
+					// not stamp the interface's unit number onto one.
+					dev.UnitNumber = nil
+				}
 				ethCard := spec.Device.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
 				if err := network.UpdateVMClassEthCardFromDevice(vmCtx, dev, ethCard); err != nil {
 					return err

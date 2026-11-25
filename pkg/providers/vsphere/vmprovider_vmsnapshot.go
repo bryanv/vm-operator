@@ -746,8 +746,11 @@ func getVMYamlFromSnapshotFromSynthesizedSpec(
 			// slot can cost the interface its device. Like every other
 			// unitNumber write path, this is gated on the feature flag so the
 			// field does not appear while the feature is disabled.
+			// SR-IOV cards are skipped until full SR-IOV support lands: their
+			// unit numbers sit outside the range the webhook admits.
 			if pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers {
-				if u := vNICs[i].GetVirtualDevice().UnitNumber; u != nil {
+				_, isSRIOV := vNICs[i].(*vimtypes.VirtualSriovEthernetCard)
+				if u := vNICs[i].GetVirtualDevice().UnitNumber; u != nil && !isSRIOV {
 					iface.UnitNumber = ptr.To(*u)
 				}
 			}

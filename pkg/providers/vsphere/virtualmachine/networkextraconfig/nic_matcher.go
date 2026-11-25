@@ -78,6 +78,10 @@ func DefaultNICMatcher(
 	// has no device claims nothing: it resolves to nil at call time, never
 	// to a zipped stranger.
 	for i := range interfaces {
+		if !isEthernetInterfaceType(interfaces[i].Type) {
+			// Resolves to nil at call time, so must not reserve a device.
+			continue
+		}
 		if u := interfaces[i].UnitNumber; u != nil {
 			if j, ok := unitToIdx[*u]; ok {
 				reserved[j] = true

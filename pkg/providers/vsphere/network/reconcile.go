@@ -112,6 +112,22 @@ func ReconcileNetworkInterfaces(
 			continue
 		}
 
+		// SR-IOV stop-gap, until full SR-IOV support lands: SR-IOV cards sit
+		// outside the ethernet unit-number band, so a numbered interface
+		// whose device is an SR-IOV card always misses at its slot. The
+		// interface type cannot be relied on to exclude these (it is often
+		// unset for an SR-IOV NIC from a class ConfigSpec), so instead adopt
+		// an SR-IOV card that matches by backing/MAC/ExternalID, as was done
+		// before unit numbers, rather than replacing it with a new card.
+		if sriovIdx := findMatchingSriovEthCard(currentEthCards, ethCard); sriovIdx >= 0 {
+			matchDev := currentEthCards[sriovIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+			results.Devices[idx].EthCardKey = matchDev.Key
+			results.Devices[idx].MacAddress = matchDev.MacAddress
+			ethCard.GetVirtualEthernetCard().MacAddress = matchDev.MacAddress
+			currentEthCards = slices.Delete(currentEthCards, sriovIdx, sriovIdx+1)
+			continue
+		}
+
 		// Miss at the declared slot: a plain Add of the desired device,
 		// already stamped with the declared unit number above. The
 		// interface's old device — if unclaimed by any other result — is
@@ -272,6 +288,28 @@ func FindMatchingEthCard(
 	for idx := range currentEthCards {
 		curDev := currentEthCards[idx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
 		if ethCardMatchesDesired(ethDev, curDev) {
+			return idx
+		}
+	}
+
+	return -1
+}
+
+// findMatchingSriovEthCard returns the index of the first SR-IOV card in
+// currentEthCards that matches the desired ethCard by backing, MAC, and
+// ExternalID (see ethCardMatchesDesired), or -1 if there is none.
+func findMatchingSriovEthCard(
+	currentEthCards object.VirtualDeviceList,
+	ethCard vimtypes.BaseVirtualEthernetCard,
+) int {
+	ethDev := ethCard.GetVirtualEthernetCard()
+
+	for idx := range currentEthCards {
+		sriovDev, ok := currentEthCards[idx].(*vimtypes.VirtualSriovEthernetCard)
+		if !ok {
+			continue
+		}
+		if ethCardMatchesDesired(ethDev, sriovDev.GetVirtualEthernetCard()) {
 			return idx
 		}
 	}

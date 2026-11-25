@@ -200,6 +200,24 @@ var _ = Describe("DefaultNICMatcher unit numbers", func() {
 		Expect(dev1.GetVirtualDevice().Key).To(Equal(int32(4000)))
 	})
 
+	It("does not let a numbered SR-IOV interface reserve a device", func() {
+		hwDevs := []vimtypes.BaseVirtualDevice{newVMXNet3DevWithUnit(4000, 7)}
+		interfaces := []vmopv1.VirtualMachineNetworkInterfaceSpec{
+			{
+				Name:       "eth0",
+				Type:       vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV,
+				UnitNumber: ptr.To(int32(7)),
+			},
+			{Name: "eth1"},
+		}
+		matcher := networkextraconfig.DefaultNICMatcher(hwDevs, interfaces, true)
+
+		Expect(matcher(interfaces[0], 0)).To(BeNil())
+		dev1 := matcher(interfaces[1], 1)
+		Expect(dev1).ToNot(BeNil())
+		Expect(dev1.GetVirtualDevice().Key).To(Equal(int32(4000)))
+	})
+
 	It("ignores unit numbers entirely when the flag is off", func() {
 		hwDevs := []vimtypes.BaseVirtualDevice{
 			newVMXNet3DevWithUnit(4000, 8),

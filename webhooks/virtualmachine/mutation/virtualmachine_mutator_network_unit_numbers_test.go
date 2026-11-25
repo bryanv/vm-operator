@@ -205,6 +205,23 @@ var _ = Describe(
 					ptr.To(int32(7)))
 			})
 
+			It("should not assign a unit number to an SR-IOV interface", func() {
+				setInterfaces(nil, nil, nil)
+				vm.Spec.Network.Interfaces[1].Type = vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
+				expectMutationSuccess()
+				expectUnitNumbers(
+					ptr.To(int32(7)),
+					nil,
+					ptr.To(int32(8)))
+			})
+
+			It("should not mutate when the only unnumbered interface is SR-IOV", func() {
+				setInterfaces(nil)
+				vm.Spec.Network.Interfaces[0].Type = vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
+				expectNoMutation()
+				expectUnitNumbers(nil)
+			})
+
 			It("should assign the remainder around an explicit value in the middle of the list", func() {
 				setInterfaces(nil, ptr.To(int32(8)), nil)
 				expectMutationSuccess()

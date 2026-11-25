@@ -425,6 +425,49 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 			Expect(dev.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard().MacAddress).To(Equal(curMAC))
 		})
 
+		It("adopts a backing-matching SR-IOV card on a slot miss instead of replacing it", func() {
+			dev := ethCard(0, ptr.To(int32(7)), generated, "", "", netBacking(netA))
+			sriovMAC := "aa:bb:cc:dd:ee:01"
+			cards = object.VirtualDeviceList{
+				&vimtypes.VirtualSriovEthernetCard{
+					VirtualEthernetCard: vimtypes.VirtualEthernetCard{
+						VirtualDevice: vimtypes.VirtualDevice{
+							Key:        4100,
+							UnitNumber: ptr.To(int32(45)),
+							Backing:    netBacking(netA),
+						},
+						AddressType: generated,
+						MacAddress:  sriovMAC,
+					},
+				},
+			}
+			results.Devices = []network.Device{
+				result("eth0", dev, ptr.To(int32(7))),
+			}
+
+			dcs := run()
+			Expect(dcs).To(BeEmpty())
+			Expect(results.UpdatedEthCards).To(BeFalse())
+			Expect(results.Devices[0].EthCardKey).To(Equal(int32(4100)))
+			Expect(results.Devices[0].MacAddress).To(Equal(sriovMAC))
+		})
+
+		It("does not adopt a non-SR-IOV card on a slot miss", func() {
+			dev := ethCard(0, ptr.To(int32(7)), generated, "", "", netBacking(netA))
+			cards = object.VirtualDeviceList{
+				ethCard(4008, ptr.To(int32(8)), generated, "aa:bb:cc:dd:ee:08", "", netBacking(netA)),
+			}
+			results.Devices = []network.Device{
+				result("eth0", dev, ptr.To(int32(7))),
+			}
+
+			dcs := run()
+			Expect(ops(dcs)).To(Equal([]vimtypes.VirtualDeviceConfigSpecOperation{
+				vimtypes.VirtualDeviceConfigSpecOperationRemove,
+				vimtypes.VirtualDeviceConfigSpecOperationAdd,
+			}))
+		})
+
 		It("replaces when the backing differs; Remove precedes the Add at the same unit", func() {
 			dev := ethCard(0, ptr.To(int32(9)), generated, "", "", netBacking(netA))
 			cards = object.VirtualDeviceList{

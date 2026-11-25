@@ -75,12 +75,16 @@ func MutateNICUnitNumbersOnUpdate(
 	)
 
 	// First phase: reserve the slots of every interface that carries an
-	// explicit unit number, and collect the remainder.
+	// explicit unit number, and collect the remainder. SR-IOV interfaces are
+	// not assigned a unit number until full SR-IOV support lands: SR-IOV
+	// cards sit outside the 7-16 ethernet-card band.
 	for i := range vm.Spec.Network.Interfaces {
 		iface := &vm.Spec.Network.Interfaces[i]
-		if iface.UnitNumber != nil {
+		switch {
+		case iface.UnitNumber != nil:
 			occupiedSlots.Insert(*iface.UnitNumber)
-		} else {
+		case iface.Type == vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV:
+		default:
 			unnumbered = append(unnumbered, iface)
 		}
 	}

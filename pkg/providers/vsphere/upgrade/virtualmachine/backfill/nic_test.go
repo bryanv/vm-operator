@@ -1046,7 +1046,7 @@ var _ = Describe("NICUnitNumbersFromMoVM", func() {
 		return builder.NewFakeClient()
 	}
 
-	const ambiguousEventMsgPrefix = "Warning NICUnitNumberBackfillAmbiguous Observed unit numbers were recorded for the following network interfaces by positional matching rather than a unique match, and may be assigned incorrectly: "
+	const ambiguousEventMsgPrefix = "Warning NICUnitNumberBackfillAmbiguous Observed unit numbers or types were recorded for the following network interfaces by positional matching rather than a unique match, and may be assigned incorrectly: "
 
 	const (
 		mac1 = "aa:bb:cc:dd:ee:01"
@@ -1468,27 +1468,128 @@ var _ = Describe("NICUnitNumbersFromMoVM", func() {
 			Expect(rec.Events).To(BeEmpty())
 		})
 
-		It("SR-IOV devices are not zip candidates", func() {
-			vm = &vmopv1.VirtualMachine{
+		// zipSRIOVCard creates an SR-IOV card, key 4000, with no network backing, so
+		// only the zip can pair it. SR-IOV cards sit outside the 7-16 band.
+		zipSRIOVCard := func() vimtypes.BaseVirtualDevice {
+			dev := &vimtypes.VirtualSriovEthernetCard{}
+			dev.Key = 4000
+			dev.UnitNumber = ptr.To(int32(45))
+			return dev
+		}
+
+		zipVM := func(ifaces ...vmopv1.VirtualMachineNetworkInterfaceSpec) *vmopv1.VirtualMachine {
+			return &vmopv1.VirtualMachine{
 				Spec: vmopv1.VirtualMachineSpec{
-					Network: &vmopv1.VirtualMachineNetworkSpec{
-						Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
-							ifaceWith("eth0", "", nil),
-						},
-					},
+					Network: &vmopv1.VirtualMachineNetworkSpec{Interfaces: ifaces},
 				},
 			}
-			sriov := &vimtypes.VirtualSriovEthernetCard{}
-			sriov.Key = 4000
-			sriov.UnitNumber = ptr.To(int32(7))
+		}
+
+		withType := func(
+			iface vmopv1.VirtualMachineNetworkInterfaceSpec,
+			t vmopv1.VirtualMachineNetworkInterfaceType) vmopv1.VirtualMachineNetworkInterfaceSpec {
+
+			iface.Type = t
+			return iface
+		}
+
+		It("an SR-IOV card holds its place, and an untyped interface on it gets type SRIOV", func() {
+			vm = zipVM(ifaceWith("eth0", "", nil), ifaceWith("eth1", "", nil))
 			moVM = moVMWithEthDevs(
-				sriov,
+				zipSRIOVCard(),
 				ethCardWithUnit(4001, mac1, netName, ptr.To(int32(8))))
 
 			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
-			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(vm.Spec.Network.Interfaces[1].Type).To(BeEmpty())
+			Expect(vm.Spec.Network.Interfaces[1].UnitNumber).
 				To(Equal(ptr.To(int32(8))))
 			Expect(rec.Events).To(HaveLen(1))
+			Expect(<-rec.Events).
+				To(Equal(ambiguousEventMsgPrefix + "eth0, eth1"))
+		})
+
+		It("an unmatched SRIOV-typed interface holds its place on an SR-IOV card", func() {
+			// Without it, eth1 would take the SR-IOV card.
+			vm = zipVM(
+				withType(ifaceWith("eth0", "", nil), vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV),
+				ifaceWith("eth1", "", nil))
+			moVM = moVMWithEthDevs(
+				zipSRIOVCard(),
+				ethCardWithUnit(4001, mac1, netName, ptr.To(int32(7))))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(vm.Spec.Network.Interfaces[1].Type).To(BeEmpty())
+			Expect(vm.Spec.Network.Interfaces[1].UnitNumber).
+				To(Equal(ptr.To(int32(7))))
+			Expect(rec.Events).To(HaveLen(1))
+			Expect(<-rec.Events).
+				To(Equal(ambiguousEventMsgPrefix + "eth1"))
+		})
+
+		It("an SRIOV-typed interface with a stale unit number holds its place", func() {
+			// The type makes it un-numbered for matching, so it takes part
+			// in the zip, but its unit number is left as it is.
+			vm = zipVM(
+				withType(ifaceWith("eth0", "", ptr.To(int32(9))), vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV),
+				ifaceWith("eth1", "", nil))
+			moVM = moVMWithEthDevs(
+				zipSRIOVCard(),
+				ethCardWithUnit(4001, mac1, netName, ptr.To(int32(7))))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+				To(Equal(ptr.To(int32(9))))
+			Expect(vm.Spec.Network.Interfaces[1].UnitNumber).
+				To(Equal(ptr.To(int32(7))))
+		})
+
+		It("an SRIOV-typed interface falls back to a non-SR-IOV device and records nothing", func() {
+			vm = zipVM(
+				withType(ifaceWith("eth0", "", nil), vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV),
+				ifaceWith("eth1", "", nil))
+			moVM = moVMWithEthDevs(
+				ethCardWithUnit(4000, mac1, netName, ptr.To(int32(7))),
+				ethCardWithUnit(4001, mac2, netName, ptr.To(int32(8))))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(vm.Spec.Network.Interfaces[1].UnitNumber).
+				To(Equal(ptr.To(int32(8))))
+		})
+
+		It("an interface of another type prefers a non-SR-IOV device", func() {
+			vm = zipVM(
+				withType(ifaceWith("eth0", "", nil), vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3),
+				ifaceWith("eth1", "", nil))
+			moVM = moVMWithEthDevs(
+				zipSRIOVCard(),
+				ethCardWithUnit(4001, mac1, netName, ptr.To(int32(7))))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+				To(Equal(ptr.To(int32(7))))
+			Expect(vm.Spec.Network.Interfaces[1].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[1].UnitNumber).To(BeNil())
+			Expect(rec.Events).To(HaveLen(1))
+			Expect(<-rec.Events).
+				To(Equal(ambiguousEventMsgPrefix + "eth0, eth1"))
+		})
+
+		It("an interface of another type on an SR-IOV card records nothing", func() {
+			vm = zipVM(
+				withType(ifaceWith("eth0", "", nil), vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
+			moVM = moVMWithEthDevs(zipSRIOVCard())
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeFalse())
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(rec.Events).To(BeEmpty())
 		})
 
 		It("devices with no observed unit number are not zip candidates", func() {
@@ -1706,12 +1807,39 @@ var _ = Describe("NICUnitNumbersFromMoVM", func() {
 			Expect(rec.Events).To(BeEmpty())
 		})
 
-		It("records nothing without a client", func() {
+		It("skips SR-IOV detection without a client, leaving the type to the zip", func() {
+			// The event shows the type came from the zip, not from a match.
 			vm = newVM(ifaceWithNet("eth0", mac1, netName, nil))
 			moVM = moVMWithEthDevs(sriovCard(4000, mac1))
 
-			Expect(backfill.NICUnitNumbersFromMoVM(ctx, nil, vm, moVM)).To(BeFalse())
-			Expect(vm.Spec.Network.Interfaces[0].Type).To(BeEmpty())
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, nil, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(rec.Events).To(HaveLen(1))
+			Expect(<-rec.Events).
+				To(Equal(ambiguousEventMsgPrefix + "eth0"))
+		})
+
+		It("does not zip an interface SR-IOV detection matched, or its card", func() {
+			// eth0 is matched to the SR-IOV card. eth1 matches nothing, and
+			// the zip must not give it eth0's card.
+			vm = newVM(
+				ifaceWithNet("eth0", mac1, netName, nil),
+				ifaceWith("eth1", "", nil))
+			moVM = moVMWithEthDevs(
+				sriovCard(4000, mac1),
+				ethCardWithUnit(4001, mac2, bogusNet, ptr.To(int32(7))))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(vm.Spec.Network.Interfaces[1].Type).To(BeEmpty())
+			Expect(vm.Spec.Network.Interfaces[1].UnitNumber).
+				To(Equal(ptr.To(int32(7))))
+			Expect(rec.Events).To(HaveLen(1))
+			Expect(<-rec.Events).
+				To(Equal(ambiguousEventMsgPrefix + "eth1"))
 		})
 	})
 

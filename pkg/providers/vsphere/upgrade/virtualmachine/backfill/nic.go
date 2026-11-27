@@ -362,11 +362,13 @@ const NICUnitNumberBackfillAmbiguous = "NICUnitNumberBackfillAmbiguous"
 // not by this one-shot backfill.
 //
 // It also records type SRIOV on an untyped interface that is uniquely matched
-// to an SR-IOV card (see SR-IOV detection under step 1). SR-IOV cards sit outside the unit-number
-// band, so such an interface gets no unit number, and the type is what keeps
-// it that way: the mutation webhook does not number SRIOV-typed interfaces,
-// and reconcile-time matching treats them as un-numbered even when they
-// carry a unit number recorded before their type was known. Without it, the
+// to an SR-IOV card (see SR-IOV detection under step 1), or that the
+// positional zip (step 2) pairs with one. SR-IOV cards sit outside the
+// unit-number band, so such an interface gets no unit number, and the type
+// is what keeps it that way: the mutation webhook does not number
+// SRIOV-typed interfaces, and reconcile-time matching treats them as
+// un-numbered even when they carry a unit number recorded before their type
+// was known. Without it, the
 // webhook would number an SR-IOV interface whose type is unset, and its
 // declared unit would never match its card. SRIOV-typed interfaces never
 // have a unit number recorded.
@@ -400,14 +402,18 @@ const NICUnitNumberBackfillAmbiguous = "NICUnitNumberBackfillAmbiguous"
 //     this step is skipped.
 //
 //  2. A positional zip of the remaining unmatched spec interfaces against
-//     the remaining unclaimed devices (with an observed unit number), as a
-//     strictly last resort so every interface receives its observed unit
-//     number. A single warning event (NICUnitNumberBackfillAmbiguous) names
-//     every interface whose value came from the zip: nothing in the
-//     resulting spec distinguishes a zipped value from a matched one, yet a
-//     wrong zip assignment is one-shot and feeds unit-number-first reconcile
-//     matching, status, and boot-order device selection. No other case
-//     emits an event here.
+//     the remaining unclaimed devices, as a strictly last resort so every
+//     interface receives its observed unit number (zipRecordUnitNumbers).
+//     SR-IOV cards hold their place in the zip, and each interface prefers
+//     a device of its type, as in reconcile-time matching
+//     (MapEthernetDevicesToSpecIdx). An untyped interface the zip pairs with
+//     an SR-IOV card gets type SRIOV and no unit number. A single warning
+//     event (NICUnitNumberBackfillAmbiguous) names every interface whose
+//     unit number or type came from the zip: nothing in the resulting spec
+//     distinguishes a zipped value from a matched one, yet a wrong zip
+//     assignment is one-shot and feeds unit-number-first reconcile matching,
+//     status, and boot-order device selection. No other case emits an event
+//     here.
 //
 // Per interface, the write is skipped (the unit number stays nil) when the
 // observed value would make the spec inadmissible (G7): already claimed by
@@ -442,9 +448,8 @@ func NICUnitNumbersFromMoVM(
 	// The ethernet device list the provider-dispatched matcher consumes; its
 	// indices are the ones claimedDevs tracks. SR-IOV cards are excluded:
 	// they sit outside the NICUnitNumberFirst..NICUnitNumberMax range, so no
-	// unit number is recorded for them and they must not claim a device in
-	// pass 1 or a slot in the zip. A single list guarantees index alignment
-	// between pass 1 and the zip.
+	// unit number is recorded for them and pass 1 must not claim one. The
+	// zip still gives them their place in the device order.
 	ethDevs := object.VirtualDeviceList(moVM.Config.Hardware.Device).
 		Select(func(dev vimtypes.BaseVirtualDevice) bool {
 			if _, ok := dev.(*vimtypes.VirtualSriovEthernetCard); ok {
@@ -452,7 +457,8 @@ func NICUnitNumbersFromMoVM(
 			}
 			return pkgutil.IsEthernetCard(dev)
 		})
-	// SR-IOV cards are kept in their own list, used only by SR-IOV detection.
+	// SR-IOV cards are kept in their own list, with their own claims, used
+	// by SR-IOV detection and the zip.
 	sriovDevs := object.VirtualDeviceList(moVM.Config.Hardware.Device).
 		Select(func(dev vimtypes.BaseVirtualDevice) bool {
 			_, ok := dev.(*vimtypes.VirtualSriovEthernetCard)
@@ -473,7 +479,9 @@ func NICUnitNumbersFromMoVM(
 
 	var (
 		claimedDevs   = make([]bool, len(ethDevs))
+		sriovClaimed  = make([]bool, len(sriovDevs))
 		hodgepodgeIdx = make([]bool, len(vm.Spec.Network.Interfaces))
+		sriovMatched  = make([]bool, len(vm.Spec.Network.Interfaces))
 		mutated       bool
 		zipMatched    []string
 	)
@@ -547,7 +555,8 @@ func NICUnitNumbersFromMoVM(
 		// SR-IOV detection: record type SRIOV on untyped interfaces uniquely
 		// matched to an SR-IOV card.
 		if recordSRIOVTypes(vmCtx, client, vm.Spec.Network.Interfaces,
-			unitDevIdx, hodgepodgeIdx, ethDevs, claimedDevs, sriovDevs) {
+			unitDevIdx, hodgepodgeIdx, ethDevs, claimedDevs,
+			sriovDevs, sriovClaimed, sriovMatched) {
 			mutated = true
 		}
 	} else {
@@ -572,8 +581,10 @@ func NICUnitNumbersFromMoVM(
 	}
 
 	// Pass 2: positional zip (zipRecordUnitNumbers).
+	zipCands := zipCandidatesInDeviceOrder(moVM.Config.Hardware.Device,
+		ethDevs, claimedDevs, sriovDevs, sriovClaimed)
 	if zipMutated, names := zipRecordUnitNumbers(ctx, vm.Spec.Network.Interfaces,
-		hodgepodgeIdx, ethDevs, claimedDevs, occupiedUnits); zipMutated {
+		hodgepodgeIdx, sriovMatched, zipCands, occupiedUnits); zipMutated {
 		mutated = true
 		zipMatched = names
 	}
@@ -587,25 +598,72 @@ func NICUnitNumbersFromMoVM(
 		pkgrecord.FromContext(ctx).Warnf(
 			vm,
 			NICUnitNumberBackfillAmbiguous,
-			"Observed unit numbers were recorded for the following network interfaces by positional matching rather than a unique match, and may be assigned incorrectly: %s",
+			"Observed unit numbers or types were recorded for the following network interfaces by positional matching rather than a unique match, and may be assigned incorrectly: %s",
 			strings.Join(zipMatched, ", "))
 	}
 
 	return mutated
 }
 
+// zipCandidate is a device in the positional zip of NICUnitNumbersFromMoVM,
+// with a pointer to its claimed flag in claimedDevs or sriovClaimed.
+type zipCandidate struct {
+	dev     vimtypes.BaseVirtualDevice
+	claimed *bool
+}
+
+// zipCandidatesInDeviceOrder merges ethDevs and sriovDevs, which were both
+// selected from devices, back into the order of devices, so SR-IOV cards
+// hold their place in the positional zip.
+func zipCandidatesInDeviceOrder(
+	devices []vimtypes.BaseVirtualDevice,
+	ethDevs object.VirtualDeviceList,
+	claimedDevs []bool,
+	sriovDevs object.VirtualDeviceList,
+	sriovClaimed []bool) []zipCandidate {
+
+	out := make([]zipCandidate, 0, len(ethDevs)+len(sriovDevs))
+	e, s := 0, 0
+	for _, dev := range devices {
+		switch {
+		case s < len(sriovDevs) && dev == sriovDevs[s]:
+			out = append(out, zipCandidate{dev: dev, claimed: &sriovClaimed[s]})
+			s++
+		case e < len(ethDevs) && dev == ethDevs[e]:
+			out = append(out, zipCandidate{dev: dev, claimed: &claimedDevs[e]})
+			e++
+		}
+	}
+	return out
+}
+
 // zipRecordUnitNumbers is pass 2 of NICUnitNumbersFromMoVM: a positional zip
-// of the interfaces still without a unit number (not matched in pass 1, and
-// not SRIOV-typed) against the remaining unclaimed devices with an observed
-// unit number. Devices without an observed unit number have nothing to
-// record and are not zip candidates. It returns whether any unit number was
-// recorded, and the names of the interfaces it was recorded for.
+// of the interfaces not yet matched to a device against the unclaimed
+// devices in cands. Every interface takes part unless it is numbered
+// (an SRIOV-typed interface counts as un-numbered) or was matched in pass 1
+// or by SR-IOV detection.
+//
+// Each interface is paired, in spec order, with the first unclaimed device
+// its type prefers (network.EthCardPreferredForInterfaceType), or failing
+// that the first unclaimed device of any type, as MapEthernetDevicesToSpecIdx
+// does at reconcile time. SR-IOV cards are candidates; a non-SR-IOV device
+// without an observed unit number has nothing to record and is not.
+//
+// The pairing records:
+//   - nothing for an SRIOV-typed interface, wherever it lands;
+//   - type SRIOV, and no unit number, for an untyped interface paired with an
+//     SR-IOV card;
+//   - nothing for an interface of another type paired with an SR-IOV card;
+//   - otherwise the device's observed unit number (recordEthDeviceUnitNumber).
+//
+// It returns whether any field was written, and the names of the interfaces
+// it wrote a unit number or type for.
 func zipRecordUnitNumbers(
 	ctx context.Context,
 	ifaces []vmopv1.VirtualMachineNetworkInterfaceSpec,
 	hodgepodgeIdx []bool,
-	ethDevs object.VirtualDeviceList,
-	claimedDevs []bool,
+	sriovMatched []bool,
+	cands []zipCandidate,
 	occupiedUnits sets.Set[int32]) (bool, []string) {
 
 	var (
@@ -614,23 +672,51 @@ func zipRecordUnitNumbers(
 	)
 	for i := range ifaces {
 		iface := &ifaces[i]
-		if hodgepodgeIdx[i] || iface.UnitNumber != nil ||
-			iface.Type == vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV {
+		sriovTyped := iface.Type == vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
+		if hodgepodgeIdx[i] || sriovMatched[i] ||
+			(iface.UnitNumber != nil && !sriovTyped) {
 			continue
 		}
 
-		for j := range ethDevs {
-			dev := ethDevs[j]
-			if claimedDevs[j] || dev.GetVirtualDevice().UnitNumber == nil {
+		pick := -1
+		for j := range cands {
+			c := cands[j]
+			if *c.claimed {
 				continue
 			}
+			if _, ok := c.dev.(*vimtypes.VirtualSriovEthernetCard); !ok &&
+				c.dev.GetVirtualDevice().UnitNumber == nil {
+				continue
+			}
+			if network.EthCardPreferredForInterfaceType(c.dev, iface.Type) {
+				pick = j
+				break
+			}
+			if pick < 0 {
+				// First unclaimed device of any type: the fallback.
+				pick = j
+			}
+		}
+		if pick < 0 {
+			break
+		}
 
-			claimedDevs[j] = true
-			if recordEthDeviceUnitNumber(ctx, iface, dev, occupiedUnits) {
+		dev := cands[pick].dev
+		*cands[pick].claimed = true
+		_, onSRIOV := dev.(*vimtypes.VirtualSriovEthernetCard)
+
+		switch {
+		case sriovTyped:
+			// Never record a unit number for an SRIOV-typed interface.
+		case onSRIOV:
+			if iface.Type == "" {
+				iface.Type = vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
 				mutated = true
 				zipMatched = append(zipMatched, iface.Name)
 			}
-			break
+		case recordEthDeviceUnitNumber(ctx, iface, dev, occupiedUnits):
+			mutated = true
+			zipMatched = append(zipMatched, iface.Name)
 		}
 	}
 	return mutated, zipMatched
@@ -641,10 +727,12 @@ func zipRecordUnitNumbers(
 // cannot be a candidate below. Then each untyped interface still unmatched
 // (a numbered interface whose unitDevIdx is -1, or an un-numbered interface
 // with no hodgepodge match) is matched against every unclaimed device,
-// SR-IOV cards included. If the match is an SR-IOV card and is the only unclaimed device
-// that matches, the interface's type is set to SRIOV and the card claimed.
-// ethDevs and claimedDevs are the non-SR-IOV devices and their claims, which
-// are read but not modified. Returns true if any interface type was set.
+// SR-IOV cards included. If the match is an SR-IOV card and is the only
+// unclaimed device that matches, the interface's type is set to SRIOV and the
+// card claimed. ethDevs and claimedDevs are the non-SR-IOV devices and their
+// claims, which are read but not modified. Each SR-IOV card claimed here is
+// marked in sriovClaimed, and the interface that claimed it in sriovMatched,
+// so the zip skips both. Returns true if any interface type was set.
 func recordSRIOVTypes(
 	vmCtx pkgctx.VirtualMachineContext,
 	client ctrlclient.Client,
@@ -653,17 +741,19 @@ func recordSRIOVTypes(
 	hodgepodgeIdx []bool,
 	ethDevs object.VirtualDeviceList,
 	claimedDevs []bool,
-	sriovDevs object.VirtualDeviceList) bool {
+	sriovDevs object.VirtualDeviceList,
+	sriovClaimed []bool,
+	sriovMatched []bool) bool {
 
 	if len(sriovDevs) == 0 {
 		return false
 	}
 
-	sriovClaimed := make([]bool, len(sriovDevs))
-	claimSRIOV := func(dev vimtypes.BaseVirtualDevice) {
+	claimSRIOV := func(i int, dev vimtypes.BaseVirtualDevice) {
 		for j := range sriovDevs {
 			if sriovDevs[j] == dev {
 				sriovClaimed[j] = true
+				sriovMatched[i] = true
 				return
 			}
 		}
@@ -684,7 +774,7 @@ func recordSRIOVTypes(
 		}
 		cands := unclaimedSRIOV()
 		if m := network.FindMatchingEthCardForInterfaceSpec(vmCtx, client, ifaces[i], cands); m >= 0 {
-			claimSRIOV(cands[m])
+			claimSRIOV(i, cands[m])
 		}
 	}
 
@@ -720,7 +810,7 @@ func recordSRIOVTypes(
 			continue
 		}
 
-		claimSRIOV(match)
+		claimSRIOV(i, match)
 		iface.Type = vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
 		mutated = true
 	}

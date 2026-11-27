@@ -280,7 +280,7 @@ func MapEthernetDevicesToSpecIdx(
 
 // zipUnclaimedEthCards pairs each spec interface for which include returns
 // true, in spec order, with the first unclaimed card in ethCards that its
-// type prefers (see ethCardPreferredForInterfaceType), or failing that with
+// type prefers (see EthCardPreferredForInterfaceType), or failing that with
 // the first unclaimed card of any type. Each pairing is recorded in out
 // (device key to spec index) and the card is marked claimed. For untyped
 // interfaces this is the plain positional zip over the unclaimed cards.
@@ -300,7 +300,7 @@ func zipUnclaimedEthCards(
 			if claimed[j] {
 				continue
 			}
-			if ethCardPreferredForInterfaceType(ethCards[j], interfaces[i].Type) {
+			if EthCardPreferredForInterfaceType(ethCards[j], interfaces[i].Type) {
 				pick = j
 				break
 			}
@@ -317,13 +317,15 @@ func zipUnclaimedEthCards(
 	}
 }
 
-// ethCardPreferredForInterfaceType reports whether a positional zip should
+// EthCardPreferredForInterfaceType reports whether a positional zip should
 // prefer pairing a card with an interface of type t: an SRIOV-typed
 // interface prefers an SR-IOV card, any other explicit type prefers a
 // non-SR-IOV card, and an untyped interface has no preference. A preference
 // only, because the type does not guarantee the card: the VM create and
-// reconcile paths build a vmxnet3 card whatever the interface's type.
-func ethCardPreferredForInterfaceType(
+// reconcile paths build a vmxnet3 card whatever the interface's type. The
+// NIC unit-number backfill's zip uses the same preference, so it pairs
+// interfaces with devices the way reconcile-time matching does.
+func EthCardPreferredForInterfaceType(
 	dev vimtypes.BaseVirtualDevice,
 	t vmopv1.VirtualMachineNetworkInterfaceType) bool {
 

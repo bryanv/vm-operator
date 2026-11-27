@@ -303,7 +303,7 @@ After `NICUnitNumbersFromMoVM` completes, also update `NICConfigFromMoVM` (VMSer
 
 This is the most complex and most important change. There are two distinct matching functions that must be updated independently. See the six-problem analysis below.
 
-Throughout, "ethernet card" means any device for which `pkgutil.IsEthernetCard` returns true — this includes `VirtualSriovEthernetCard`. The unit-number backfill is the exception: it excludes SR-IOV cards, because their unit numbers fall outside the 7–16 range (amended 2026-11-16). SR-IOV handling is follow-on work (see the `bryanv/nic-unit-number-sriov-research` branch), so this feature does not yet special-case SR-IOV in reconcile-time matching or status.
+Throughout, "ethernet card" means any device for which `pkgutil.IsEthernetCard` returns true — this includes `VirtualSriovEthernetCard`. The unit-number backfill is the exception: it excludes SR-IOV cards, because their unit numbers fall outside the 7–16 range (amended 2026-11-16). SR-IOV handling is follow-on work (see the `bryanv/nic-unit-number-sriov-research` branch). Until it lands, the stop-gap keys on `type: SRIOV` (amended 2026-11-27, T037): `vmopv1util.NICInterfaceUnitNumber` returns nil for an SRIOV-typed interface, and every matcher uses it, so such an interface is matched as un-numbered whatever its `unitNumber`. The unit-number backfill records `type: SRIOV` on an untyped interface whose only matching unclaimed device is an SR-IOV card, so the mutator then leaves it un-numbered. The uniqueness requirement matters because the write is one-shot and the Named provider matches by backing alone.
 
 #### Problem 1: `FindMatchingEthCard` — desired device has no `UnitNumber`
 

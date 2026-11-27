@@ -159,6 +159,12 @@
 
   **Not gateable by deployment** — this plan's own argument for a standalone feature-version bit is that `VMServiceClasslessVM` and `VMNetworkUnitNumbers` are independent, so both-on is a supported combination. Add unit tests in the `networkextraconfig` package covering: numbered interfaces matched by unit number (not position) when device order differs from spec order; a numbered interface with no device at its slot → no match, no Edit, no status write, no error; un-numbered interfaces still zip positionally; flag off → existing behaviour byte-for-byte; and a ConfigSpec already carrying `Remove(key)` → no Edit emitted for that key
 
+- [x] T037 Make `type: SRIOV` the signal that an interface's unit number does not identify its device (SR-IOV stop-gap, amended 2026-11-27):
+  1. Add `vmopv1util.NICInterfaceUnitNumber`, which returns nil when the feature is off, the interface has no unit number, or it is SRIOV-typed. Use it wherever a matcher reads a spec unit number: the four result-building sites in `network.go` (which covers reconcile, MAC assignment, and the create path), `MapEthernetDevicesToSpecIdx`, the boot-options miss check, and the backfill's `claimByUnitNumber`.
+  2. Make the positional zip in `MapEthernetDevicesToSpecIdx` prefer a card matching the interface's type: an SRIOV-typed interface prefers an SR-IOV card and another typed interface a non-SR-IOV card, each falling back to any unclaimed card (the create and reconcile paths build vmxnet3 whatever the type); untyped interfaces take any card.
+  3. `NICConfigFromMoVM`: gate unit-number pairing on `VMNetworkUnitNumbers`. A numbered interface that missed its slot holds its positional slot when there are at least as many unclaimed devices as remaining interfaces, and is paired only if the device there is an SR-IOV card; otherwise it sits out the zip. Never default `type` for a numbered interface left unpaired.
+  4. `NICUnitNumbersFromMoVM`: record `type: SRIOV` on an untyped, unmatched interface whose only matching unclaimed device is an SR-IOV card; never record a unit number for an SRIOV-typed interface.
+
 ---
 
 ## Phase 7 — Status
@@ -278,6 +284,7 @@ T034 (block user edits pre-upgrade) ─────────────► c
 | T033 | `pkg/vmconfig/bootoptions/bootoptions_reconciler.go`, boot-options unit tests |
 | T035 | `pkg/vmconfig/networkextraconfig/nic_matcher.go`, `pkg/vmconfig/networkextraconfig/nic_fields.go`, `pkg/vmconfig/networkextraconfig/reconciler.go`, package unit tests |
 | T036 | `pkg/providers/vsphere/vmlifecycle/update_status_hardware_validation.go`, its unit tests; possibly `api/v1alpha6` condition-type constant |
+| T037 | `pkg/util/vmopv1/hardware.go`, `pkg/providers/vsphere/network/network.go`, `pkg/providers/vsphere/network/devices.go`, `pkg/vmconfig/bootoptions/bootoptions_reconciler.go`, `pkg/providers/vsphere/upgrade/virtualmachine/backfill/nic.go`, `pkg/providers/vsphere/upgrade/virtualmachine/vm_schema_upgrade.go`, and their unit tests |
 | T034 | `webhooks/virtualmachine/validation/virtualmachine_validator.go`, `webhooks/virtualmachine/validation/virtualmachine_validator_unit_test.go` |
 | T031 | vcsim integration tests (snapshot revert / failover / register flows), `research.md`, `spec.md` |
 | T032 | `.sdd/specs/00N-nic-unit-numbers-powered-on/*.md` (new, I5), `.sdd/specs/00N-nic-unit-numbers-type-support/*.md` (new, I2 — or folded into that future MR's own artifacts) |

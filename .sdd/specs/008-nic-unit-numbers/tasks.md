@@ -164,6 +164,7 @@
   2. Make the positional zip in `MapEthernetDevicesToSpecIdx` prefer a card matching the interface's type: an SRIOV-typed interface prefers an SR-IOV card and another typed interface a non-SR-IOV card, each falling back to any unclaimed card (the create and reconcile paths build vmxnet3 whatever the type); untyped interfaces take any card.
   3. `NICConfigFromMoVM`: gate unit-number pairing on `VMNetworkUnitNumbers`. A numbered interface that missed its slot holds its positional slot when there are at least as many unclaimed devices as remaining interfaces, and is paired only if the device there is an SR-IOV card; otherwise it sits out the zip. Never default `type` for a numbered interface left unpaired.
   4. `NICUnitNumbersFromMoVM`: record `type: SRIOV` on an untyped, unmatched interface whose only matching unclaimed device is an SR-IOV card; never record a unit number for an SRIOV-typed interface.
+  5. `ReconcileSchemaUpgrade`: run the `FeatureVersionNICUnitNumbers` step before the `FeatureVersionTelcoVMServiceAPI` step, so `NICConfigFromMoVM` pairs by the unit numbers `NICUnitNumbersFromMoVM` matched by MAC, external ID or backing, not by position. `VMServiceClasslessVM` is not yet enabled, so in the field the NIC config backfill will run after the unit-number backfill anyway, often in a later release. The code order now matches that.
 
 ---
 

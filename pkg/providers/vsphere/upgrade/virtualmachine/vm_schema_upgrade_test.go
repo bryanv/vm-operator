@@ -598,6 +598,72 @@ var _ = Describe("ReconcileSchemaUpgrade", func() {
 						})
 					})
 				})
+				When("VMNetworkUnitNumbers and VMServiceClasslessVM features are enabled", func() {
+					const netName = "my-network"
+
+					ethCard := func(
+						dev vimtypes.BaseVirtualDevice,
+						key, unit int32,
+						mac string) vimtypes.BaseVirtualDevice {
+
+						card := dev.(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+						card.Key = key
+						card.UnitNumber = ptr.To(unit)
+						card.MacAddress = mac
+						card.Backing = &vimtypes.VirtualEthernetCardNetworkBackingInfo{
+							VirtualDeviceDeviceBackingInfo: vimtypes.VirtualDeviceDeviceBackingInfo{
+								DeviceName: netName,
+							},
+						}
+						return dev
+					}
+
+					BeforeEach(func() {
+						pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+							config.Features.VMNetworkUnitNumbers = true
+							config.Features.VMServiceClasslessVM = true
+							config.NetworkProviderType = pkgcfg.NetworkProviderTypeNamed
+						})
+						ctx = pkgrecord.WithContext(ctx,
+							pkgrecord.New(events.NewFakeRecorder(100)))
+
+						// The interfaces are listed in the reverse order of
+						// their devices. Only matching by MAC pairs them
+						// correctly.
+						vm.Spec.Network = &vmopv1.VirtualMachineNetworkSpec{
+							Interfaces: []vmopv1.VirtualMachineNetworkInterfaceSpec{
+								{
+									Name:    "eth0",
+									MACAddr: "00:50:56:00:00:02",
+									Network: &vmopv1common.PartialObjectRef{Name: netName},
+								},
+								{
+									Name:    "eth1",
+									MACAddr: "00:50:56:00:00:01",
+									Network: &vmopv1common.PartialObjectRef{Name: netName},
+								},
+							},
+						}
+						moVM.Config.Hardware.Device = []vimtypes.BaseVirtualDevice{
+							ethCard(&vimtypes.VirtualE1000{}, 4000, 7, "00:50:56:00:00:01"),
+							ethCard(&vimtypes.VirtualVmxnet3{}, 4001, 8, "00:50:56:00:00:02"),
+						}
+					})
+
+					It("should record each type from the device the unit number names", func() {
+						// The unit-number backfill runs first and matches by
+						// MAC. The NIC config backfill then pairs by unit
+						// number. In the other order it would zip by
+						// position and give eth0 the E1000's type.
+						assertUpgraded()
+						// base=1 | TelcoVMServiceAPI=8 | NICUnitNumbers=16
+						assertFeatureVersion("25")
+						Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(Equal(ptr.To(int32(8))))
+						Expect(vm.Spec.Network.Interfaces[0].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
+						Expect(vm.Spec.Network.Interfaces[1].UnitNumber).To(Equal(ptr.To(int32(7))))
+						Expect(vm.Spec.Network.Interfaces[1].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeE1000))
+					})
+				})
 			})
 
 			When("VMNetworkUnitNumbers feature is disabled", func() {

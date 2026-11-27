@@ -167,18 +167,26 @@ func ReconcileSchemaUpgrade(
 		}
 	}
 
+	//
+	// The NIC unit-number backfill runs before the VMServiceClasslessVM NIC
+	// config backfill. NICConfigFromMoVM pairs each numbered interface with
+	// the device at its unit number, so running it second lets it use the
+	// unit numbers NICUnitNumbersFromMoVM matched by MAC, external ID or
+	// backing, instead of its own positional guess. This is also the order
+	// a VM sees when the two features are enabled in different releases.
+	//
+	if features.VMNetworkUnitNumbers {
+		if f := vmopv1util.FeatureVersionNICUnitNumbers; !vmFeatureVersion.Has(f) {
+			vmbackfill.NICUnitNumbersFromMoVM(ctx, k8sClient, vm, moVM)
+			vmFeatureVersion.Set(f)
+		}
+	}
+
 	if features.VMServiceClasslessVM {
 		if f := vmopv1util.FeatureVersionTelcoVMServiceAPI; !vmFeatureVersion.Has(f) {
 			vmbackfill.ExtraConfigFromMoVM(ctx, vm, moVM)
 			vmbackfill.NICConfigFromMoVM(ctx, vm, moVM, features.VMNetworkUnitNumbers)
 			vmbackfill.ComputeConfigFromMoVM(ctx, vm, moVM)
-			vmFeatureVersion.Set(f)
-		}
-	}
-
-	if features.VMNetworkUnitNumbers {
-		if f := vmopv1util.FeatureVersionNICUnitNumbers; !vmFeatureVersion.Has(f) {
-			vmbackfill.NICUnitNumbersFromMoVM(ctx, k8sClient, vm, moVM)
 			vmFeatureVersion.Set(f)
 		}
 	}

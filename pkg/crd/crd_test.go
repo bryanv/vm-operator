@@ -854,6 +854,19 @@ var _ = Describe("Install", func() {
 					assertField(true, fields...)
 				},
 				Entry("network interface unitNumber", "network.interfaces.[].unitNumber"),
+				// Type SRIOV marks an interface whose unit number does not
+				// identify its device, so the field is kept without
+				// VMServiceClasslessVM.
+				Entry("network interface type", "network.interfaces.[].type"),
+			)
+
+			DescribeTable("vm api should not have spec fields",
+				func(field string) {
+					fields := specFieldPath(field)
+					assertField(false, fields...)
+				},
+				Entry("network interface vnumaNodeID", "network.interfaces.[].vnumaNodeID"),
+				Entry("network interface vmxnet3", "network.interfaces.[].vmxnet3"),
 			)
 
 			DescribeTable("vm api should have status fields",

@@ -413,7 +413,6 @@ func Install( //nolint:gocyclo
 							specFieldPath("advanced", "vmxSwapEnabled"),
 							specFieldPath("advanced", "pnumaNodeAffinity"),
 							specFieldPath("advanced", "extraConfig"),
-							specFieldPath("network", "interfaces", "[]", "type"),
 							specFieldPath("network", "interfaces", "[]", "vnumaNodeID"),
 							specFieldPath("network", "interfaces", "[]", "vmxnet3"),
 							specFieldPath("network", "interfaces", "[]", "advancedProperties"),
@@ -433,6 +432,23 @@ func Install( //nolint:gocyclo
 							specCELPath("network", "interfaces", "[]"),
 							"vmxnet3",
 						); err != nil {
+
+							return err
+						}
+					}
+
+					// The interface type is also used by VMNetworkUnitNumbers:
+					// type SRIOV marks an interface whose unit number does not
+					// identify its device, and the NIC unit-number backfill
+					// records it. Remove the field only when neither feature
+					// is enabled.
+					if !features.VMServiceClasslessVM && !features.VMNetworkUnitNumbers {
+						if err := removeFields(
+							ctx,
+							k,
+							obj,
+							shouldRemoveFields,
+							specFieldPath("network", "interfaces", "[]", "type")); err != nil {
 
 							return err
 						}

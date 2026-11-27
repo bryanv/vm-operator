@@ -166,9 +166,10 @@ func MapEthernetDevicesToSpecIdx(
 	// through to CR-based/positional matching, because a wrong match here
 	// feeds boot-order device selection (bootoptions reconciler) and could
 	// point network boot at the wrong physical NIC. The miss is not
-	// transient (G13): a unitNumber change is admitted on a powered-on VM
-	// but not applied until the next power-off, so callers tolerate the
-	// absence rather than this mapping relaxing.
+	// transient (G13): an interface added to a powered-on VM is admitted
+	// with a unit number but gets no device until the next power-off, and
+	// a numbered interface backed by an SR-IOV card never hits, so callers
+	// tolerate the absence rather than this mapping relaxing.
 	if unitNumbersEnabled {
 		unitToIdx := make(map[int32]int, len(ethCards))
 		for i, dev := range ethCards {
@@ -203,39 +204,16 @@ func MapEthernetDevicesToSpecIdx(
 		// Zip the un-numbered interfaces against the remaining unclaimed
 		// devices, in device order. Numbered interfaces are skipped: they
 		// resolve exclusively by their declared unit number above.
-		next := 0
-		for i := range interfaces {
-			if interfaces[i].UnitNumber != nil {
-				continue
-			}
-			for next < len(ethCards) && claimed[next] {
-				next++
-			}
-			if next >= len(ethCards) {
-				break
-			}
-			devKeyToSpecIdx[ethCards[next].GetVirtualDevice().Key] = i
-			claimed[next] = true
-			next++
-		}
+		next := zipUnclaimedEthCards(ethCards, claimed, 0, len(interfaces),
+			func(i int) bool { return interfaces[i].UnitNumber == nil },
+			devKeyToSpecIdx)
 
 		// Name-resolution fallback: numbered misses zip against whatever the
 		// authoritative passes left unclaimed. Labels status entries only.
 		devKeyToSpecIdxForNaming := maps.Clone(devKeyToSpecIdx)
-		for i := range interfaces {
-			if !authoritativeMiss[i] {
-				continue
-			}
-			for next < len(ethCards) && claimed[next] {
-				next++
-			}
-			if next >= len(ethCards) {
-				break
-			}
-			devKeyToSpecIdxForNaming[ethCards[next].GetVirtualDevice().Key] = i
-			claimed[next] = true
-			next++
-		}
+		zipUnclaimedEthCards(ethCards, claimed, next, len(interfaces),
+			func(i int) bool { return authoritativeMiss[i] },
+			devKeyToSpecIdxForNaming)
 		return devKeyToSpecIdx, devKeyToSpecIdxForNaming
 	}
 
@@ -284,6 +262,36 @@ func MapEthernetDevicesToSpecIdx(
 	}
 
 	return devKeyToSpecIdx, devKeyToSpecIdxForNaming
+}
+
+// zipUnclaimedEthCards pairs each of the first numInterfaces spec indices for
+// which include returns true, in order, with the next unclaimed card in
+// ethCards starting at cursor next. Each pairing is recorded in out (device
+// key to spec index) and the card is marked claimed. It stops when the cards
+// run out, and returns the advanced cursor.
+func zipUnclaimedEthCards(
+	ethCards object.VirtualDeviceList,
+	claimed []bool,
+	next int,
+	numInterfaces int,
+	include func(specIdx int) bool,
+	out map[int32]int) int {
+
+	for i := range numInterfaces {
+		if !include(i) {
+			continue
+		}
+		for next < len(ethCards) && claimed[next] {
+			next++
+		}
+		if next >= len(ethCards) {
+			break
+		}
+		out[ethCards[next].GetVirtualDevice().Key] = i
+		claimed[next] = true
+		next++
+	}
+	return next
 }
 
 // FindMatchingEthCardForInterfaceSpec resolves a spec interface to the index

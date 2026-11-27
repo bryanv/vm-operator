@@ -3335,6 +3335,13 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 				if err != nil {
 					return err
 				}
+				// The class device is replaced by a freshly built one, so carry
+				// the interface's explicit unit number onto it, as the fallback
+				// branch below does. Only populated when VMNetworkUnitNumbers is
+				// enabled.
+				if u := dev.UnitNumber; u != nil {
+					ethCard.GetVirtualDevice().UnitNumber = ptr.To(*u)
+				}
 				spec.Device = ethCard
 			}
 

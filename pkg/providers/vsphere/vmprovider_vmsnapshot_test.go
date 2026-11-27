@@ -860,7 +860,7 @@ var _ = Describe(
 			vm *vmopv1.VirtualMachine) error {
 
 			var err error
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				err = provider.CreateOrUpdateVirtualMachine(ctxop.WithContext(testCtx), vm)
 				switch {
 				case errors.Is(err, vsphere.ErrSnapshotRevert):

@@ -851,13 +851,16 @@ func VMNICExtraConfigSpec(ctx context.Context, inputGetter func() VMNICExtraConf
 				"PromoteDisksMode must remain Online after NIC ExtraConfig reconciliation")
 		})
 
-	// Characterization test: pins today's known limitation that
-	// DefaultNICMatcher matches spec.network.interfaces to hardware devices
-	// purely by call order, with no notion of interface identity. See the
-	// TODO on DefaultNICMatcher (nic_matcher.go) and the unit-level
-	// characterization test in nic_test.go: this must be revisited (and
-	// this test rewritten to assert no cross-wiring) once matching moves to
-	// a stable per-NIC identity (e.g. the NIC unit-number feature).
+	// Characterization test: pins the known limitation that, for
+	// interfaces without a unit number (or with the VMNetworkUnitNumbers
+	// capability disabled), DefaultNICMatcher matches spec.network.interfaces
+	// to hardware devices purely by call order, with no notion of interface
+	// identity. See DefaultNICMatcher (nic_matcher.go) and the unit-level
+	// characterization test in nic_test.go. With the capability enabled,
+	// numbered interfaces match by unit number and are not cross-wired, so
+	// this test only holds while the capability is disabled on the cluster;
+	// it must be rewritten to assert no cross-wiring once the capability is
+	// enabled for E2E runs.
 	It("cross-wires ExtraConfig when spec.network.interfaces entries are reordered",
 		Label("core-functional", "experimental"), func() {
 			vmName := "nic-ec-reorder-" + capiutil.RandomString(5)

@@ -255,9 +255,13 @@ func reconcileBootOrder(
 				// G13/I15: an interface carrying a unit number (feature enabled)
 				// resolves only at its declared slot (MapEthernetDevicesToSpecIdx
 				// is exact-only for numbered interfaces), so a miss means the
-				// declared slot holds no device yet. That is the
-				// admitted-but-not-yet-applied state of an in-flight unitNumber
-				// change on a powered-on VM: treat it as not-yet-converged by
+				// declared slot holds no device yet. That happens for an
+				// interface added while the VM is powered on (admitted, but its
+				// device is not added until the next power-off), during the
+				// powered-off reconcile that adds or renumbers the device (this
+				// runs against the pre-Reconfigure hardware), and for a numbered
+				// interface backed by an SR-IOV card (outside the unit-number
+				// band until SR-IOV support lands): treat it as not-yet-converged by
 				// skipping this boot-order entry — leaving the rest of the boot
 				// order intact — rather than failing every reconcile for the
 				// whole window. The steady-state divergence is already surfaced

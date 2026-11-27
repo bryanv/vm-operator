@@ -47,12 +47,17 @@ func ReconcileNetworkInterfaces(
 	// runs the MAC/ExternalID/backing fallback for un-numbered results
 	// against whatever pass 1 left unclaimed. Running these in a single
 	// greedy loop would let an un-numbered result claim — by backing — the
-	// device a later numbered result declares as its identity.
+	// device a later numbered result declares as its identity. Numbered
+	// results that miss their slot are resolved only after pass 2 (SR-IOV
+	// adopt, else Add), so the backing-based SR-IOV adopt cannot take an
+	// SR-IOV card that an un-numbered result (e.g. an SRIOV-typed interface,
+	// which is never assigned a unit number) matches.
 	handled := make([]bool, len(results.Devices))
+	var numberedMisses []int
 
 	for idx := range results.Devices {
 		dev := &results.Devices[idx]
-		if !(unitNumbersEnabled && dev.UnitNumber != nil) {
+		if !unitNumbersEnabled || dev.UnitNumber == nil {
 			continue
 		}
 		handled[idx] = true
@@ -69,7 +74,8 @@ func ReconcileNetworkInterfaces(
 		// Pass 1: exact unit-number claim. A declared unit number identifies
 		// specific hardware or nothing: on a miss the result must not fall
 		// back to MAC/ExternalID/backing matching, nor to the orphaned-CR
-		// Edit below — it routes straight to the ordinary Add path.
+		// Edit below — after pass 2 it routes to the SR-IOV adopt stop-gap
+		// or else to the ordinary Add path.
 		matchingIdx := FindMatchingEthCard(currentEthCards, ethCard, dev.UnitNumber)
 		if matchingIdx >= 0 {
 			matchDev := currentEthCards[matchingIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
@@ -112,31 +118,8 @@ func ReconcileNetworkInterfaces(
 			continue
 		}
 
-		// SR-IOV stop-gap, until full SR-IOV support lands: SR-IOV cards sit
-		// outside the ethernet unit-number band, so a numbered interface
-		// whose device is an SR-IOV card always misses at its slot. The
-		// interface type cannot be relied on to exclude these (it is often
-		// unset for an SR-IOV NIC from a class ConfigSpec), so instead adopt
-		// an SR-IOV card that matches by backing/MAC/ExternalID, as was done
-		// before unit numbers, rather than replacing it with a new card.
-		if sriovIdx := findMatchingSriovEthCard(currentEthCards, ethCard); sriovIdx >= 0 {
-			matchDev := currentEthCards[sriovIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-			results.Devices[idx].EthCardKey = matchDev.Key
-			results.Devices[idx].MacAddress = matchDev.MacAddress
-			ethCard.GetVirtualEthernetCard().MacAddress = matchDev.MacAddress
-			currentEthCards = slices.Delete(currentEthCards, sriovIdx, sriovIdx+1)
-			continue
-		}
-
-		// Miss at the declared slot: a plain Add of the desired device,
-		// already stamped with the declared unit number above. The
-		// interface's old device — if unclaimed by any other result — is
-		// removed by the trailing unmatched-device pass.
-		deviceChanges = append(deviceChanges, &vimtypes.VirtualDeviceConfigSpec{
-			Device:    dev.EthCard,
-			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
-		})
-		results.UpdatedEthCards = true
+		// Miss at the declared slot: resolved after pass 2 (see below).
+		numberedMisses = append(numberedMisses, idx)
 	}
 
 	// Pass 2: un-numbered results use the existing MAC/ExternalID/backing
@@ -193,6 +176,41 @@ func ReconcileNetworkInterfaces(
 
 			results.UpdatedEthCards = true
 		}
+	}
+
+	// Numbered results that missed their declared slot in pass 1. These run
+	// after pass 2 so un-numbered results keep first claim on the devices
+	// they match, exactly as before unit numbers.
+	for _, idx := range numberedMisses {
+		dev := &results.Devices[idx]
+		ethCard := dev.EthCard.(vimtypes.BaseVirtualEthernetCard)
+
+		// SR-IOV stop-gap, until full SR-IOV support lands: SR-IOV cards sit
+		// outside the ethernet unit-number band, so a numbered interface
+		// whose device is an SR-IOV card always misses at its slot. The
+		// interface type cannot be relied on to exclude these (it is often
+		// unset for an SR-IOV NIC from a class ConfigSpec), so instead adopt
+		// an SR-IOV card that matches by backing/MAC/ExternalID, as was done
+		// before unit numbers, rather than replacing it with a new card.
+		if sriovIdx := findMatchingSriovEthCard(currentEthCards, ethCard); sriovIdx >= 0 {
+			matchDev := currentEthCards[sriovIdx].(vimtypes.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+			dev.EthCardKey = matchDev.Key
+			dev.MacAddress = matchDev.MacAddress
+			ethCard.GetVirtualEthernetCard().MacAddress = matchDev.MacAddress
+			currentEthCards = slices.Delete(currentEthCards, sriovIdx, sriovIdx+1)
+			continue
+		}
+
+		// Miss at the declared slot: a plain Add of the desired device,
+		// already stamped with the declared unit number in pass 1. The
+		// interface's old device — if unclaimed by any other result — is
+		// removed by the trailing unmatched-device pass. It is never routed
+		// through the orphaned-CR Edit.
+		deviceChanges = append(deviceChanges, &vimtypes.VirtualDeviceConfigSpec{
+			Device:    dev.EthCard,
+			Operation: vimtypes.VirtualDeviceConfigSpecOperationAdd,
+		})
+		results.UpdatedEthCards = true
 	}
 
 	// Remove any unmatched existing interfaces.

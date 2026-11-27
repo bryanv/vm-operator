@@ -82,7 +82,7 @@ func NICConfigFromMoVM(
 
 	// Pass 1: unnumbered interfaces zip positionally, in spec order, against
 	// the remaining unclaimed devices. All-unnumbered is therefore identical
-	// to the previous all-positional behaviour; a mixed VM never re-pairs an
+	// to the previous all-positional behavior; a mixed VM never re-pairs an
 	// already-claimed (numbered) interface.
 	next := 0
 	for i := range vm.Spec.Network.Interfaces {

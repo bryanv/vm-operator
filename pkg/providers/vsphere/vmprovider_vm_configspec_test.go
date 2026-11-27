@@ -32,6 +32,7 @@ import (
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgconst "github.com/vmware-tanzu/vm-operator/pkg/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers"
+	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/constants"
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/virtualmachine"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
@@ -803,6 +804,43 @@ func vmConfigSpecTests() {
 				ethDevs := ethDevicesByMAC()
 				Expect(ethDevs).To(HaveKey(classMAC))
 				Expect(ethDevs[classMAC].GetVirtualDevice().UnitNumber).To(Equal(ptr.To(int32(9))))
+			})
+		})
+
+		When("the spec interface sets a type and declares a unit number", func() {
+			BeforeEach(func() {
+				withClassEthCard(ptr.To(int32(8)))
+
+				enableUnitNumbers = true
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: dvpgName},
+						Type:       vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3,
+						UnitNumber: ptr.To(int32(9)),
+					},
+				}
+			})
+
+			It("the device built in place of the class device carries the spec unit number", func() {
+				pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = enableUnitNumbers
+				})
+				vm.Spec.Network.Interfaces = ifaces
+
+				// A single call, so only the create ConfigSpec is observed: a
+				// later update would converge the slot by replacement and hide
+				// a unit number dropped at create.
+				Expect(vmProvider.CreateOrUpdateVirtualMachine(ctx, vm)).To(MatchError(vsphere.ErrCreate))
+				Expect(vm.Status.UniqueID).ToNot(BeEmpty())
+				vcVM = ctx.GetVMFromMoID(vm.Status.UniqueID)
+				Expect(vcVM).ToNot(BeNil())
+
+				ethDevs := ethDevicesByMAC()
+				Expect(ethDevs).To(HaveLen(1))
+				for _, dev := range ethDevs {
+					Expect(dev.GetVirtualDevice().UnitNumber).To(Equal(ptr.To(int32(9))))
+				}
 			})
 		})
 

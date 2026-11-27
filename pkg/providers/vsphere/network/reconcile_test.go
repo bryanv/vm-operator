@@ -552,6 +552,44 @@ var _ = Describe("ReconcileNetworkInterfaces unit numbers", func() {
 			Expect(results.Devices[0].MacAddress).To(Equal(sriovMAC))
 		})
 
+		It("does not let a numbered slot miss adopt the SR-IOV card an un-numbered result matches", func() {
+			// eth0 is a new numbered interface with no device at its slot yet;
+			// eth1 is an un-numbered interface (e.g. type SRIOV, which is never
+			// assigned a unit number) whose card is the only SR-IOV card. Both
+			// are on the same network. eth1 must keep its card, and eth0 must
+			// get an Add at its declared unit.
+			numbered := ethCard(0, ptr.To(int32(7)), generated, "", "", netBacking(netA))
+			unnumbered := ethCard(0, nil, generated, "", "", netBacking(netA))
+			sriovMAC := "aa:bb:cc:dd:ee:01"
+			cards = object.VirtualDeviceList{
+				&vimtypes.VirtualSriovEthernetCard{
+					VirtualEthernetCard: vimtypes.VirtualEthernetCard{
+						VirtualDevice: vimtypes.VirtualDevice{
+							Key:        4100,
+							UnitNumber: ptr.To(int32(45)),
+							Backing:    netBacking(netA),
+						},
+						AddressType: generated,
+						MacAddress:  sriovMAC,
+					},
+				},
+			}
+			results.Devices = []network.Device{
+				result("eth0", numbered, ptr.To(int32(7))),
+				result("eth1", unnumbered, nil),
+			}
+
+			dcs := run()
+			Expect(results.Devices[1].EthCardKey).To(Equal(int32(4100)))
+			Expect(results.Devices[1].MacAddress).To(Equal(sriovMAC))
+			Expect(results.Devices[0].EthCardKey).To(BeZero())
+			Expect(ops(dcs)).To(Equal([]vimtypes.VirtualDeviceConfigSpecOperation{
+				vimtypes.VirtualDeviceConfigSpecOperationAdd,
+			}))
+			Expect(dcs[0].GetVirtualDeviceConfigSpec().Device).To(BeIdenticalTo(numbered))
+			Expect(unitOf(dcs[0])).To(Equal(ptr.To(int32(7))))
+		})
+
 		It("does not adopt a non-SR-IOV card on a slot miss", func() {
 			dev := ethCard(0, ptr.To(int32(7)), generated, "", "", netBacking(netA))
 			cards = object.VirtualDeviceList{

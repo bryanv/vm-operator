@@ -863,6 +863,14 @@ func VMNICExtraConfigSpec(ctx context.Context, inputGetter func() VMNICExtraConf
 	// enabled for E2E runs.
 	It("cross-wires ExtraConfig when spec.network.interfaces entries are reordered",
 		Label("core-functional", "experimental"), func() {
+			// With unit numbers enabled the backfill numbers the interfaces and
+			// they match by unit number, so there is no cross-wiring. The
+			// "keeps each interface on its own device and ExtraConfig" spec in
+			// vm_nic_unit_numbers.go covers that case.
+			if input.Config.SupervisorCapabilities[consts.VMNetworkInterfaceUnitNumbersCapabilityName] {
+				Skip("interfaces are matched by unit number when the unit numbers capability is enabled")
+			}
+
 			vmName := "nic-ec-reorder-" + capiutil.RandomString(5)
 			vmKey := types.NamespacedName{Namespace: vmNamespace, Name: vmName}
 

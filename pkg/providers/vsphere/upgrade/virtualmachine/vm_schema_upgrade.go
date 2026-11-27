@@ -170,7 +170,7 @@ func ReconcileSchemaUpgrade(
 	if features.VMServiceClasslessVM {
 		if f := vmopv1util.FeatureVersionTelcoVMServiceAPI; !vmFeatureVersion.Has(f) {
 			vmbackfill.ExtraConfigFromMoVM(ctx, vm, moVM)
-			vmbackfill.NICConfigFromMoVM(ctx, vm, moVM)
+			vmbackfill.NICConfigFromMoVM(ctx, vm, moVM, features.VMNetworkUnitNumbers)
 			vmbackfill.ComputeConfigFromMoVM(ctx, vm, moVM)
 			vmFeatureVersion.Set(f)
 		}

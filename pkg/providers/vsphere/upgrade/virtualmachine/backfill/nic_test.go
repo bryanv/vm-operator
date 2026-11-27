@@ -119,7 +119,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 		})
 
 		It("returns no mutation", func() {
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeFalse())
 		})
 	})
@@ -131,7 +131,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 		})
 
 		It("returns no mutation", func() {
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeFalse())
 		})
 	})
@@ -143,7 +143,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 		})
 
 		It("returns no mutation", func() {
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeFalse())
 		})
 	})
@@ -154,7 +154,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 		})
 
 		It("returns no mutation", func() {
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeFalse())
 		})
 	})
@@ -174,7 +174,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("sets type to VMXNet3", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
 			})
@@ -186,7 +186,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("sets type to SRIOV", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
 			})
@@ -195,7 +195,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 		DescribeTable("legacy NIC types",
 			func(dev vimtypes.BaseVirtualDevice, expectedType vmopv1.VirtualMachineNetworkInterfaceType) {
 				moVM = moVMWithEthernet(dev)
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].Type).To(Equal(expectedType))
 			},
@@ -215,7 +215,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("sets correct type for each interface", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeE1000))
 				Expect(vm.Spec.Network.Interfaces[1].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
@@ -229,7 +229,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("does not overwrite existing type", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeE1000))
 			})
@@ -245,7 +245,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("sets type from device for matched interface; defaults extra to VMXNet3", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
 				Expect(vm.Spec.Network.Interfaces[1].Type).To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
@@ -269,7 +269,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov(key, raw))
 
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue(), "expected mutation for key %q", key)
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).ToNot(BeNil())
 				check(vm.Spec.Network.Interfaces[0].VMXNet3)
@@ -326,7 +326,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov(key, raw))
 
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse(),
 					"auto sentinel %q for key %q should not mutate spec", raw, key)
 				// VMXNet3 must stay nil — no empty struct created.
@@ -350,7 +350,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("leaves iface.VMXNet3 nil — no empty struct created", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).To(BeNil())
 			})
@@ -362,7 +362,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov(key, raw))
 
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue(), "key %q raw %q should mutate", key, raw)
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).ToNot(BeNil())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3.RSSOffloadEnabled).ToNot(BeNil())
@@ -379,7 +379,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				moVM = moVMWithNICsAndExtraConfig(
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov(key, "value"))
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).To(BeNil())
 			},
@@ -396,7 +396,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			moVM = moVMWithNICsAndExtraConfig(
 				[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 				ov("ethernet0.foo", "value"))
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeFalse())
 			Expect(vm.Spec.Network.Interfaces[0].VMXNet3).To(BeNil())
 		})
@@ -410,7 +410,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				moVM = moVMWithNICsAndExtraConfig(
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov("ethernet0.ctxPerDev", "1"))
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).To(BeNil())
 			})
@@ -425,7 +425,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				moVM = moVMWithNICsAndExtraConfig(
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov("ethernet0.ctxPerDev", "1"))
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).To(BeNil())
 			})
@@ -440,7 +440,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				moVM = moVMWithNICsAndExtraConfig(
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov("ethernet0.ctxPerDev", "2"))
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).ToNot(BeNil())
 				Expect(*vm.Spec.Network.Interfaces[0].VMXNet3.CtxPerDev).To(
@@ -459,7 +459,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				moVM = moVMWithNICsAndExtraConfig(
 					[]vimtypes.BaseVirtualDevice{vmxnet3Dev(4000)},
 					ov("ethernet0.ctxPerDev", "1"))
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(*vm.Spec.Network.Interfaces[0].VMXNet3.CtxPerDev).To(
 					Equal(vmopv1.TxContextThreadingModePerQueue))
@@ -482,7 +482,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 					ov("ethernet2.ctxPerDev", "2"),
 					ov("ethernet5.ctxPerDev", "3"), // no matching device → drop
 				)
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 
 				ifaces := vm.Spec.Network.Interfaces
@@ -508,7 +508,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 					ov("ethernet1.ctxPerDev", "1"),
 					ov("ethernet2.ctxPerDev", "2"),
 				)
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 
 				ifaces := vm.Spec.Network.Interfaces
@@ -531,7 +531,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("backfills VNUMANodeID", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).ToNot(BeNil())
 				Expect(*vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(int32(2)))
@@ -544,7 +544,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("backfills VNUMANodeID with node 0", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).ToNot(BeNil())
 				Expect(*vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(int32(0)))
@@ -557,7 +557,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("does not backfill VNUMANodeID", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(BeNil())
 			})
@@ -569,7 +569,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("does not backfill VNUMANodeID", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(BeNil())
 			})
@@ -582,7 +582,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("does not overwrite existing value", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(*vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(int32(5)))
 			})
@@ -595,7 +595,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("backfills VNUMANodeID regardless of NIC type", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).ToNot(BeNil())
 				Expect(*vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(int32(3)))
@@ -614,7 +614,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("backfills vmxnet3.UPTv2Enabled = true", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).ToNot(BeNil())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3.UPTv2Enabled).ToNot(BeNil())
@@ -628,7 +628,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("backfills vmxnet3.UPTv2Enabled = false", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeTrue())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).ToNot(BeNil())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3.UPTv2Enabled).ToNot(BeNil())
@@ -642,7 +642,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("does not mutate", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).To(BeNil())
 			})
@@ -658,7 +658,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("does not overwrite existing value", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(*vm.Spec.Network.Interfaces[0].VMXNet3.UPTv2Enabled).To(BeFalse())
 			})
@@ -671,7 +671,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			})
 
 			It("does not backfill UPTv2Enabled for SRIOV interface", func() {
-				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+				mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 				Expect(mutated).To(BeFalse())
 				Expect(vm.Spec.Network.Interfaces[0].VMXNet3).To(BeNil())
 			})
@@ -699,7 +699,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				vmxnet3WithProps(ptr.To(int32(4)), ptr.To(true)),  // no spec interface → ignored
 			)
 
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeTrue())
 
 			ifaces := vm.Spec.Network.Interfaces
@@ -722,7 +722,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 		It("extra spec interfaces beyond device count: Type preserved if set, no device properties", func() {
 			moVM = moVMWithEthernet(vmxnet3WithProps(ptr.To(int32(1)), ptr.To(true))) // 1 device, 3 spec ifaces
 
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeTrue())
 
 			ifaces := vm.Spec.Network.Interfaces
@@ -765,7 +765,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				unitDev(4001, 8, ptr.To(int32(2)), ptr.To(false)),
 			)
 
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeTrue())
 
 			// Fields land on the interface whose unit matches the device's
@@ -786,7 +786,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				nilUnitDev(4001, ptr.To(int32(2))),
 			)
 
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeTrue())
 
 			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(1))))
@@ -810,7 +810,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				nilUnitDev(4002, ptr.To(int32(3))),
 			)
 
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeTrue())
 
 			// The numbered interface gets its exact device.
@@ -821,7 +821,7 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 			Expect(vm.Spec.Network.Interfaces[2].VNUMANodeID).To(Equal(ptr.To(int32(3))))
 		})
 
-		It("numbered interface whose unit has no device: no device backfill, Type defaults; unnumbered still zip", func() {
+		It("numbered interface whose unit has no device: not modified; unnumbered still zip", func() {
 			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
 				{Name: "eth0", UnitNumber: ptr.To(int32(16))},
 				{Name: "eth1"},
@@ -830,17 +830,129 @@ var _ = Describe("BackfillNICConfigFromMoVM", func() {
 				nilUnitDev(4000, ptr.To(int32(1))),
 			)
 
-			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM)
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
 			Expect(mutated).To(BeTrue())
 
-			// eth0 declares slot 16; no device there, so it gets no device:
-			// Type defaults, no device properties. It must NOT pair with the
-			// slot-less device by position.
-			Expect(vm.Spec.Network.Interfaces[0].Type).
-				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
+			// eth0 declares slot 16; no device there, and there are fewer
+			// devices than interfaces, so it sits out the zip. Its device is
+			// unknown, so Type is not defaulted: a default could permanently
+			// record the wrong model (for example VMXNet3 for an SR-IOV NIC).
+			Expect(vm.Spec.Network.Interfaces[0].Type).To(BeEmpty())
 			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(BeNil())
 			// eth1 still zips with the remaining device.
 			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+		})
+
+		It("feature disabled: unit numbers are ignored and interfaces pair positionally", func() {
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0", UnitNumber: ptr.To(int32(8))},
+				{Name: "eth1", UnitNumber: ptr.To(int32(7))},
+			}
+			moVM = moVMWithEthernet(
+				unitDev(4000, 7, ptr.To(int32(1)), nil),
+				unitDev(4001, 8, ptr.To(int32(2)), nil),
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, false)
+			Expect(mutated).To(BeTrue())
+
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(2))))
+		})
+
+		It("numbered interface backed by an SR-IOV card: pairs with the card positionally", func() {
+			// The create path does not stamp a pinned unit number onto a VM
+			// class SR-IOV NIC, so eth0 always misses its slot. eth1 is still
+			// un-numbered (the mutation webhook does not run on create).
+			sriov := sriovDev(ptr.To(int32(1)))
+			sriov.Key = 4000
+			sriov.UnitNumber = ptr.To(int32(32))
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+				{Name: "eth1"},
+			}
+			moVM = moVMWithEthernet(
+				sriov,
+				unitDev(4001, 7, ptr.To(int32(2)), nil),
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
+			Expect(mutated).To(BeTrue())
+
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+			Expect(vm.Spec.Network.Interfaces[1].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3))
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(2))))
+		})
+
+		It("numbered miss holding a non-SR-IOV device: consumed but not paired", func() {
+			// eth0's device is still at unit 7, awaiting a power-off to move
+			// to its declared unit 9. It must not be handed to eth1, whose
+			// device is the SR-IOV card.
+			sriov := sriovDev(ptr.To(int32(2)))
+			sriov.Key = 4001
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+				{Name: "eth1"},
+			}
+			moVM = moVMWithEthernet(
+				unitDev(4000, 7, ptr.To(int32(1)), nil),
+				sriov,
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
+			Expect(mutated).To(BeTrue())
+
+			Expect(vm.Spec.Network.Interfaces[0].Type).To(BeEmpty())
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(BeNil())
+			Expect(vm.Spec.Network.Interfaces[1].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(Equal(ptr.To(int32(2))))
+		})
+
+		It("fewer devices than interfaces: numbered misses sit out the zip", func() {
+			// eth1 was added with a unit number and has no device yet. It
+			// must not take the SR-IOV card that belongs to eth2.
+			sriov := sriovDev(ptr.To(int32(2)))
+			sriov.Key = 4001
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{Name: "eth0"},
+				{Name: "eth1", UnitNumber: ptr.To(int32(9))},
+				{Name: "eth2"},
+			}
+			moVM = moVMWithEthernet(
+				nilUnitDev(4000, ptr.To(int32(1))),
+				sriov,
+			)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
+			Expect(mutated).To(BeTrue())
+
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(1))))
+			Expect(vm.Spec.Network.Interfaces[1].Type).To(BeEmpty())
+			Expect(vm.Spec.Network.Interfaces[1].VNUMANodeID).To(BeNil())
+			Expect(vm.Spec.Network.Interfaces[2].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[2].VNUMANodeID).To(Equal(ptr.To(int32(2))))
+		})
+
+		It("SRIOV-typed interface with a unit number: matched as un-numbered", func() {
+			sriov := sriovDev(ptr.To(int32(1)))
+			sriov.Key = 4000
+			vm.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+				{
+					Name:       "eth0",
+					Type:       vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV,
+					UnitNumber: ptr.To(int32(8)),
+				},
+			}
+			moVM = moVMWithEthernet(sriov)
+
+			mutated := backfill.NICConfigFromMoVM(ctx, vm, moVM, true)
+			Expect(mutated).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].VNUMANodeID).To(Equal(ptr.To(int32(1))))
 		})
 	})
 })
@@ -1486,6 +1598,120 @@ var _ = Describe("NICUnitNumbersFromMoVM", func() {
 			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
 				To(Equal(ptr.To(int32(7))))
 			Expect(rec.Events).To(BeEmpty())
+		})
+	})
+
+	// ------------------------------------------------------------------ //
+	// SR-IOV type recording
+	// ------------------------------------------------------------------ //
+
+	When("an untyped interface matches an SR-IOV card", func() {
+		// sriovCard creates an SR-IOV card with the given key and MAC
+		// address, backed by netName. SR-IOV cards sit outside the 7-16 band.
+		sriovCard := func(key int32, mac string) vimtypes.BaseVirtualDevice {
+			dev := &vimtypes.VirtualSriovEthernetCard{}
+			dev.Key = key
+			dev.MacAddress = mac
+			dev.UnitNumber = ptr.To(key - 4000 + 40)
+			dev.Backing = &vimtypes.VirtualEthernetCardNetworkBackingInfo{
+				VirtualDeviceDeviceBackingInfo: vimtypes.VirtualDeviceDeviceBackingInfo{
+					DeviceName: netName,
+				},
+			}
+			return dev
+		}
+
+		newVM := func(ifaces ...vmopv1.VirtualMachineNetworkInterfaceSpec) *vmopv1.VirtualMachine {
+			return &vmopv1.VirtualMachine{
+				Spec: vmopv1.VirtualMachineSpec{
+					Network: &vmopv1.VirtualMachineNetworkSpec{Interfaces: ifaces},
+				},
+			}
+		}
+
+		It("records type SRIOV and no unit number for an un-numbered interface", func() {
+			vm = newVM(ifaceWithNet("eth0", mac1, netName, nil))
+			moVM = moVMWithEthDevs(sriovCard(4000, mac1))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(rec.Events).To(BeEmpty())
+		})
+
+		It("records type SRIOV for a numbered interface that missed its slot", func() {
+			// Numbered before its type was known: with type SRIOV the
+			// matchers treat it as un-numbered.
+			vm = newVM(ifaceWithNet("eth0", "", netName, ptr.To(int32(8))))
+			moVM = moVMWithEthDevs(sriovCard(4000, mac1))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeTrue())
+			Expect(vm.Spec.Network.Interfaces[0].Type).
+				To(Equal(vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV))
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).
+				To(Equal(ptr.To(int32(8))))
+		})
+
+		It("records nothing when another unclaimed device also matches", func() {
+			// Named networks match by backing alone: eth0's match is
+			// ambiguous between the SR-IOV card and eth1's device, so its
+			// type is not recorded. eth1 is numbered but misses its slot,
+			// so it does not claim its device in pass 0, and numbered
+			// interfaces skip the hodgepodge pass.
+			vm = newVM(
+				ifaceWithNet("eth0", "", netName, ptr.To(int32(9))),
+				ifaceWith("eth1", "", ptr.To(int32(7))),
+			)
+			moVM = moVMWithEthDevs(
+				sriovCard(4000, mac1),
+				ethCardWithUnit(4001, mac2, netName, ptr.To(int32(8))),
+			)
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeFalse())
+			Expect(vm.Spec.Network.Interfaces[0].Type).To(BeEmpty())
+		})
+
+		It("records nothing when two SR-IOV cards match", func() {
+			vm = newVM(ifaceWithNet("eth0", "", netName, ptr.To(int32(9))))
+			moVM = moVMWithEthDevs(
+				sriovCard(4000, mac1),
+				sriovCard(4001, mac2),
+			)
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeFalse())
+			Expect(vm.Spec.Network.Interfaces[0].Type).To(BeEmpty())
+		})
+
+		It("does not consider an SR-IOV card claimed by an SRIOV-typed interface", func() {
+			sriovIface := ifaceWithNet("eth0", "", netName, nil)
+			sriovIface.Type = vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
+			vm = newVM(sriovIface, ifaceWithNet("eth1", "", netName, ptr.To(int32(9))))
+			moVM = moVMWithEthDevs(sriovCard(4000, mac1))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeFalse())
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(vm.Spec.Network.Interfaces[1].Type).To(BeEmpty())
+		})
+
+		It("never records a unit number for an SRIOV-typed interface", func() {
+			sriovIface := ifaceWith("eth0", "", nil)
+			sriovIface.Type = vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
+			vm = newVM(sriovIface)
+			moVM = moVMWithEthDevs(
+				ethCardWithUnit(4000, mac1, netName, ptr.To(int32(7))))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, client, vm, moVM)).To(BeFalse())
+			Expect(vm.Spec.Network.Interfaces[0].UnitNumber).To(BeNil())
+			Expect(rec.Events).To(BeEmpty())
+		})
+
+		It("records nothing without a client", func() {
+			vm = newVM(ifaceWithNet("eth0", mac1, netName, nil))
+			moVM = moVMWithEthDevs(sriovCard(4000, mac1))
+
+			Expect(backfill.NICUnitNumbersFromMoVM(ctx, nil, vm, moVM)).To(BeFalse())
+			Expect(vm.Spec.Network.Interfaces[0].Type).To(BeEmpty())
 		})
 	})
 

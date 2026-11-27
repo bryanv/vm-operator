@@ -28,6 +28,7 @@ import (
 	pkgcfg "github.com/vmware-tanzu/vm-operator/pkg/config"
 	pkgctx "github.com/vmware-tanzu/vm-operator/pkg/context"
 	pkgptr "github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
+	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 )
 
 // CreateVirtualEthernetCard creates a new VirtualEthernetCard based on the Device
@@ -159,6 +160,13 @@ func MapEthernetDevicesToSpecIdx(
 	// identical.
 	authoritativeMiss := make([]bool, len(interfaces))
 
+	// unitNumberOf is the interface's identifying unit number, or nil when it
+	// is matched as un-numbered (feature off, no unit number, or an SR-IOV
+	// interface, whose card is outside the unit-number band).
+	unitNumberOf := func(i int) *int32 {
+		return vmopv1util.NICInterfaceUnitNumber(&interfaces[i], unitNumbersEnabled)
+	}
+
 	// Pass 1: exact unit-number claim for numbered interfaces. A declared
 	// unit number is the interface's identity for its device (spec.md G11):
 	// on a hit the card is claimed so the fallback passes cannot reuse it;
@@ -168,8 +176,9 @@ func MapEthernetDevicesToSpecIdx(
 	// point network boot at the wrong physical NIC. The miss is not
 	// transient (G13): an interface added to a powered-on VM is admitted
 	// with a unit number but gets no device until the next power-off, and
-	// a numbered interface backed by an SR-IOV card never hits, so callers
-	// tolerate the absence rather than this mapping relaxing.
+	// an untyped numbered interface backed by an SR-IOV card never hits, so
+	// callers tolerate the absence rather than this mapping relaxing. An
+	// SRIOV-typed interface is matched as un-numbered (unitNumberOf).
 	if unitNumbersEnabled {
 		unitToIdx := make(map[int32]int, len(ethCards))
 		for i, dev := range ethCards {
@@ -179,10 +188,11 @@ func MapEthernetDevicesToSpecIdx(
 		}
 
 		for i := range interfaces {
-			if interfaces[i].UnitNumber == nil {
+			u := unitNumberOf(i)
+			if u == nil {
 				continue
 			}
-			if j, ok := unitToIdx[*interfaces[i].UnitNumber]; ok && !claimed[j] {
+			if j, ok := unitToIdx[*u]; ok && !claimed[j] {
 				claimed[j] = true
 				devKeyToSpecIdx[ethCards[j].GetVirtualDevice().Key] = i
 			} else {
@@ -202,16 +212,20 @@ func MapEthernetDevicesToSpecIdx(
 		}
 
 		// Zip the un-numbered interfaces against the remaining unclaimed
-		// devices, in device order. Numbered interfaces are skipped: they
-		// resolve exclusively by their declared unit number above.
-		next := zipUnclaimedEthCards(ethCards, claimed, 0, len(interfaces),
-			func(i int) bool { return interfaces[i].UnitNumber == nil },
+		// devices, in device order, preferring a card that matches the
+		// interface's type, so an SRIOV-typed interface does not take a
+		// vmxnet3 card (for example, one a numbered interface that missed
+		// its slot still owns) while an SR-IOV card is available. Numbered
+		// interfaces are skipped: they resolve exclusively by their declared
+		// unit number above.
+		zipUnclaimedEthCards(ethCards, claimed, interfaces,
+			func(i int) bool { return unitNumberOf(i) == nil },
 			devKeyToSpecIdx)
 
 		// Name-resolution fallback: numbered misses zip against whatever the
 		// authoritative passes left unclaimed. Labels status entries only.
 		devKeyToSpecIdxForNaming := maps.Clone(devKeyToSpecIdx)
-		zipUnclaimedEthCards(ethCards, claimed, next, len(interfaces),
+		zipUnclaimedEthCards(ethCards, claimed, interfaces,
 			func(i int) bool { return authoritativeMiss[i] },
 			devKeyToSpecIdxForNaming)
 		return devKeyToSpecIdx, devKeyToSpecIdxForNaming
@@ -231,7 +245,7 @@ func MapEthernetDevicesToSpecIdx(
 	}
 
 	for i, interfaceSpec := range interfaces {
-		if unitNumbersEnabled && interfaceSpec.UnitNumber != nil {
+		if unitNumberOf(i) != nil {
 			// Exact-only: claimed above, or deliberately unmapped on a miss —
 			// never eligible for CR-based matching.
 			continue
@@ -264,34 +278,60 @@ func MapEthernetDevicesToSpecIdx(
 	return devKeyToSpecIdx, devKeyToSpecIdxForNaming
 }
 
-// zipUnclaimedEthCards pairs each of the first numInterfaces spec indices for
-// which include returns true, in order, with the next unclaimed card in
-// ethCards starting at cursor next. Each pairing is recorded in out (device
-// key to spec index) and the card is marked claimed. It stops when the cards
-// run out, and returns the advanced cursor.
+// zipUnclaimedEthCards pairs each spec interface for which include returns
+// true, in spec order, with the first unclaimed card in ethCards that its
+// type prefers (see ethCardPreferredForInterfaceType), or failing that with
+// the first unclaimed card of any type. Each pairing is recorded in out
+// (device key to spec index) and the card is marked claimed. For untyped
+// interfaces this is the plain positional zip over the unclaimed cards.
 func zipUnclaimedEthCards(
 	ethCards object.VirtualDeviceList,
 	claimed []bool,
-	next int,
-	numInterfaces int,
+	interfaces []vmopv1.VirtualMachineNetworkInterfaceSpec,
 	include func(specIdx int) bool,
-	out map[int32]int) int {
+	out map[int32]int) {
 
-	for i := range numInterfaces {
+	for i := range interfaces {
 		if !include(i) {
 			continue
 		}
-		for next < len(ethCards) && claimed[next] {
-			next++
+		pick := -1
+		for j := range ethCards {
+			if claimed[j] {
+				continue
+			}
+			if ethCardPreferredForInterfaceType(ethCards[j], interfaces[i].Type) {
+				pick = j
+				break
+			}
+			if pick < 0 {
+				// First unclaimed card of any type: the fallback.
+				pick = j
+			}
 		}
-		if next >= len(ethCards) {
+		if pick < 0 {
 			break
 		}
-		out[ethCards[next].GetVirtualDevice().Key] = i
-		claimed[next] = true
-		next++
+		out[ethCards[pick].GetVirtualDevice().Key] = i
+		claimed[pick] = true
 	}
-	return next
+}
+
+// ethCardPreferredForInterfaceType reports whether a positional zip should
+// prefer pairing a card with an interface of type t: an SRIOV-typed
+// interface prefers an SR-IOV card, any other explicit type prefers a
+// non-SR-IOV card, and an untyped interface has no preference. A preference
+// only, because the type does not guarantee the card: the VM create and
+// reconcile paths build a vmxnet3 card whatever the interface's type.
+func ethCardPreferredForInterfaceType(
+	dev vimtypes.BaseVirtualDevice,
+	t vmopv1.VirtualMachineNetworkInterfaceType) bool {
+
+	if t == "" {
+		return true
+	}
+	_, isSRIOV := dev.(*vimtypes.VirtualSriovEthernetCard)
+	return isSRIOV == (t == vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV)
 }
 
 // FindMatchingEthCardForInterfaceSpec resolves a spec interface to the index

@@ -42,6 +42,7 @@ import (
 	pkgerr "github.com/vmware-tanzu/vm-operator/pkg/errors"
 	pkgutil "github.com/vmware-tanzu/vm-operator/pkg/util"
 	pkgnil "github.com/vmware-tanzu/vm-operator/pkg/util/nil"
+	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 )
 
 type NetworkInterfaceResults struct { //nolint:revive
@@ -223,9 +224,10 @@ func CreateNetworkDevices(
 			continue
 		}
 
-		if pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
-			dev.UnitNumber = interfaceSpec.UnitNumber
-		}
+		// Nil for an SR-IOV interface: its card is outside the unit-number
+		// band, so the interface is matched as un-numbered.
+		dev.UnitNumber = vmopv1util.NICInterfaceUnitNumber(
+			&interfaceSpec, pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers)
 
 		devices = append(devices, dev)
 	}
@@ -555,9 +557,10 @@ func CreateAndWaitForNetworkInterfaces(
 			continue
 		}
 
-		if pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers {
-			dev.UnitNumber = interfaceSpec.UnitNumber
-		}
+		// Nil for an SR-IOV interface: its card is outside the unit-number
+		// band, so the interface is matched as un-numbered.
+		dev.UnitNumber = vmopv1util.NICInterfaceUnitNumber(
+			&interfaceSpec, pkgcfg.FromContext(vmCtx).Features.VMNetworkUnitNumbers)
 
 		devices = append(devices, dev)
 	}
@@ -581,9 +584,10 @@ func createNetworkDevicesForNamedNetwork(
 			return nil, err
 		}
 
-		if pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
-			dev.UnitNumber = interfaceSpec.UnitNumber
-		}
+		// Nil for an SR-IOV interface: its card is outside the unit-number
+		// band, so the interface is matched as un-numbered.
+		dev.UnitNumber = vmopv1util.NICInterfaceUnitNumber(
+			&interfaceSpec, pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers)
 
 		devices = append(devices, dev)
 	}
@@ -604,9 +608,10 @@ func createAndWaitNamedNetworkInterfaces(
 			return nil, fmt.Errorf("named network interface %q error: %w", interfaceSpec.Name, err)
 		}
 
-		if pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
-			dev.UnitNumber = interfaceSpec.UnitNumber
-		}
+		// Nil for an SR-IOV interface: its card is outside the unit-number
+		// band, so the interface is matched as un-numbered.
+		dev.UnitNumber = vmopv1util.NICInterfaceUnitNumber(
+			&interfaceSpec, pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers)
 
 		devices = append(devices, dev)
 	}

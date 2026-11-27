@@ -21,6 +21,7 @@ import (
 	"github.com/vmware-tanzu/vm-operator/pkg/providers/vsphere/network"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	"github.com/vmware-tanzu/vm-operator/pkg/util/resize"
+	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 	"github.com/vmware-tanzu/vm-operator/pkg/vmconfig"
 )
 
@@ -273,8 +274,9 @@ func reconcileBootOrder(
 				// exactly as before this feature), so it remains a hard error:
 				// its device should exist, and booting an entry that cannot be
 				// located is a real configuration problem.
-				if u := vm.Spec.Network.Interfaces[ifaceIdx].UnitNumber; u != nil &&
-					pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers {
+				if u := vmopv1util.NICInterfaceUnitNumber(
+					&vm.Spec.Network.Interfaces[ifaceIdx],
+					pkgcfg.FromContext(ctx).Features.VMNetworkUnitNumbers); u != nil {
 
 					pkglog.FromContextOrDefault(ctx).V(4).Info(
 						"Skipping boot order entry: no device at the interface's declared unit number yet",

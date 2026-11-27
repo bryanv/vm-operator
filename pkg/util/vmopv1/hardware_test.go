@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	"github.com/vmware-tanzu/vm-operator/pkg/util/ptr"
 	vmopv1util "github.com/vmware-tanzu/vm-operator/pkg/util/vmopv1"
 )
 
@@ -261,6 +262,36 @@ var _ = Describe("NextAvailableUnitNumber", func() {
 			})
 		})
 	})
+})
+
+var _ = Describe("NICInterfaceUnitNumber", func() {
+	DescribeTable("returns the identifying unit number",
+		func(iface *vmopv1.VirtualMachineNetworkInterfaceSpec, enabled bool, expected *int32) {
+			Expect(vmopv1util.NICInterfaceUnitNumber(iface, enabled)).To(Equal(expected))
+		},
+		Entry("nil interface", nil, true, nil),
+		Entry("feature disabled",
+			&vmopv1.VirtualMachineNetworkInterfaceSpec{UnitNumber: ptr.To(int32(9))},
+			false, nil),
+		Entry("no unit number",
+			&vmopv1.VirtualMachineNetworkInterfaceSpec{},
+			true, nil),
+		Entry("untyped with a unit number",
+			&vmopv1.VirtualMachineNetworkInterfaceSpec{UnitNumber: ptr.To(int32(9))},
+			true, ptr.To(int32(9))),
+		Entry("VMXNet3 with a unit number",
+			&vmopv1.VirtualMachineNetworkInterfaceSpec{
+				Type:       vmopv1.VirtualMachineNetworkInterfaceTypeVMXNet3,
+				UnitNumber: ptr.To(int32(9)),
+			},
+			true, ptr.To(int32(9))),
+		Entry("SRIOV with a unit number",
+			&vmopv1.VirtualMachineNetworkInterfaceSpec{
+				Type:       vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV,
+				UnitNumber: ptr.To(int32(9)),
+			},
+			true, nil),
+	)
 })
 
 var _ = Describe("GenerateControllerID", func() {

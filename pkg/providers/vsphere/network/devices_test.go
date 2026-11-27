@@ -988,6 +988,98 @@ var _ = Describe("MapEthernetDevicesToSpecIdx unit numbers", func() {
 			})
 		})
 
+		Context("flag enabled: SRIOV-typed interfaces", func() {
+			sriovDevice := func(key int32, unit int32) *vimtypes.VirtualSriovEthernetCard {
+				dev := &vimtypes.VirtualSriovEthernetCard{}
+				dev.Key = key
+				dev.UnitNumber = ptr.To(unit)
+				return dev
+			}
+
+			BeforeEach(func() {
+				pkgcfg.SetContext(vmCtx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = true
+				})
+			})
+
+			When("an SRIOV-typed interface carries a unit number", func() {
+				BeforeEach(func() {
+					// The unit number was recorded before the type was
+					// known; SR-IOV cards sit outside the band, so the
+					// interface is matched as un-numbered.
+					devices = append(devices,
+						dvpDevice(4000, "dvpg-1", ptr.To(int32(7))),
+						sriovDevice(4001, 40))
+
+					vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{Name: "eth0", UnitNumber: ptr.To(int32(7))},
+						{
+							Name:       "eth1",
+							Type:       vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV,
+							UnitNumber: ptr.To(int32(8)),
+						},
+					}
+				})
+
+				It("maps it to its SR-IOV card in the authoritative map", func() {
+					Expect(devKeyToIdx).To(HaveLen(2))
+					Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
+					Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+				})
+			})
+
+			When("an SRIOV-typed interface is backed by a vmxnet3 card", func() {
+				BeforeEach(func() {
+					// The create and reconcile paths build a vmxnet3 card
+					// whatever the interface's type, so there is no SR-IOV
+					// card to prefer; the interface still maps.
+					devices = append(devices,
+						dvpDevice(4000, "dvpg-1", ptr.To(int32(7))),
+						dvpDevice(4001, "dvpg-1", ptr.To(int32(8))))
+
+					vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{Name: "eth0", UnitNumber: ptr.To(int32(7))},
+						{
+							Name:       "eth1",
+							Type:       vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV,
+							UnitNumber: ptr.To(int32(8)),
+						},
+					}
+				})
+
+				It("falls back to the unclaimed vmxnet3 card", func() {
+					Expect(devKeyToIdx).To(HaveLen(2))
+					Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4000), 0))
+					Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+				})
+			})
+
+			When("a numbered miss's device precedes the SR-IOV card", func() {
+				BeforeEach(func() {
+					// eth0's device is still at unit 7 (renumber to 9 not yet
+					// applied). The zip must not hand that vmxnet3 device to
+					// the SRIOV-typed eth1.
+					devices = append(devices,
+						dvpDevice(4000, "dvpg-1", ptr.To(int32(7))),
+						sriovDevice(4001, 40))
+
+					vmCtx.VM.Spec.Network.Interfaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+						{Name: "eth0", UnitNumber: ptr.To(int32(9))},
+						{Name: "eth1", Type: vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV},
+					}
+				})
+
+				It("zips the SRIOV-typed interface to the SR-IOV card", func() {
+					Expect(devKeyToIdx).To(HaveLen(1))
+					Expect(devKeyToIdx).To(HaveKeyWithValue(int32(4001), 1))
+
+					Expect(devKeyToIdxNaming).To(HaveLen(2))
+					Expect(devKeyToIdxNaming).To(HaveKeyWithValue(int32(4000), 0))
+					Expect(devKeyToIdxNaming).To(HaveKeyWithValue(int32(4001), 1))
+				})
+			})
+		})
+
 		Context("flag disabled ignores unit numbers (original zip)", func() {
 			BeforeEach(func() {
 				// Default config: VMNetworkUnitNumbers is false.

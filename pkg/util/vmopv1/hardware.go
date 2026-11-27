@@ -27,6 +27,24 @@ const (
 	NICUnitNumberMax = 16
 )
 
+// NICInterfaceUnitNumber returns the unit number that identifies iface's
+// device when matching interfaces to devices, or nil when the interface must
+// be matched as un-numbered: unitNumbersEnabled is false, the interface has
+// no unit number, or the interface is an SR-IOV interface. SR-IOV cards sit
+// outside the NICUnitNumberFirst..NICUnitNumberMax band, so a unit number on
+// an SR-IOV interface (recorded before its type was known) never identifies
+// its card.
+func NICInterfaceUnitNumber(
+	iface *vmopv1.VirtualMachineNetworkInterfaceSpec,
+	unitNumbersEnabled bool) *int32 {
+
+	if !unitNumbersEnabled || iface == nil ||
+		iface.Type == vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV {
+		return nil
+	}
+	return iface.UnitNumber
+}
+
 // ControllerSpec is an interface describing a controller specification.
 type ControllerSpec interface {
 	// MaxSlots returns the maximum number of slots per controller type.

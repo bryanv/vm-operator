@@ -206,6 +206,18 @@ var _ = Describe("CreateAndWaitForNetworkInterfaces", Label(testlabels.VCSim), f
 					Expect(devices[1].InterfaceName).To(Equal("eth1"))
 					Expect(devices[1].UnitNumber).To(BeNil())
 				})
+
+				When("the numbered interface is SRIOV-typed", func() {
+					BeforeEach(func() {
+						networkSpec.Interfaces[0].Type = vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV
+					})
+
+					It("does not populate its result unit number", func() {
+						Expect(err).ToNot(HaveOccurred())
+						Expect(devices).To(HaveLen(2))
+						Expect(devices[0].UnitNumber).To(BeNil())
+					})
+				})
 			})
 
 			Context("feature disabled", func() {

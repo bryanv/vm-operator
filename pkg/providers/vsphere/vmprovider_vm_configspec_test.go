@@ -870,6 +870,47 @@ func vmConfigSpecTests() {
 			})
 		})
 
+		When("the class device is SR-IOV and the spec interface is SRIOV-typed", func() {
+			BeforeEach(func() {
+				withClassEthCard(nil)
+				configSpec.DeviceChange[0].GetVirtualDeviceConfigSpec().Device = &vimtypes.VirtualSriovEthernetCard{
+					VirtualEthernetCard: ethCard,
+				}
+
+				enableUnitNumbers = true
+				ifaces = []vmopv1.VirtualMachineNetworkInterfaceSpec{
+					{
+						Name:       "eth0",
+						Network:    &vmopv1common.PartialObjectRef{Name: dvpgName},
+						Type:       vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV,
+						UnitNumber: ptr.To(int32(9)),
+					},
+				}
+			})
+
+			It("keeps the class SR-IOV device and does not stamp the unit number", func() {
+				pkgcfg.SetContext(ctx, func(config *pkgcfg.Config) {
+					config.Features.VMNetworkUnitNumbers = enableUnitNumbers
+				})
+				vm.Spec.Network.Interfaces = ifaces
+
+				// A single call, so only the create ConfigSpec is observed.
+				Expect(vmProvider.CreateOrUpdateVirtualMachine(ctx, vm)).To(MatchError(vsphere.ErrCreate))
+				Expect(vm.Status.UniqueID).ToNot(BeEmpty())
+				vcVM = ctx.GetVMFromMoID(vm.Status.UniqueID)
+				Expect(vcVM).ToNot(BeNil())
+
+				var o mo.VirtualMachine
+				Expect(vcVM.Properties(ctx, vcVM.Reference(), nil, &o)).To(Succeed())
+				sriovDevs := object.VirtualDeviceList(o.Config.Hardware.Device).
+					SelectByType(&vimtypes.VirtualSriovEthernetCard{})
+				Expect(sriovDevs).To(HaveLen(1))
+				sriovDev := sriovDevs[0].(*vimtypes.VirtualSriovEthernetCard)
+				Expect(sriovDev.MacAddress).To(Equal(classMAC))
+				Expect(sriovDev.UnitNumber).ToNot(Equal(ptr.To(int32(9))))
+			})
+		})
+
 		When("the spec has no unit number and the class device has one", func() {
 			BeforeEach(func() {
 				withClassEthCard(ptr.To(int32(8)))

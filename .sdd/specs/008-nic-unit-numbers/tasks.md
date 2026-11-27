@@ -166,6 +166,7 @@
   4. `NICUnitNumbersFromMoVM`: record `type: SRIOV` on an untyped, unmatched interface whose only matching unclaimed device is an SR-IOV card; never record a unit number for an SRIOV-typed interface. In the positional zip, SR-IOV cards hold their place in the device order, SRIOV-typed interfaces take part (recording nothing), each interface prefers a device of its type (`network.EthCardPreferredForInterfaceType`), and an untyped interface paired with an SR-IOV card gets `type: SRIOV` and is named in the ambiguity event.
   5. `ReconcileSchemaUpgrade`: run the `FeatureVersionNICUnitNumbers` step before the `FeatureVersionTelcoVMServiceAPI` step, so `NICConfigFromMoVM` pairs by the unit numbers `NICUnitNumbersFromMoVM` matched by MAC, external ID or backing, not by position. `VMServiceClasslessVM` is not yet enabled, so in the field the NIC config backfill will run after the unit-number backfill anyway, often in a later release. The code order now matches that.
   6. `pkg/crd/crd.go`: keep `spec.network.interfaces[].type` in the VirtualMachine CRD unless both `VMServiceClasslessVM` and `VMNetworkUnitNumbers` are disabled, so the API server does not prune the `type: SRIOV` the backfill records.
+  7. Create path (`vmprovider_vm.go`, `vmCreateGenConfigSpecZipNetworkInterfaces`): an SRIOV-typed interface paired with a class SR-IOV card keeps that card, as an untyped one does, instead of having it replaced. The replacement is always built as vmxnet3 (`CreateVirtualEthernetCard` ignores the type). Before item 6, users could set `type` only with `VMServiceClasslessVM` on.
 
 ---
 
@@ -286,7 +287,7 @@ T034 (block user edits pre-upgrade) ─────────────► c
 | T033 | `pkg/vmconfig/bootoptions/bootoptions_reconciler.go`, boot-options unit tests |
 | T035 | `pkg/vmconfig/networkextraconfig/nic_matcher.go`, `pkg/vmconfig/networkextraconfig/nic_fields.go`, `pkg/vmconfig/networkextraconfig/reconciler.go`, package unit tests |
 | T036 | `pkg/providers/vsphere/vmlifecycle/update_status_hardware_validation.go`, its unit tests; possibly `api/v1alpha6` condition-type constant |
-| T037 | `pkg/util/vmopv1/hardware.go`, `pkg/providers/vsphere/network/network.go`, `pkg/providers/vsphere/network/devices.go`, `pkg/vmconfig/bootoptions/bootoptions_reconciler.go`, `pkg/providers/vsphere/upgrade/virtualmachine/backfill/nic.go`, `pkg/providers/vsphere/upgrade/virtualmachine/vm_schema_upgrade.go`, `pkg/crd/crd.go`, and their unit tests |
+| T037 | `pkg/util/vmopv1/hardware.go`, `pkg/providers/vsphere/network/network.go`, `pkg/providers/vsphere/network/devices.go`, `pkg/vmconfig/bootoptions/bootoptions_reconciler.go`, `pkg/providers/vsphere/upgrade/virtualmachine/backfill/nic.go`, `pkg/providers/vsphere/upgrade/virtualmachine/vm_schema_upgrade.go`, `pkg/crd/crd.go`, `pkg/providers/vsphere/vmprovider_vm.go`, and their unit tests |
 | T034 | `webhooks/virtualmachine/validation/virtualmachine_validator.go`, `webhooks/virtualmachine/validation/virtualmachine_validator_unit_test.go` |
 | T031 | vcsim integration tests (snapshot revert / failover / register flows), `research.md`, `spec.md` |
 | T032 | `.sdd/specs/00N-nic-unit-numbers-powered-on/*.md` (new, I5), `.sdd/specs/00N-nic-unit-numbers-type-support/*.md` (new, I2 — or folded into that future MR's own artifacts) |

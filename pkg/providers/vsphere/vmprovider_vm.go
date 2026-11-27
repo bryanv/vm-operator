@@ -3319,8 +3319,15 @@ func (vs *vSphereVMProvider) vmCreateGenConfigSpecZipNetworkInterfaces(
 			dev := createArgs.NetworkDevices[devIdx]
 			interfaceSpec := vmCtx.VM.Spec.Network.Interfaces[devIdx]
 
-			if interfaceSpec.Type == "" {
-				if _, ok := spec.Device.(*vimtypes.VirtualSriovEthernetCard); ok {
+			_, isSRIOV := spec.Device.(*vimtypes.VirtualSriovEthernetCard)
+
+			// An SRIOV-typed interface keeps a class SR-IOV card: the
+			// replacement below is always built as vmxnet3, whatever the
+			// interface's type.
+			if interfaceSpec.Type == "" ||
+				(isSRIOV && interfaceSpec.Type == vmopv1.VirtualMachineNetworkInterfaceTypeSRIOV) {
+
+				if isSRIOV {
 					// SR-IOV stop-gap, until full SR-IOV support lands: SR-IOV
 					// cards sit outside the ethernet unit-number band, so do
 					// not stamp the interface's unit number onto one.
